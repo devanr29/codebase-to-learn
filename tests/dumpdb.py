@@ -39,12 +39,13 @@ def dump_index(conn: sqlite3.Connection) -> dict:
             r["start_line"],
             r["end_line"],
             r["body_hash"],
+            r["raw_hash"],
             r["decorators"],
             r["docstring"],
         )
         for r in conn.execute(
             "SELECT symbol_id, commit_sha, signature, start_line, end_line, body_hash, "
-            "decorators, docstring FROM symbol_versions"
+            "raw_hash, decorators, docstring FROM symbol_versions"
         )
     }
     refs = sorted(

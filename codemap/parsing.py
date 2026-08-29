@@ -18,6 +18,7 @@ from functools import lru_cache
 
 from tree_sitter import Parser, Query, QueryCursor
 
+from . import normalize
 from .languages.registry import LanguageSpec, get_ts_language, load_tags_query
 
 # Incremented once per file actually parsed. Tests assert incrementality against it.
@@ -41,6 +42,8 @@ class Symbol:
     signature: str
     decorators: list[str] = field(default_factory=list)
     docstring: str | None = None
+    body_hash: str = ""          # normalized (see normalize.py)
+    raw_hash: str = ""           # verbatim declaration text
     start_byte: int = 0
     end_byte: int = 0
 
@@ -146,6 +149,7 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
                     "kind": dkey.split(".", 1)[1],
                     "node": dnode,
                     "name": _text(source, name_nodes[0]),
+                    "name_node": name_nodes[0],
                     "params": caps["params"][0] if caps.get("params") else None,
                     "returns": caps["returns"][0] if caps.get("returns") else None,
                 }
@@ -164,6 +168,7 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
     raw_defs.sort(key=lambda d: (d["node"].start_byte, -d["node"].end_byte))
     symbols: list[Symbol] = []
     node_to_symbol: dict[int, Symbol] = {}
+    pending_hash: dict[str, tuple] = {}
     used_keys: set[str] = set()
 
     for d in raw_defs:
@@ -189,6 +194,11 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
             ret = _norm_ws(_text(source, d["returns"]))
             sig += ret if ret.startswith((":", "->")) else f" -> {ret}"
 
+        header_end = d["name_node"].end_byte
+        for hn in (d["params"], d["returns"]):
+            if hn is not None:
+                header_end = max(header_end, hn.end_byte)
+
         sym = Symbol(
             key=key,
             kind=kind,
@@ -202,6 +212,21 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
         )
         symbols.append(sym)
         node_to_symbol[node.start_byte] = sym
+        pending_hash[key] = (node, header_end)
+
+    # --- hashes: computed over each symbol's *own* content, with nested
+    #     definitions excluded so a method change does not bubble to its class
+    for sym in symbols:
+        node, header_end = pending_hash[sym.key]
+        nested = [
+            (c.start_byte, c.end_byte)
+            for c in symbols
+            if c is not sym
+            and sym.start_byte <= c.start_byte
+            and c.end_byte <= sym.end_byte
+        ]
+        sym.body_hash = normalize.body_hash(node, source, spec, header_end, nested)
+        sym.raw_hash = normalize.raw_hash(source, sym.start_byte, sym.end_byte, nested)
 
     # --- docstrings: attach to the innermost enclosing symbol ---------------
     for dn in doc_nodes:

@@ -50,16 +50,6 @@ def _sha1(data: bytes) -> str:
     return hashlib.sha1(data).hexdigest()
 
 
-def body_hash(source: bytes, start_byte: int, end_byte: int) -> str:
-    """Placeholder body hash (raw bytes). M4 routes this through ``normalize``."""
-    try:
-        from . import normalize
-
-        return normalize.body_hash(source, start_byte, end_byte)
-    except Exception:
-        return _sha1(source[start_byte:end_byte])
-
-
 def _file_id(conn: sqlite3.Connection, path: str, lang: str, tier: int) -> int:
     conn.execute(
         "INSERT INTO files(path, lang, tier) VALUES(?,?,?) "
@@ -161,18 +151,20 @@ def _write_parsed(
         key_to_id[sym.key] = sid
         conn.execute(
             "INSERT INTO symbol_versions(symbol_id, commit_sha, signature, start_line, "
-            "end_line, body_hash, decorators, docstring) VALUES(?,?,?,?,?,?,?,?) "
+            "end_line, body_hash, raw_hash, decorators, docstring) VALUES(?,?,?,?,?,?,?,?,?) "
             "ON CONFLICT(symbol_id, commit_sha) DO UPDATE SET "
             "signature=excluded.signature, start_line=excluded.start_line, "
             "end_line=excluded.end_line, body_hash=excluded.body_hash, "
-            "decorators=excluded.decorators, docstring=excluded.docstring",
+            "raw_hash=excluded.raw_hash, decorators=excluded.decorators, "
+            "docstring=excluded.docstring",
             (
                 sid,
                 sha,
                 sym.signature,
                 sym.start_line,
                 sym.end_line,
-                body_hash(source, sym.start_byte, sym.end_byte),
+                sym.body_hash,
+                sym.raw_hash,
                 "\n".join(sym.decorators) or None,
                 sym.docstring,
             ),
@@ -205,9 +197,9 @@ def _carry_forward(conn: sqlite3.Connection, file_id: int, src_sha: str, dst_sha
     )
     conn.execute(
         "INSERT INTO symbol_versions(symbol_id, commit_sha, signature, start_line, end_line, "
-        "body_hash, decorators, docstring) "
-        "SELECT symbol_id, ?, signature, start_line, end_line, body_hash, decorators, docstring "
-        "FROM symbol_versions WHERE commit_sha=? AND symbol_id IN "
+        "body_hash, raw_hash, decorators, docstring) "
+        "SELECT symbol_id, ?, signature, start_line, end_line, body_hash, raw_hash, "
+        "decorators, docstring FROM symbol_versions WHERE commit_sha=? AND symbol_id IN "
         "(SELECT id FROM symbols WHERE file_id=?)",
         (dst_sha, src_sha, file_id),
     )
@@ -403,9 +395,14 @@ def scan(
     if not shas and start is None:
         shas = [resolve_sha(root, until)]
 
+    from . import semdiff
+
     for sha in shas:
         index_commit(conn, cfg, sha, stats)
         stats.commits_indexed += 1
+        parent = parent_sha(conn, sha)
+        if parent is None or _commit_indexed(conn, parent):
+            semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
 
     from . import retention
 

@@ -48,7 +48,8 @@ CREATE TABLE IF NOT EXISTS symbol_versions (
     signature  TEXT,
     start_line INTEGER,
     end_line   INTEGER,
-    body_hash  TEXT,          -- normalized, see semdiff / normalize
+    body_hash  TEXT,          -- normalized (comments + whitespace stripped), see normalize.py
+    raw_hash   TEXT,          -- verbatim declaration text; distinguishes cosmetic from behavioral
     decorators TEXT,
     docstring  TEXT,
     PRIMARY KEY (symbol_id, commit_sha)

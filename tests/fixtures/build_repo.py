@@ -107,7 +107,7 @@ def save(key, value, ttl=0):
     return True
 '''
 
-# commit 5 — reformat + comments only (cosmetic)
+# commit 5 — comments only (cosmetic): read() in core.py, dispatch() in loader.ts
 C5_CORE = '''\
 from app.util import clean
 
@@ -123,14 +123,12 @@ def read(path):
 
 
 class Store:
-
     def put(self, key, value):
         validate(value)
         return save(key, value)
 
 
 def validate(value):
-    # a value counts if it is not None
     return value is not None
 '''
 C5_LOADER = '''\
@@ -144,7 +142,7 @@ export function dispatch(path: string): string {
 }
 '''
 
-# commit 6 — rename a symbol and update all references
+# commit 6 — rename a symbol and update all references (clean -> sanitize)
 C6_UTIL = '''\
 def sanitize(text):
     return text.strip().lower()
@@ -168,14 +166,12 @@ def read(path):
 
 
 class Store:
-
     def put(self, key, value):
         validate(value)
         return save(key, value)
 
 
 def validate(value):
-    # a value counts if it is not None
     return value is not None
 '''
 
@@ -206,14 +202,12 @@ def read(path):
 
 
 class Store:
-
     def put(self, key, value):
         validate(value)
         return save(key, value)
 
 
 def validate(value):
-    # a value counts if it is not None
     return value is not None
 '''
 

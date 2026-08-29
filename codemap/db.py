@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -46,6 +46,12 @@ def migrate(conn: sqlite3.Connection) -> int:
     if version < 1:
         conn.executescript(_SCHEMA_PATH.read_text(encoding="utf-8"))
         version = 1
+
+    if version < 2:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(symbol_versions)")}
+        if "raw_hash" not in cols:
+            conn.execute("ALTER TABLE symbol_versions ADD COLUMN raw_hash TEXT")
+        version = 2
 
     conn.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
