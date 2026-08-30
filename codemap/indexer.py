@@ -477,15 +477,20 @@ def scan(
     if not shas and start is None:
         shas = [resolve_sha(root, until)]
 
-    from . import impact, semdiff
+    from . import impact, intent, report, semdiff
 
+    head_sha = resolve_sha(root, until)
     for sha in shas:
         index_commit(conn, cfg, sha, stats)
         stats.commits_indexed += 1
+        meta = gitio.commit_meta(root, sha)
+        intent.capture(conn, cfg, sha, meta.message, consume=(sha == head_sha))
         parent = parent_sha(conn, sha)
         if parent is None or _commit_indexed(conn, parent):
             changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
-            impact.annotate(conn, cfg, parent, sha, changes)
+            impacts = impact.annotate(conn, cfg, parent, sha, changes)
+            report.write_commit_file(conn, cfg, sha, impacts=impacts)
+    conn.commit()
 
     from . import retention
 

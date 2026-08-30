@@ -21,6 +21,9 @@ def _run(root: Path | str, *args: str, check: bool = True, binary: bool = False)
         cwd=str(root),
         capture_output=True,
         text=not binary,
+        # decode as UTF-8 regardless of the platform locale — git emits UTF-8
+        encoding=None if binary else "utf-8",
+        errors=None if binary else "replace",
     )
     if check and proc.returncode != 0:
         err = proc.stderr if isinstance(proc.stderr, str) else proc.stderr.decode("utf-8", "replace")
