@@ -69,6 +69,7 @@ class ParsedFile:
     symbols: list[Symbol] = field(default_factory=list)
     refs: list[Ref] = field(default_factory=list)
     imports: list[Import] = field(default_factory=list)
+    main_calls: list[str] = field(default_factory=list)  # names called under `if __name__ == "__main__"`
     ok: bool = True
     error: str | None = None
 
@@ -274,4 +275,36 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
         seen_imports.add((raw, line))
         pf.imports.append(Import(raw=raw, line=line))
 
+    if spec.name == "python":
+        pf.main_calls = _main_guard_calls(tree.root_node, source)
+
     pf.symbols = symbols
+
+
+def _main_guard_calls(root_node, source: bytes) -> list[str]:
+    """Names called under a module-level ``if __name__ == "__main__":`` guard."""
+    out: list[str] = []
+    for i in range(root_node.named_child_count):
+        node = root_node.named_child(i)
+        if node.type != "if_statement":
+            continue
+        cond = node.child_by_field_name("condition")
+        if cond is None:
+            continue
+        ctext = source[cond.start_byte:cond.end_byte]
+        if b"__name__" not in ctext or b"__main__" not in ctext:
+            continue
+        stack = [node]
+        while stack:
+            n = stack.pop()
+            if n.type == "call":
+                fn = n.child_by_field_name("function")
+                if fn is not None and fn.type == "identifier":
+                    out.append(_text(source, fn))
+                elif fn is not None and fn.type == "attribute":
+                    attr = fn.child_by_field_name("attribute")
+                    if attr is not None:
+                        out.append(_text(source, attr))
+            for j in range(n.named_child_count):
+                stack.append(n.named_child(j))
+    return out

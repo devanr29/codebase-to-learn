@@ -388,6 +388,112 @@ def build_repo(dest: Path) -> FixtureRepo:
     return FixtureRepo(path=dest, commits=commits)
 
 
+# ---------------------------------------------------------------- impact fixture
+
+IMPACT_C1: dict[str, str] = {
+    "svc/web.py": '''\
+from svc.report import build_report
+
+
+@app.get("/report")
+def report_view():
+    return build_report("daily")
+''',
+    "svc/report.py": '''\
+from svc.data import fetch
+
+
+def build_report(kind):
+    rows = fetch(kind)
+    return render(rows)
+
+
+def render(rows):
+    return "\\n".join(rows)
+''',
+    "svc/data.py": '''\
+def fetch(kind):
+    return db_query(kind)
+
+
+def db_query(kind):
+    return [kind]
+''',
+    "svc/cli.py": '''\
+from svc.report import build_report
+
+
+def main():
+    print(build_report("cli"))
+
+
+if __name__ == "__main__":
+    main()
+''',
+}
+
+IMPACT_C2_DATA = '''\
+def fetch(kind):
+    return db_query(kind)
+
+
+def db_query(kind):
+    return [kind, "extra"]
+'''
+
+IMPACT_C3_REPORT = '''\
+from svc.data import fetch
+
+
+def build_report(kind, fmt="txt"):
+    rows = fetch(kind)
+    return render(rows)
+
+
+def render(rows):
+    return "\\n".join(rows)
+'''
+IMPACT_C3_WEB = '''\
+from svc.report import build_report
+
+
+@app.get("/report")
+def report_view():
+    return build_report("daily", fmt="html")
+'''
+
+IMPACT_COMMITS: list[Commit] = [
+    Commit("i1-initial", "impact c1: web -> report -> data call chain + route + __main__",
+           writes=dict(IMPACT_C1)),
+    Commit("i2-leaf-body", "impact c2: change db_query() body (leaf of the chain)",
+           writes={"svc/data.py": IMPACT_C2_DATA}),
+    Commit("i3-sig-partial", "impact c3: build_report() gains fmt=; only report_view updated",
+           writes={"svc/report.py": IMPACT_C3_REPORT, "svc/web.py": IMPACT_C3_WEB}),
+]
+
+
+def build_impact_repo(dest: Path) -> FixtureRepo:
+    dest = Path(dest)
+    dest.mkdir(parents=True, exist_ok=True)
+    _git(dest, "init", "-q")
+    _git(dest, "config", "user.email", "fixture@example.com")
+    _git(dest, "config", "user.name", "codemap fixtures")
+    _git(dest, "config", "commit.gpgsign", "false")
+
+    commits = [Commit(c.tag, c.message, dict(c.writes), list(c.deletes)) for c in IMPACT_COMMITS]
+    for c in commits:
+        for rel, content in c.writes.items():
+            p = dest / rel
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_text(content, encoding="utf-8", newline="\n")
+        for rel in c.deletes:
+            (dest / rel).unlink(missing_ok=True)
+        _git(dest, "add", "-A")
+        _git(dest, "commit", "-q", "-m", c.message)
+        c.sha = _git(dest, "rev-parse", "HEAD")
+    return FixtureRepo(path=dest, commits=commits)
+
+
 if __name__ == "__main__":
     import sys
     import tempfile

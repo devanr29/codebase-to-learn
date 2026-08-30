@@ -13,11 +13,12 @@ from __future__ import annotations
 
 import hashlib
 import sqlite3
+import sys
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import discovery, gitio
+from . import discovery, entrypoints, gitio
 from .config import Config
 from .db import get_meta, set_meta
 from .languages.registry import spec_for_path
@@ -70,18 +71,40 @@ def _symbol_id(conn: sqlite3.Connection, file_id: int, sym) -> int:
     return conn.execute("SELECT id FROM symbols WHERE key=?", (sym.key,)).fetchone()["id"]
 
 
-def _internal_roots(entries: list[discovery.FileEntry]) -> set[str]:
-    roots: set[str] = set()
+_STDLIB = set(getattr(sys, "stdlib_module_names", ())) | {
+    # builtins / common names not always in stdlib_module_names
+    "__future__", "builtins",
+}
+
+
+def is_stdlib(module: str) -> bool:
+    return module.split(".")[0] in _STDLIB
+
+
+def _internal_names(entries: list[discovery.FileEntry]) -> set[str]:
+    """Every token that could name an in-repo module: top-level dirs, package
+    dirs, file stems, and dotted paths. Wider than a top-level-root check so a
+    sibling module imported by bare name (``import load_cmdb``) is seen as
+    internal, not a dependency."""
+    names: set[str] = set()
     for e in entries:
         parts = e.path.split("/")
-        roots.add(parts[0] if len(parts) > 1 else Path(parts[0]).stem)
-    return roots
+        stem = Path(parts[-1]).stem
+        names.add(stem)
+        dotted_parts = parts[:-1] + ([stem] if stem != "__init__" else [])
+        for i in range(len(dotted_parts)):
+            names.add(dotted_parts[i])
+            names.add(".".join(dotted_parts[: i + 1]))
+    names.discard("")
+    return names
 
 
-def classify_import(raw: str, lang: str, internal_roots: set[str]) -> tuple[str, bool]:
+def classify_import(raw: str, lang: str, internal_names: set[str]) -> tuple[str, bool]:
     """Return ``(module, is_external)`` for a raw import statement.
 
     String-level classification only — not extraction, so no tree-sitter needed.
+    ``is_external`` is True only for genuine third-party packages: relative
+    imports, in-repo modules, and the standard library are all internal.
     """
     text = raw.strip()
     if lang in ("typescript", "tsx", "javascript"):
@@ -95,7 +118,7 @@ def classify_import(raw: str, lang: str, internal_roots: set[str]) -> tuple[str,
         if mod.startswith("."):
             return mod, False
         top = mod.lstrip("@").split("/")[0]
-        return mod, top not in internal_roots
+        return mod, top not in internal_names and mod not in internal_names
 
     # python
     if text.startswith("from "):
@@ -107,7 +130,8 @@ def classify_import(raw: str, lang: str, internal_roots: set[str]) -> tuple[str,
     if mod.startswith("."):
         return mod, False
     top = mod.split(".")[0]
-    return mod, top not in internal_roots
+    internal = top in internal_names or mod in internal_names or is_stdlib(mod)
+    return mod, not internal
 
 
 # ------------------------------------------------------------------ row writers
@@ -126,6 +150,11 @@ def _clear_file_rows(conn: sqlite3.Connection, file_id: int, sha: str) -> None:
         (sha, file_id),
     )
     conn.execute("DELETE FROM imports WHERE commit_sha=? AND file_id=?", (sha, file_id))
+    conn.execute(
+        "DELETE FROM entry_points WHERE commit_sha=? AND symbol_id IN "
+        "(SELECT id FROM symbols WHERE file_id=?)",
+        (sha, file_id),
+    )
 
 
 def _write_parsed(
@@ -186,6 +215,24 @@ def _write_parsed(
             (sha, file_id, imp.raw, None, 1 if external else 0, imp.line),
         )
 
+    # --- entry points (decorator- and __main__-based; always tied to a symbol)
+    name_to_key = {s.name: s.key for s in pf.symbols}
+    for sym in pf.symbols:
+        hit = entrypoints.from_decorators("\n".join(sym.decorators), pf.lang)
+        if hit:
+            kind, detail = hit
+            conn.execute(
+                "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+                (sha, key_to_id[sym.key], kind, detail),
+            )
+    for callee in pf.main_calls:
+        key = name_to_key.get(callee)
+        if key:
+            conn.execute(
+                "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+                (sha, key_to_id[key], "main", f"__main__ @ {pf.path}"),
+            )
+
 
 def _carry_forward(conn: sqlite3.Connection, file_id: int, src_sha: str, dst_sha: str) -> None:
     _clear_file_rows(conn, file_id, dst_sha)
@@ -214,6 +261,12 @@ def _carry_forward(conn: sqlite3.Connection, file_id: int, src_sha: str, dst_sha
         "INSERT INTO imports(commit_sha, file_id, raw, resolved_file_id, external, line) "
         "SELECT ?, file_id, raw, resolved_file_id, external, line "
         "FROM imports WHERE commit_sha=? AND file_id=?",
+        (dst_sha, src_sha, file_id),
+    )
+    conn.execute(
+        "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) "
+        "SELECT ?, symbol_id, kind, detail FROM entry_points "
+        "WHERE commit_sha=? AND symbol_id IN (SELECT id FROM symbols WHERE file_id=?)",
         (dst_sha, src_sha, file_id),
     )
 
@@ -261,7 +314,7 @@ def index_commit(
     )
 
     entries = discovery.iter_commit(root, sha, cfg)
-    internal_roots = _internal_roots(entries)
+    internal_roots = _internal_names(entries)
     present_paths = {e.path for e in entries}
 
     changed: dict[str, str] = {}   # path -> A|M
@@ -315,8 +368,37 @@ def index_commit(
             if row["path"] not in present_paths and row["path"] not in renamed_from.values():
                 _mark_deleted(conn, row["id"], sha)
 
+    _index_repo_entry_points(conn, root, sha)
+
     set_meta(conn, "last_indexed_commit", sha)
     conn.commit()
+
+
+def _index_repo_entry_points(conn: sqlite3.Connection, root, sha: str) -> None:
+    """Repo-level entry points: ``[project.scripts]`` consoles and Dockerfile
+    CMD/ENTRYPOINT. Scripts are resolved to a symbol; Dockerfile lines are
+    detail-only (no symbol, so no reachability path)."""
+    conn.execute(
+        "DELETE FROM entry_points WHERE commit_sha=? AND kind IN ('script','docker')", (sha,)
+    )
+    for name, module, func in entrypoints.repo_scripts(root, sha):
+        base = module.replace(".", "/")
+        row = conn.execute(
+            "SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id "
+            "JOIN symbol_versions sv ON sv.symbol_id = s.id AND sv.commit_sha = ? "
+            "WHERE f.path IN (?, ?) AND s.name = ? LIMIT 1",
+            (sha, f"{base}.py", f"{base}/__init__.py", func),
+        ).fetchone()
+        if row:
+            conn.execute(
+                "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+                (sha, row["id"], "script", f"{name} = {module}:{func}"),
+            )
+    for line in entrypoints.dockerfile_commands(root, sha):
+        conn.execute(
+            "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+            (sha, None, "docker", line),
+        )
 
 
 # ------------------------------------------------------------------------ worktree
@@ -330,7 +412,7 @@ def _index_worktree(conn: sqlite3.Connection, cfg: Config, stats: ScanStats) -> 
         (sha, get_meta(conn, "last_indexed_commit"), int(time.time()), "", "(working tree)", int(time.time())),
     )
     entries = discovery.iter_worktree(cfg)
-    internal_roots = _internal_roots(entries)
+    internal_roots = _internal_names(entries)
     present = {e.path for e in entries}
 
     prev_hashes = {
@@ -395,14 +477,15 @@ def scan(
     if not shas and start is None:
         shas = [resolve_sha(root, until)]
 
-    from . import semdiff
+    from . import impact, semdiff
 
     for sha in shas:
         index_commit(conn, cfg, sha, stats)
         stats.commits_indexed += 1
         parent = parent_sha(conn, sha)
         if parent is None or _commit_indexed(conn, parent):
-            semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
+            changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
+            impact.annotate(conn, cfg, parent, sha, changes)
 
     from . import retention
 

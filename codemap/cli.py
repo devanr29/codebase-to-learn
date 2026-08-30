@@ -101,7 +101,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def cmd_explain(args: argparse.Namespace) -> int:
-    from . import indexer, semdiff
+    from . import impact, indexer, semdiff
 
     root = _find_root(Path(args.path) if args.path else None)
     cfg = config.load(root)
@@ -112,13 +112,14 @@ def cmd_explain(args: argparse.Namespace) -> int:
     try:
         sha = indexer.resolve_sha(root, args.rev)
         parent = indexer.parent_sha(conn, sha)
-        if parent is None:
-            print(f"{sha[:7]} has no indexed parent — nothing to diff")
-            return 0
         changes = semdiff.load_changes(conn, sha)
-        if not changes:
+        if not changes and parent is not None:
             changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=False)
-        semdiff.print_breakdown(sha, changes)
+        if not changes:
+            print(f"{sha[:7]}: no recorded changes")
+            return 0
+        impacts = impact.analyze(conn, cfg, parent, sha, changes)
+        semdiff.print_breakdown(sha, changes, impacts)
         return 0
     finally:
         conn.close()

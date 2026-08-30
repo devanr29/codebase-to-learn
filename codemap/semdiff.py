@@ -357,7 +357,28 @@ def load_changes(conn: sqlite3.Connection, sha: str) -> list[Change]:
 _SEV_ORDER = {STRUCTURAL: 0, BEHAVIORAL: 1, COSMETIC: 2}
 
 
-def print_breakdown(sha: str, changes: list[Change]) -> None:
+def _impact_lines(change: Change, impacts: dict | None) -> list[str]:
+    if impacts is not None and change.symbol_key in impacts:
+        from .impact import render_lines
+
+        return render_lines(impacts[change.symbol_key])
+    summ = change.details.get("impact")
+    if not summ:
+        return []
+    n = summ.get("callers", 0)
+    if not n:
+        if summ.get("resolvable", True):
+            return ["Impact: no callers found"]
+        return [f"Impact: callers not resolvable at tier {summ.get('tier', 1)}"]
+    u = summ.get("unmodified", 0)
+    tail = f" — {summ.get('modified', 0)} updated, {u} unchanged (worth checking)" if u else ""
+    out = [f"Impact: {n} caller(s){tail}"]
+    if summ.get("entry_path"):
+        out.append(f"On path from: {summ['entry_path']}")
+    return out
+
+
+def print_breakdown(sha: str, changes: list[Change], impacts: dict | None = None) -> None:
     by_sev: dict[str, int] = {STRUCTURAL: 0, BEHAVIORAL: 0, COSMETIC: 0}
     for c in changes:
         by_sev[c.severity] = by_sev.get(c.severity, 0) + 1
@@ -373,5 +394,7 @@ def print_breakdown(sha: str, changes: list[Change]) -> None:
         elif c.change_type == "dependency_added":
             extra = f"  ({c.details.get('module')})"
         print(f"  [{c.severity}] {c.change_type}  {c.subject}{extra}")
+        for line in _impact_lines(c, impacts):
+            print(f"      {line}")
     if by_sev[COSMETIC]:
         print(f"  cosmetic: {by_sev[COSMETIC]} change(s) (not expanded)")
