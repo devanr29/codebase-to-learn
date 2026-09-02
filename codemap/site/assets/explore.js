@@ -271,6 +271,8 @@
     touched: null,
     module: null,
     flow: !reduceMotion,
+    folders: new Set(),   // legend folder filter — empty = every folder shown
+    pin: null,            // a click-pinned node key: spotlight it + its edges
   };
 
   // ---- routing ---------------------------------------------------
@@ -459,6 +461,24 @@
       else { state.grain = 3; render(); }
     };
   }
+  // A folder crumb "opens" that folder: drop any focus and isolate every colour
+  // group at or below the clicked path prefix, reusing the legend's folder wash
+  // (state.folders holds hex colours). An ancestor folder with no colour of its
+  // own still isolates, by sweeping up every coloured descendant.
+  function crumbFolder(prefix) {
+    return function () {
+      var hits = new Set();
+      Object.keys(groupColor).forEach(function (k) {
+        if (k === prefix || k.indexOf(prefix + "/") === 0) hits.add(groupColor[k]);
+      });
+      state.folders = hits;
+      state.focus = null;
+      state.fileScope = null;
+      state.pin = null;
+      if (state.grain < 2) state.grain = 2;
+      go("graph");
+    };
+  }
 
   // ---- graph layout -------------------------------------------
   function layoutOverview() {
@@ -491,6 +511,7 @@
         seen[a + " " + b] = 1;
         var md = moduleDepth(a);
         links.push({ a: centers[a], b: centers[b], seed: hashSeed(a + b), hot: true,
+          sk: "mod:" + a, tk: "mod:" + b,
           grp: moduleColor(a), live: md >= 0, dep: md < 0 ? 0 : md, vol: 8 });
       });
       return { placed: placed, links: links, lobes: lobes };
@@ -538,6 +559,7 @@
         var fd = fileFlow[fe.s], tf = FILES[fe.t];
         links.push({ a: a, b: b, seed: fe.s * 131 + fe.t,
           hot: FILES[fe.s].module !== FILES[fe.t].module,
+          sk: "file:" + FILES[fe.s].path, tk: "file:" + FILES[fe.t].path,
           grp: colorForPath(FILES[fe.s].path),
           live: fd >= 0, dep: fd < 0 ? 0 : fd,
           vol: (tf.symbols || []).reduce(function (s, si) { return s + N[si].fan_in; }, 0) });
@@ -550,7 +572,7 @@
         if (e.tier === 1 && N[e.s].fan_in < 3 && N[e.t].fan_in < 3 && cap++ > 220) return;
         var sd = symDepth(e.s);
         links.push({ a: a, b: b, seed: e.s * 131 + e.t, hot: e.tier === 2,
-          s: e.s, t: e.t, grp: colorForNode(N[e.s]),
+          s: e.s, t: e.t, sk: e.s, tk: e.t, grp: colorForNode(N[e.s]),
           live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[e.t].fan_in });
       });
     }
@@ -560,7 +582,8 @@
   function layoutFocus() {
     var f = state.focus;
     var soma = { x: VBW / 2, y: VBH / 2 };
-    var placed = [{ i: f, x: soma.x, y: soma.y, style: NODE_STYLE.focus, label: N[f].name, kind: "focus" }];
+    var placed = [{ i: f, x: soma.x, y: soma.y, style: NODE_STYLE.focus, label: N[f].name,
+      kind: "focus", group: colorForNode(N[f]) }];
     var links = [];
     function ring(dist, side) {
       var byHop = {};
@@ -581,7 +604,7 @@
           links.push({ a: side === "in" ? { x: x, y: y } : soma,
             b: side === "in" ? soma : { x: x, y: y },
             seed: hashSeed(N[idx].key), hot: h === 1, thin: side === "in",
-            s: src, t: dst, grp: colorForNode(N[idx]),
+            s: src, t: dst, sk: src, tk: dst, grp: colorForNode(N[idx]),
             live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[dst].fan_in });
         });
       });
@@ -598,6 +621,7 @@
           kind: "ext", group: IMPORT_EDGE });
         var sd = symDepth(f);
         links.push({ a: soma, b: { x: x, y: y }, seed: hashSeed(dep), imp: true,
+          sk: f, tk: "ext:" + dep,
           live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: 0 });
       });
     }
@@ -667,43 +691,71 @@
         if (lk.vol >= 6) grp.appendChild(comet(d.d, col, dur, begin + dur / 2, true));
       }
 
-      edgeItems.push({ el: grp, s: lk.s == null ? -1 : lk.s, t: lk.t == null ? -1 : lk.t });
+      edgeItems.push({ el: grp, grp: col,
+        s: lk.sk == null ? -1 : lk.sk, t: lk.tk == null ? -1 : lk.tk });
       edgeG.appendChild(grp);
     });
     g.appendChild(edgeG);
     lastFlowN = flowN;
 
+    // node size encodes received traffic: how many packets land on it per cycle
+    // (a live in-edge counts 1, a high-volume one 2). Nodes traffic never reaches
+    // keep their base size — big = does a lot of work in this codebase.
+    var recv = {};
+    if (animate)
+      lay.links.forEach(function (lk) {
+        if (!lk.live || lk.imp || lk.tk == null) return;
+        recv[lk.tk] = (recv[lk.tk] || 0) + 1 + (lk.vol >= 6 ? 1 : 0);
+      });
+
     var nodeG = el("g");
     lay.placed.forEach(function (p) {
       var st = p.style;
       var ring = p.group || st.stroke;
+      var rr = recv[p.i] || 0;                                     // traffic landing here
+      var R = st.r + (rr > 0 ? Math.min(13, Math.sqrt(rr) * 2.6) : 0);
       var wrap = el("g", { class: "gnode" });
-      if (st.halo) wrap.appendChild(el("circle", { cx: p.x, cy: p.y, r: st.halo, fill: st.hc }));
+      if (st.halo) wrap.appendChild(el("circle", { cx: p.x, cy: p.y,
+        r: Math.max(st.halo, R + 12), fill: st.hc }));
       if (animate && typeof p.i === "number" && entrySet.has(p.i)) {   // where packets are born
-        var pr = el("circle", { class: "emit", cx: p.x, cy: p.y, r: st.r + 2,
+        var pr = el("circle", { class: "emit", cx: p.x, cy: p.y, r: R + 2,
           fill: "none", stroke: ring, "stroke-width": 1.4 });
         var b = (-(rnd(p.i + 1) * 2.4)) + "s";
-        pr.appendChild(el("animate", { attributeName: "r", values: (st.r + 2) + ";" + (st.r + 17),
+        pr.appendChild(el("animate", { attributeName: "r", values: (R + 2) + ";" + (R + 17),
           dur: "2.4s", begin: b, repeatCount: "indefinite" }));
         pr.appendChild(el("animate", { attributeName: "opacity", values: "0.55;0",
           dur: "2.4s", begin: b, repeatCount: "indefinite" }));
         wrap.appendChild(pr);
       }
-      wrap.appendChild(el("circle", { class: "body", cx: p.x, cy: p.y, r: st.r,
+      wrap.appendChild(el("circle", { class: "body", cx: p.x, cy: p.y, r: R,
         fill: st.fill, stroke: ring, "stroke-width": p.kind === "focus" ? 2 : 1.6 }));
-      wrap.appendChild(el("text", { x: p.x, y: p.y + st.r + 12, "text-anchor": "middle",
+      wrap.appendChild(el("text", { x: p.x, y: p.y + R + 12, "text-anchor": "middle",
         "font-size": p.kind === "focus" ? 12 : 10.5,
         fill: p.kind === "focus" ? "#f5f4ff" : p.dead ? "#595d6c" : "#b2b6ca", text: p.label }));
       var act = p.act || (typeof p.i === "number"
         ? function () { go("graph", N[p.i].key); } : null);
-      wrap.style.cursor = act ? "pointer" : "default";
-      if (act)
+      var pinnable = p.i != null && p.kind !== "focus" && p.kind !== "ext";
+      wrap.style.cursor = (act || pinnable) ? "pointer" : "default";
+      if (pinnable) {
+        // one click pins a spotlight on this node + its edges; a double click
+        // drills in, the old single-click behaviour. 200ms lets dblclick win.
+        var clickT = 0;
+        wrap.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          clearTimeout(clickT);
+          clickT = setTimeout(function () { togglePin(p.i); }, 200);
+        });
+        wrap.addEventListener("dblclick", function (ev) {
+          ev.stopPropagation();
+          clearTimeout(clickT);
+          if (act) { state.pin = null; act(); }
+        });
+      } else if (act) {
         wrap.addEventListener("click", function (ev) { ev.stopPropagation(); act(); });
-      if (typeof p.i === "number") {
-        nodeItems.push({ el: wrap, i: p.i });
-        wrap.addEventListener("mouseenter", function () { setHighlight(p.i); });
-        wrap.addEventListener("mouseleave", function () { setHighlight(null); });
       }
+      nodeItems.push({ el: wrap, key: p.i, grp: p.group || null });
+      wrap.addEventListener("mouseenter", function () { setHighlight(p.i); });
+      wrap.addEventListener("mouseleave", function () { setHighlight(null); });
       nodeG.appendChild(wrap);
     });
     g.appendChild(nodeG);
@@ -716,6 +768,7 @@
   // churn — and hover only nudges opacity. That is what keeps the canvas smooth.
   var canvasEl, svgEl, sceneG, edgeItems = [], nodeItems = [];
   var drag = null, panPend = null, panRaf = 0, settleT = 0, lastFlowN = 0, animPaused = false;
+  var lastPanMoved = false;   // did the last mouseup end a real pan (vs a bare click)
 
   // Freeze every animation for the duration of a gesture. stroke-dashoffset is a
   // main-thread paint prop; re-tessellating dashes along 200+ beziers every frame
@@ -767,19 +820,59 @@
     state.highlight = i;
     applyHighlight();
   }
+  function togglePin(key) {
+    state.pin = state.pin === key ? null : key;
+    applyHighlight();
+  }
+  // One pass sets the final opacity of every node and edge from two lenses that
+  // stack: the folder filter (legend clicks) washes out whole folders; the
+  // spotlight (a hovered or click-pinned node) washes out everything not touching
+  // that one node. Neither rebuilds the scene — like pan/zoom this only nudges
+  // style.opacity on nodes/edges already in the DOM.
   function applyHighlight() {
-    var h = state.highlight, near = null;
+    var h = state.highlight != null ? state.highlight : state.pin;
+    if (h != null) {
+      var known = new Set(nodeItems.map(function (it) { return it.key; }));
+      if (!known.has(h)) { if (state.pin === h) state.pin = null; h = null; }   // stale after relayout
+    }
+    var near = null;
     if (h != null) {
       near = new Set([h]);
-      (outAdj[h] || []).forEach(function (x) { near.add(x); });
-      (inAdj[h] || []).forEach(function (x) { near.add(x); });
+      edgeItems.forEach(function (it) {
+        if (it.s === h) near.add(it.t);
+        else if (it.t === h) near.add(it.s);
+      });
     }
+    var filtering = state.folders && state.folders.size > 0;
+    function fdim(grp) { return filtering && (!grp || !state.folders.has(grp)); }
     edgeItems.forEach(function (it) {
-      it.el.style.opacity = h == null ? "" : (it.s === h || it.t === h ? "1" : "0.06");
+      var o = 1;
+      if (fdim(it.grp)) o = 0.05;
+      if (h != null && !(it.s === h || it.t === h)) o = Math.min(o, 0.06);
+      it.el.style.opacity = o === 1 ? "" : String(o);
     });
     nodeItems.forEach(function (it) {
-      it.el.style.opacity = h == null ? "" : (near.has(it.i) ? "1" : "0.22");
+      var o = 1;
+      if (fdim(it.grp)) o = 0.12;
+      if (h != null && !near.has(it.key)) o = Math.min(o, 0.22);
+      it.el.style.opacity = o === 1 ? "" : String(o);
+      it.el.classList.toggle("pinned", state.pin != null && it.key === state.pin);
     });
+  }
+  function toggleFolder(hex) {
+    if (state.folders.has(hex)) state.folders.delete(hex);
+    else state.folders.add(hex);
+    applyHighlight();
+    refreshLegend();
+  }
+  function clearFolders() {
+    state.folders.clear();
+    applyHighlight();
+    refreshLegend();
+  }
+  function refreshLegend() {
+    var old = canvasEl && canvasEl.querySelector(".legend");
+    if (old) old.replaceWith(legend());
   }
   function paintGraph() {
     if (!svgEl) return;
@@ -799,6 +892,7 @@
     if (panRaf) return;
     panRaf = requestAnimationFrame(function () {
       panRaf = 0;
+      drag.moved = true;
       state.view.x = drag.vx + (panPend.clientX - drag.x);
       state.view.y = drag.vy + (panPend.clientY - drag.y);
       liveView();
@@ -806,6 +900,7 @@
   });
   window.addEventListener("mouseup", function () {
     if (!drag && !animPaused) return;
+    lastPanMoved = !!(drag && drag.moved);
     drag = null;
     // covers both a finished drag and a bare click (which armed no settle timer)
     clearTimeout(settleT);
@@ -819,15 +914,28 @@
     var n = state.focus != null ? N[state.focus] : null;
     var crumb = el("div", { class: "crumb" });
     if (n) {
-      n.file.split("/").forEach(function (s, i, a) {
+      // every crumb segment is a live control: a folder isolates its subtree,
+      // the filename scopes to that file, the trailing symbol re-centres the
+      // view. Long paths scroll sideways (kicked to the selected end on render).
+      var segs = n.file.split("/");
+      var fobj = fileByPath[n.file];
+      segs.forEach(function (s, i) {
         if (i) crumb.appendChild(el("i", { class: "ph ph-caret-right" }));
-        crumb.appendChild(el("span", { class: i === a.length - 1 ? "cur" : "", text: s }));
+        var last = i === segs.length - 1;
+        crumb.appendChild(el("span", {
+          class: last ? "cur seg" : "seg", text: s,
+          on: last
+            ? (fobj ? { click: fileAct(fobj) } : null)
+            : { click: crumbFolder(segs.slice(0, i + 1).join("/")) },
+        }));
       });
       crumb.appendChild(el("i", { class: "ph ph-caret-right" }));
-      crumb.appendChild(el("span", { class: "cur", text: n.name + "()" }));
+      crumb.appendChild(el("span", { class: "cur seg fn", text: n.name + "()",
+        on: { click: function () { state.view = { x: 0, y: 0, k: 1 }; applyView(); } } }));
     } else {
       crumb.appendChild(el("span", { class: "cur", text: "all modules" }));
     }
+    setTimeout(function () { crumb.scrollLeft = crumb.scrollWidth; }, 0);
 
     var grainSeg = el("div", { class: "seg" },
       ["Package", "Module", "File", "Function"].map(function (label, gi) {
@@ -847,7 +955,10 @@
       on: { click: function () { state.showDead = !state.showDead; render(); } } },
       [el("i", { class: "ph ph-eye-slash" }), "Unreachable"]);
     var resetPill = el("button", { class: "pill",
-      on: { click: function () { state.focus = null; state.fileScope = null; state.touched = null; go("graph"); } } },
+      on: { click: function () {
+        state.focus = null; state.fileScope = null; state.touched = null; state.pin = null;
+        go("graph");
+      } } },
       [el("i", { class: "ph ph-arrow-counter-clockwise" }), "Whole graph"]);
     var flowPill = el("button", { class: "pill" + (state.flow ? " on" : ""),
       on: { click: function () { state.flow = !state.flow; paintGraph(); updateCap(); } } },
@@ -880,17 +991,28 @@
   }
   function legend() {
     var box = el("div", { class: "legend" }, [el("div", { class: "lk", text: "FOLDERS" })]);
+    var sel = state.folders;
+    // each folder row is a filter toggle — click one to isolate it, the rest of
+    // the graph drops to a wash (not hidden). Empty selection = show everything.
+    function folderRow(hex, label) {
+      var on = sel.has(hex);
+      return el("div", {
+        class: "row folder" + (on ? " on" : "") + (sel.size && !on ? " off" : ""),
+        title: "click to isolate this folder",
+        on: { click: function () { toggleFolder(hex); } },
+      }, [
+        el("span", { class: "sw dot", style: "background:" + hex }),
+        el("span", { class: "gname", text: label }),
+      ]);
+    }
     groupOrder.forEach(function (k) {
-      box.appendChild(el("div", { class: "row" }, [
-        el("span", { class: "sw dot", style: "background:" + groupColor[k] }),
-        el("span", { class: "gname", text: k === "(root)" ? "· repo root" : k }),
-      ]));
+      box.appendChild(folderRow(groupColor[k], k === "(root)" ? "· repo root" : k));
     });
     if (Object.keys(groupColor).length > groupOrder.length)
-      box.appendChild(el("div", { class: "row" }, [
-        el("span", { class: "sw dot", style: "background:" + GROUP_OTHER }),
-        el("span", { class: "gname", text: "other folders" }),
-      ]));
+      box.appendChild(folderRow(GROUP_OTHER, "other folders"));
+    if (sel.size)
+      box.appendChild(el("div", { class: "row reset", on: { click: clearFolders } },
+        [el("span", { class: "sw" }), "show all folders"]));
     box.appendChild(el("div", { class: "lk", style: "margin-top:9px", text: "EDGE" }));
     box.appendChild(el("div", { class: "row" }, [
       el("span", { class: "sw", style: "background:var(--color-neutral-300)" }),
@@ -904,6 +1026,11 @@
       ]));
       box.appendChild(el("div", { class: "row" }, [
         el("span", { class: "sw dot", style: "background:#f5f4ff" }), "packet · more = higher fan-in",
+      ]));
+      box.appendChild(el("div", { class: "row" }, [
+        el("span", { class: "sw dot",
+          style: "background:var(--color-neutral-400);width:13px;height:13px" }),
+        "bigger node = more traffic handled",
       ]));
       box.appendChild(el("div", { class: "row" }, [
         el("span", { class: "sw", style: "background:var(--color-neutral-800)" }),
@@ -932,6 +1059,10 @@
       drag = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y };
       canvasEl.classList.add("dragging");
       freezeAnims();
+    });
+    canvasEl.addEventListener("click", function (e) {   // click the backdrop = unpin
+      if (e.target.closest(".gnode") || lastPanMoved) return;
+      if (state.pin != null) { state.pin = null; applyHighlight(); }
     });
     canvasEl.addEventListener("wheel", function (e) {
       e.preventDefault();

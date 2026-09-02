@@ -224,9 +224,19 @@ button { font-family: inherit; }
   padding: 0 14px;
   border-bottom: 1px solid var(--color-divider);
 }
-.crumb { display: flex; align-items: center; gap: 6px; font: 400 12px var(--font-mono); color: var(--color-neutral-400); }
+.crumb {
+  display: flex; align-items: center; gap: 6px;
+  font: 400 12px var(--font-mono); color: var(--color-neutral-400);
+  min-width: 0; flex: 0 1 auto; max-width: min(460px, 40%);
+  overflow-x: auto; overflow-y: hidden; white-space: nowrap;
+  scrollbar-width: thin;
+}
+.crumb::-webkit-scrollbar { height: 4px; }
+.crumb > * { flex: none; }               /* segments scroll rather than squash */
 .crumb i { font-size: 10px; color: var(--color-neutral-700); }
 .crumb .cur { color: var(--color-text); }
+.crumb .seg { cursor: pointer; }
+.crumb .seg:hover { color: var(--color-accent-200); text-decoration: underline; text-underline-offset: 2px; }
 
 .seg {
   display: flex;
@@ -271,6 +281,7 @@ button { font-family: inherit; }
 .gnode, g.edge { transition: opacity .12s ease; }
 .gnode { cursor: pointer; }
 .gnode:hover circle.body { stroke: var(--color-accent-200); }
+.gnode.pinned circle.body { stroke: var(--color-accent-200); stroke-width: 2.6; }
 
 /* traffic simulation — one shared keyframe drives every "current" edge. The
    offset delta is a fixed multiple of the 14px dash period, so a single
@@ -315,6 +326,14 @@ button { font-family: inherit; }
 }
 .legend .lk { font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin-bottom: 2px; }
 .legend .row { display: flex; align-items: center; gap: 7px; }
+/* legend folder rows double as filter toggles: the picked folders stay lit, the
+   rest of the legend dims, and matching-colour nodes/edges drop to a wash. */
+.legend .row.folder { cursor: pointer; border-radius: 4px; margin: 0 -4px; padding: 1px 4px; }
+.legend .row.folder:hover { background: var(--color-neutral-900); }
+.legend .row.folder.on { background: var(--color-accent-900); }
+.legend .row.folder.off { opacity: 0.45; }
+.legend .row.reset { cursor: pointer; color: var(--color-accent-400); font: 400 10px var(--font-mono); }
+.legend .row.reset:hover { color: var(--color-accent-300); }
 .legend .sw { width: 16px; height: 2px; border-radius: 2px; flex: none; }
 .legend .sw.dot { width: 10px; height: 10px; border-radius: 3px; }
 .legend .sw.dash { background: none !important; border-top: 2px dashed var(--edge-import); border-radius: 0; }
