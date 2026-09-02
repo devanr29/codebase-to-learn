@@ -28,11 +28,14 @@ NOTE_FILE = "note-intent"
 _HOOK_MARKER = "# >>> codemap post-commit >>>"
 _HOOK_BODY = """\
 # >>> codemap post-commit >>>
-# Explains the commit just made. Never fails a commit: everything is backgrounded
-# and this block always exits 0. Requires `codemap` on PATH (pipx/uv install).
+# Explains the commit just made and refreshes .codemap/explore.html. Never fails
+# a commit: everything is backgrounded and this block always exits 0. Requires
+# `codemap` on PATH (pipx/uv install). The explore rebuild is skipped unless
+# [explore] rebuild_on_commit is true in .codemap/config.toml.
 (
   codemap scan >"$(git rev-parse --git-dir)/codemap-hook.log" 2>&1
   codemap explain HEAD >>"$(git rev-parse --git-dir)/codemap-hook.log" 2>&1
+  codemap explore --quiet --if-enabled >>"$(git rev-parse --git-dir)/codemap-hook.log" 2>&1
 ) &
 # <<< codemap post-commit <<<
 """

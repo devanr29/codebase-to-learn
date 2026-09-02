@@ -28,14 +28,39 @@ codemap explain HEAD --breakdown   # …plus the raw change list
 codemap catchup              # one digest of everything since `codemap reviewed`
 codemap reviewed HEAD        # advance the reviewed marker
 codemap snapshot             # architecture view from the current graph
+codemap explore              # render .codemap/explore.html — the browsable surface
+codemap explore --open       # …and open it
+codemap explore --emit-brief # analysis pack for the course-authoring skill
 codemap note "why I'm about to commit"   # record intent for the next commit
-codemap install-hook         # post-commit hook: scan + explain, always exits 0
+codemap install-hook         # post-commit hook: scan + explain + explore, always exits 0
 codemap status               # index state
 ```
 
 Change entries land in `.codemap/changes/<ts>-<sha7>.md`. Configuration is
 `.codemap/config.toml` (ignore patterns, languages, `impact_depth`, `retention`,
-and an off-by-default LLM narrative stage).
+an off-by-default LLM narrative stage, and an `[explore]` block).
+
+### Explore
+
+`codemap explore` renders one self-contained `.codemap/explore.html` from the
+index — no server, no build step, opens with a double-click. Three tabs:
+
+- **Graph** — the whole file/function structure as a neural-style code graph:
+  source tree, module lobes wired by organic dendritic edges, a neuron view
+  (callers as afferent dendrites, callees as efferent) when a symbol is focused,
+  and an inspector with fan-in/out, blast radius, entry path, source, the file's
+  third-party / built-in / internal imports, and a plain-English "what this does"
+  blurb from `.codemap/explanations.json` when present.
+- **Learn** — an authored walkthrough from `.codemap/learn.json` when present
+  (see the repo-root `SKILL.md`), else a generated Orientation. `learn.json` and
+  `explanations.json` are both optional and fall back silently.
+- **Timeline** — every commit with its stated intent, severity counts, headline
+  change and blast radius, linking back into the graph.
+
+Fonts (Inter) and icons (Phosphor) load from a CDN; offline, the page degrades
+to a system font and keeps working. The `[explore]` config controls
+`rebuild_on_commit` (default true — the hook refreshes the page after each
+commit), `max_symbols` and `max_snippet_lines`.
 
 ### Intent
 

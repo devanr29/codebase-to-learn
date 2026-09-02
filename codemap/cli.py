@@ -114,8 +114,10 @@ def cmd_explain(args: argparse.Namespace) -> int:
         parent = indexer.parent_sha(conn, sha)
         changes = semdiff.load_changes(conn, sha)
         if not changes and parent is not None:
+            # recompute without persisting — explain never writes to the index;
+            # analyze() below folds the impact summary in memory, so annotate()'s
+            # DB UPDATE (which would match nothing here) is not needed
             changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=False)
-            impact.annotate(conn, cfg, parent, sha, changes)
         impacts = impact.analyze(conn, cfg, parent, sha, changes) if changes else {}
         print(report.render_commit(conn, cfg, sha, impacts=impacts))
         if args.breakdown:
@@ -161,6 +163,64 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
         out.write_text(body + "\n", encoding="utf-8")
         print(body)
         print(f"\n(written to {out})")
+        return 0
+    finally:
+        conn.close()
+
+
+def cmd_explore(args: argparse.Namespace) -> int:
+    import json as _json
+
+    from . import db as _db
+    from .site import model as _model
+
+    root = _find_root(Path(args.path) if args.path else None)
+    cfg = config.load(root)
+    if not cfg.db_path.exists():
+        print("no index yet — run `codemap scan` first")
+        return 0
+    if getattr(args, "if_enabled", False) and not cfg.explore.rebuild_on_commit:
+        return 0
+    conn = _db.connect(cfg.db_path)
+    try:
+        data = _model.build(
+            conn,
+            cfg,
+            max_symbols=args.max_symbols or cfg.explore.max_symbols,
+            max_snippet_lines=cfg.explore.max_snippet_lines,
+        )
+        if data.get("empty"):
+            print("index is empty — run `codemap scan` first")
+            return 0
+        if getattr(args, "emit_brief", False):
+            from .site import brief as _brief
+
+            paths = _brief.emit(conn, cfg, data)
+            print(f"wrote {len(paths)} brief(s) under {cfg.codemap_dir / 'briefs'}")
+            return 0
+        if args.json:
+            print(_json.dumps(data, indent=2, sort_keys=True))
+            return 0
+
+        from .site import render as _render
+
+        out = Path(args.out) if args.out else (cfg.codemap_dir / "explore.html")
+        html = _render.render(data)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(html, encoding="utf-8")
+        size_mb = len(html.encode("utf-8")) / 1_048_576
+        if size_mb > 8:
+            print(f"warning: {out.name} is {size_mb:.1f} MB", file=sys.stderr)
+        if not args.quiet:
+            s = data["stats"]
+            print(
+                f"wrote {out}  ({s['files']} files, {s['symbols']} symbols, "
+                f"{s['edges']} edges)"
+            )
+        if args.open:
+            import webbrowser
+
+            webbrowser.open(out.resolve().as_uri())
         return 0
     finally:
         conn.close()
@@ -226,6 +286,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     add("catchup", cmd_catchup, "digest every change since the last-reviewed marker")
     add("snapshot", cmd_snapshot, "render the current architecture snapshot")
+
+    sp = add("explore", cmd_explore, "render the self-contained explore.html surface")
+    sp.add_argument("--out", help="output path (default: .codemap/explore.html)")
+    sp.add_argument("--json", action="store_true", help="print the graph model as JSON, write nothing")
+    sp.add_argument("--emit-brief", action="store_true", help="write module briefs for the course-authoring skill")
+    sp.add_argument("--max-symbols", type=int, default=0, help="cap graph nodes (default: config)")
+    sp.add_argument("--open", action="store_true", help="open the result in a browser")
+    sp.add_argument("--quiet", action="store_true", help="suppress the summary line")
+    sp.add_argument("--if-enabled", action="store_true",
+                    help="no-op unless [explore] rebuild_on_commit is true (used by the hook)")
 
     sp = add("reviewed", cmd_reviewed, "advance the last-reviewed marker")
     sp.add_argument("rev", nargs="?", default="HEAD", help="commit (default: HEAD)")

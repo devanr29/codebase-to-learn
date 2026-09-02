@@ -29,6 +29,7 @@ packages = ["codemap"]
 "codemap/schema.sql" = "codemap/schema.sql"
 "codemap/languages/queries" = "codemap/languages/queries"
 "codemap/hooks" = "codemap/hooks"
+"codemap/site/assets" = "codemap/site/assets"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

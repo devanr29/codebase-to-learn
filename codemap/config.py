@@ -49,6 +49,14 @@ retention = 50
 # M8 narrative stage. Deterministic output (M0-M7) is unaffected by this flag.
 enabled = false
 model = "claude-sonnet-5"
+
+[explore]
+# The self-contained explore.html surface (M10-M14). The renderer is
+# deterministic and never calls an LLM; teaching content, when present, is
+# authored separately into .codemap/learn.json.
+rebuild_on_commit = true
+max_symbols = 1500
+max_snippet_lines = 40
 """
 
 
@@ -59,6 +67,13 @@ class LLMConfig:
 
 
 @dataclass
+class ExploreConfig:
+    rebuild_on_commit: bool = True
+    max_symbols: int = 1500
+    max_snippet_lines: int = 40
+
+
+@dataclass
 class Config:
     root: Path
     ignore: list[str] = field(default_factory=list)
@@ -66,6 +81,7 @@ class Config:
     impact_depth: int = 3
     retention: int = 50
     llm: LLMConfig = field(default_factory=LLMConfig)
+    explore: ExploreConfig = field(default_factory=ExploreConfig)
 
     @property
     def codemap_dir(self) -> Path:
@@ -105,6 +121,12 @@ def load(root: Path | str) -> Config:
     cfg.llm = LLMConfig(
         enabled=bool(llm.get("enabled", False)),
         model=str(llm.get("model", "claude-sonnet-5")),
+    )
+    exp = data.get("explore", {})
+    cfg.explore = ExploreConfig(
+        rebuild_on_commit=bool(exp.get("rebuild_on_commit", True)),
+        max_symbols=int(exp.get("max_symbols", 1500)),
+        max_snippet_lines=int(exp.get("max_snippet_lines", 40)),
     )
     return cfg
 

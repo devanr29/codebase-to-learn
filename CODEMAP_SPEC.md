@@ -40,7 +40,9 @@ Build the delta first. The snapshot is M9 and optional.
 Do not implement these, even partially, even if they look easy:
 
 - File watcher, daemon, background service, or any always-running process
-- Web UI, desktop app, IDE plugin
+- No server, no daemon, no IDE plugin. A statically generated, self-contained
+  HTML artifact **is** in scope (M10–M14, §12); it is rendered from the DB by
+  deterministic code and never runs a process.
 - Full type inference or a compiler-grade index (see §5 on resolution tiers)
 - Vector search / embeddings / RAG
 - Multi-repo or cross-repo analysis
@@ -322,6 +324,50 @@ advances the marker.
 
 `codemap snapshot` — the architecture document from spec v1 (module map, entry points,
 dependencies, hotspots), rendered from the current graph.
+
+---
+
+## 12. Explorer — `codemap explore` (M10–M14)
+
+A second-order artifact: one self-contained `.codemap/explore.html`, rendered
+from the same DB by deterministic code (no LLM in the render path), that becomes
+the primary way to *read* the repository. Three tabs sharing one hash router:
+
+- **Graph** — the whole file/function structure as a neural-style graph: a source
+  tree in the left rail, module "lobes" with organic dendritic edges on the
+  canvas, a soma-and-dendrites neuron view when a symbol is focused, and an
+  inspector (fan-in/out, blast radius, entry path, source excerpt, the file's
+  third-party / built-in / internal imports, and a "what this does" blurb from
+  `.codemap/explanations.json` when present).
+- **Learn** — renders `.codemap/learn.json` when present (authored by the
+  repo-root `SKILL.md` skill), else a deterministic Orientation built from the
+  graph alone. Both `learn.json` and `explanations.json` are optional and fall
+  back silently.
+- **Timeline** — newest-first commits with intent source, severity counts, the
+  `report._pick_headline` change, its impact line, and a read-this-first jump
+  into the Graph tab.
+
+Milestones:
+
+- **M10** — `resolve.py` (raw import → file id, query-time, does **not** touch
+  the incremental index path), `site/model.py` (DB → one JSON-serializable
+  dict), `codemap explore --json`.
+- **M11** — `site/render.py` + the frozen `site/assets/{shell.html,explore.css,
+  explore.js}`, the `explore` subcommand. Assets are hand-authored once and
+  never regenerated; all variation flows through the inlined JSON.
+- **M12** — the Timeline tab; fold the impact/headline data into the model.
+- **M13** — `site/brief.py` (`--emit-brief`), `site/learn.py`, the Orientation
+  fallback, and the ported interactive components (translation blocks, quizzes,
+  glossary tooltips, call-path replay, trace exercise).
+- **M14** — repo-root `SKILL.md` + `references/*`, hook auto-rebuild
+  (`codemap explore --quiet --if-enabled`, gated by
+  `[explore] rebuild_on_commit`), these spec/README amendments.
+
+Constraints: every `explore` code path returns 0 (the hook must never fail a
+commit); the render is deterministic apart from a `built_at` timestamp; the
+graph never shows an edge absent from `impact.call_graph`, and labels a
+name-based cross-file edge as tier 1. `anthropic` stays an M8-only optional dep —
+the explorer does not use it.
 
 ---
 

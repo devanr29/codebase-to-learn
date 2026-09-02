@@ -83,6 +83,10 @@ def _describe(c: semdiff.Change) -> str | None:
         return f"new file `{c.subject}`"
     if c.change_type == "file_removed":
         return f"removed file `{c.subject}`"
+    if c.change_type == "dependency_added":
+        return f"new dependency `{c.details.get('module', c.subject)}`"
+    if c.change_type == "dependency_removed":
+        return f"dropped dependency `{c.details.get('module', c.subject)}`"
     if c.change_type in ("entry_point_added", "entry_point_removed"):
         verb = "new" if c.change_type.endswith("added") else "removed"
         return f"{verb} entry point `{c.details.get('detail', c.subject)}`"
