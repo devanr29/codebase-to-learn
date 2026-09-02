@@ -9,7 +9,7 @@
   var APP = document.getElementById("app");
   var SVGNS = "http://www.w3.org/2000/svg";
   var SVG_TAGS = { svg: 1, g: 1, path: 1, circle: 1, text: 1, ellipse: 1, line: 1, rect: 1,
-                   animate: 1, animateMotion: 1 };
+                   animate: 1, animateMotion: 1, defs: 1, pattern: 1, title: 1 };
 
   // ---- tiny DOM helper -------------------------------------------------
   function el(tag, attrs, kids) {
@@ -256,6 +256,115 @@
     return best;
   }
 
+  // ---- map-tab derivations ------------------------------------------
+  // The Graph tab answers "what calls what". These power a second tab that
+  // answers three questions the call graph alone never shows: what SHAPE is this
+  // system (layer cake), what happens when it RUNS (run trace), and where does
+  // the code sit and keep moving (mass map). All from the payload already inlined
+  // — no Python change. `fileAdj` (s imports t) is reused from the traffic model.
+
+  var fileImpBy = FILES.map(function () { return []; });   // reverse: who imports me
+  fileAdj.forEach(function (outs, s) {
+    outs.forEach(function (t) { fileImpBy[t].push(s); });
+  });
+
+  // Strongly-connected components of the file-import graph (iterative Tarjan —
+  // recursion could blow the stack on a big repo). An SCC with >1 member is an
+  // import cycle, drawn later as one merged block.
+  function fileSCCs() {
+    var n = FILES.length, idx = 0;
+    var num = new Array(n).fill(-1), low = new Array(n).fill(0);
+    var onStk = new Array(n).fill(false), stk = [];
+    var comp = new Array(n).fill(-1), comps = [];
+    for (var s0 = 0; s0 < n; s0++) {
+      if (num[s0] >= 0) continue;
+      var work = [[s0, 0]];
+      while (work.length) {
+        var fr = work[work.length - 1], v = fr[0];
+        if (fr[1] === 0) { num[v] = low[v] = idx++; stk.push(v); onStk[v] = true; }
+        if (fr[1] < fileAdj[v].length) {
+          var w = fileAdj[v][fr[1]++];
+          if (num[w] < 0) work.push([w, 0]);
+          else if (onStk[w]) low[v] = Math.min(low[v], num[w]);
+        } else {
+          if (low[v] === num[v]) {
+            var c = [], x;
+            do { x = stk.pop(); onStk[x] = false; comp[x] = comps.length; c.push(x); }
+            while (x !== v);
+            comps.push(c);
+          }
+          work.pop();
+          if (work.length) {
+            var p = work[work.length - 1][0];
+            low[p] = Math.min(low[p], low[v]);
+          }
+        }
+      }
+    }
+    return { comp: comp, comps: comps };
+  }
+  var _scc = fileSCCs();
+  var fileComp = _scc.comp;              // fi -> component id
+  var sccMembers = _scc.comps;           // component id -> [fi, ...]
+  var compAdj = sccMembers.map(function () { return new Set(); });
+  fileAdj.forEach(function (outs, s) {
+    outs.forEach(function (t) {
+      if (fileComp[s] !== fileComp[t]) compAdj[fileComp[s]].add(fileComp[t]);
+    });
+  });
+  // longest-path layer over the condensed DAG: 0 = imports nothing in-repo
+  var compLayer = new Array(sccMembers.length).fill(-1);
+  (function () {
+    function depthOf(c) {
+      if (compLayer[c] >= 0) return compLayer[c];
+      compLayer[c] = 0;                  // guard against any stray re-entry
+      var d = 0;
+      compAdj[c].forEach(function (t) { d = Math.max(d, 1 + depthOf(t)); });
+      return (compLayer[c] = d);
+    }
+    for (var c = 0; c < sccMembers.length; c++) depthOf(c);
+  })();
+  function fileLayer(fi) { return compLayer[fileComp[fi]]; }
+
+  // per-file churn (Σ non-cosmetic changes) + "every function unreachable" flag
+  var churnOf = FILES.map(function () { return 0; });
+  var funcOf = FILES.map(function () { return 0; });
+  var deadOf = FILES.map(function () { return 0; });
+  N.forEach(function (nd) {
+    var f = fileByPath[nd.file];
+    if (!f) return;
+    churnOf[f.fi] += nd.churn || 0;
+    if (nd.kind === "function" || nd.kind === "method") {
+      funcOf[f.fi]++;
+      if (nd.fan_in === 0 && !(nd.entry && nd.entry.length)) deadOf[f.fi]++;
+    }
+  });
+  function fileAllDead(fi) { return funcOf[fi] > 0 && deadOf[fi] === funcOf[fi]; }
+  var churnMax = Math.max.apply(null, churnOf.concat([1]));
+
+  // Trace roots are ranked by call-subtree size, NOT read from DATA.entry_points
+  // — main() dies at `args.func(args)` after two hops (dynamic dispatch the
+  // indexer can't follow), so the richly-connected roots are the big test
+  // drivers and the cmd_* handlers instead.
+  function subtreeSize(i, cap) {
+    var seen = new Set([i]), frontier = [i];
+    for (var d = 0; d < cap && frontier.length; d++) {
+      var nx = [];
+      frontier.forEach(function (u) {
+        (outAdj[u] || []).forEach(function (v) {
+          if (!seen.has(v)) { seen.add(v); nx.push(v); }
+        });
+      });
+      frontier = nx;
+    }
+    return seen.size - 1;
+  }
+  var traceRoots = N.map(function (nd) { return { i: nd.i, size: subtreeSize(nd.i, 6) }; })
+    .filter(function (r) { return r.size >= 4; })
+    .sort(function (a, b) { return b.size - a.size || N[a.i].qual.localeCompare(N[b.i].qual); })
+    .slice(0, 14);
+  var traceExpand = {};   // "<root>:<depth>" -> true once the "+N more" is opened
+
   // ---- app state ---------------------------------------------------
   var reduceMotion = window.matchMedia &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -273,6 +382,10 @@
     flow: !reduceMotion,
     folders: new Set(),   // legend folder filter — empty = every folder shown
     pin: null,            // a click-pinned node key: spotlight it + its edges
+    mapView: "layers",    // Map tab: "layers" | "trace" | "mass"
+    traceRoot: null,      // Map/trace: node index of the traced call root
+    traceStep: null,      // Map/trace: BFS depth the step wave has reached (null = all)
+    hideTests: false,     // Map/layers: drop tests/** and collapse empty bands
   };
 
   // ---- routing ---------------------------------------------------
@@ -288,13 +401,21 @@
 
   function route() {
     var r = parseHash();
-    state.tab = ["graph", "learn", "timeline"].indexOf(r.tab) >= 0 ? r.tab : "graph";
+    state.tab = ["graph", "learn", "timeline", "map"].indexOf(r.tab) >= 0 ? r.tab : "graph";
     if (state.tab === "graph") {
       if (r.arg && keyToI[r.arg] != null) { state.focus = keyToI[r.arg]; state.fileScope = null; }
       else if (!r.arg) state.focus = null;
     } else if (state.tab === "learn") {
       state.module = r.arg ||
         (DATA.learn && DATA.learn.modules[0] && DATA.learn.modules[0].id) || "orientation";
+    } else if (state.tab === "map") {
+      var seg = r.arg.split("/");
+      if (["layers", "trace", "mass"].indexOf(seg[0]) >= 0) state.mapView = seg[0];
+      if (state.mapView === "trace") {
+        var key = seg.slice(1).join("/");
+        if (key && keyToI[key] != null) { state.traceRoot = keyToI[key]; state.traceStep = null; }
+        else if (state.traceRoot == null && traceRoots.length) state.traceRoot = traceRoots[0].i;
+      }
     }
     render();
   }
@@ -304,6 +425,7 @@
     var s = DATA.stats || {};
     var tabs = [
       ["graph", "ph ph-graph", "Graph"],
+      ["map", "ph ph-stack", "Map"],
       ["learn", "ph ph-graduation-cap", "Learn"],
       ["timeline", "ph ph-git-commit", "Timeline"],
     ].map(function (t) {
@@ -915,8 +1037,7 @@
     var crumb = el("div", { class: "crumb" });
     if (n) {
       // every crumb segment is a live control: a folder isolates its subtree,
-      // the filename scopes to that file, the trailing symbol re-centres the
-      // view. Long paths scroll sideways (kicked to the selected end on render).
+      // the filename scopes to that file, the trailing symbol re-centres the view.
       var segs = n.file.split("/");
       var fobj = fileByPath[n.file];
       segs.forEach(function (s, i) {
@@ -935,7 +1056,36 @@
     } else {
       crumb.appendChild(el("span", { class: "cur", text: "all modules" }));
     }
-    setTimeout(function () { crumb.scrollLeft = crumb.scrollWidth; }, 0);
+    // No persistent scrollbar. The wheel scrolls the path while the pointer is
+    // over it, and a caret on each side nudges it. Carets + the edge fade only
+    // appear when the path overflows, and each caret dims at its limit.
+    function crumbNav(icon, dir) {
+      return el("button", { class: "crumb-nav " + (dir < 0 ? "l" : "r"),
+        "aria-label": dir < 0 ? "scroll path left" : "scroll path right",
+        on: { click: function () {
+          crumb.scrollBy({ left: dir * Math.max(90, crumb.clientWidth * 0.6), behavior: "smooth" });
+        } } }, [el("i", { class: icon })]);
+    }
+    var crumbWrap = el("div", { class: "crumbwrap" }, [
+      crumbNav("ph ph-caret-left", -1), crumb, crumbNav("ph ph-caret-right", 1),
+    ]);
+    function syncCrumbNav() {
+      var over = crumb.scrollWidth - crumb.clientWidth;
+      crumbWrap.classList.toggle("scrollable", over > 1);
+      crumbWrap.classList.toggle("at-start", crumb.scrollLeft <= 0);
+      crumbWrap.classList.toggle("at-end", crumb.scrollLeft >= over - 1);
+    }
+    crumb.addEventListener("wheel", function (e) {
+      if (crumb.scrollWidth <= crumb.clientWidth) return;
+      e.preventDefault();
+      crumb.scrollLeft += e.deltaY || e.deltaX;
+    }, { passive: false });
+    crumb.addEventListener("scroll", syncCrumbNav);
+    setTimeout(function () {
+      syncCrumbNav();                       // carets claim their width first…
+      crumb.scrollLeft = crumb.scrollWidth; // …then kick to the selected end
+      syncCrumbNav();
+    }, 0);
 
     var grainSeg = el("div", { class: "seg" },
       ["Package", "Module", "File", "Function"].map(function (label, gi) {
@@ -965,7 +1115,7 @@
       [el("i", { class: "ph ph-broadcast" }), "Traffic"]);
 
     var bar = el("div", { class: "stage-bar" }, [
-      crumb, grainSeg, state.focus != null ? hop : null,
+      crumbWrap, grainSeg, state.focus != null ? hop : null,
       el("div", { class: "spacer" }),
       flowPill,
       state.focus != null ? resetPill : deadPill,
@@ -1110,6 +1260,9 @@
       card("CHURN", n.churn), card("TIER", tierOf(n.file)),
     ]));
 
+    var strip = anatomyStrip(n);
+    if (strip) body.appendChild(strip);
+
     body.appendChild(el("div", { class: "blast" }, [
       el("div", { class: "t" }, [el("i", { class: "ph ph-warning" }), "Change impact"]),
       el("p", {}, [
@@ -1182,6 +1335,51 @@
   function card(l, v) {
     return el("div", { class: "statcard" }, [
       el("div", { class: "lbl", text: l }), el("div", { class: "val", text: v == null ? "0" : String(v) }),
+    ]);
+  }
+  // A proportional map of the focused symbol's file: every symbol as a block at
+  // its true line span, the unfilled gaps being module-level code (imports,
+  // constants). Fill = kind; brightness = fan-in. Bridges the map to the source.
+  var ANATOMY_KIND = { function: "#9085e9", method: "#3987e5", class: "#c98500" };
+  function anatomyStrip(n) {
+    var f = fileByPath[n.file];
+    if (!f || !f.loc || !f.symbols.length) return null;
+    var H = 190, Wd = 30, loc = f.loc;
+    var syms = f.symbols.map(function (i) { return N[i]; })
+      .sort(function (a, b) { return a.line[0] - b.line[0]; });
+    var covered = syms.reduce(function (s, m) { return s + (m.line[1] - m.line[0] + 1); }, 0);
+    var svg = el("svg", { class: "anatomy", width: Wd, height: H, viewBox: "0 0 " + Wd + " " + H });
+    svg.appendChild(el("rect", { x: 0, y: 0, width: Wd, height: H, rx: 3,
+      fill: "var(--color-neutral-900)" }));
+    syms.forEach(function (m) {
+      var y = (m.line[0] - 1) / loc * H;
+      var h = Math.max(1.5, (m.line[1] - m.line[0] + 1) / loc * H);
+      var base = ANATOMY_KIND[m.kind] || "#75798c";
+      var a = 0.32 + Math.min(0.6, m.fan_in / 12 * 0.6);
+      var isFocus = m.i === n.i;
+      svg.appendChild(el("rect", { x: 0, y: y, width: Wd, height: h,
+        fill: hexA(base, isFocus ? 1 : a),
+        stroke: isFocus ? "#f5f4ff" : "none", "stroke-width": isFocus ? 1.4 : 0,
+        on: { click: function () { go("graph", m.key); } } }));
+    });
+    var dots = Object.keys(ANATOMY_KIND).map(function (k) {
+      return el("span", { class: "akey" }, [
+        el("span", { class: "sw dot", style: "background:" + ANATOMY_KIND[k] }), k,
+      ]);
+    });
+    return el("div", { class: "section anatomy-sec" }, [
+      el("div", { class: "lbl", text: "FILE ANATOMY" }),
+      el("div", { class: "anatomy-wrap" }, [
+        svg,
+        el("div", { class: "anatomy-meta" }, [
+          el("p", {}, [el("b", { text: String(syms.length) }), " symbols span ",
+            el("b", { text: Math.round(covered / loc * 100) + "%" }), " of ",
+            el("b", { text: loc + " lines" }), ". Gaps are module-level code."]),
+          el("div", { class: "anatomy-keys" }, dots),
+          el("div", { class: "trace-link", text: "Trace calls from here →",
+            on: { click: function () { go("map", "trace/" + n.key); } } }),
+        ]),
+      ]),
     ]);
   }
   // ---- dependencies (inspector panel + per-file "imports") --------------
@@ -1344,6 +1542,428 @@
     });
     return el("div", { class: "tl" }, [wrap]);
   }
+
+  // ---- map tab: structure views ----------------------------------------
+  // Three static, laid-out-once views (no pan/zoom, they scroll). Each builder
+  // returns { controls, content, legend }; mapTab() frames them.
+  function lerpHex(a, b, t) {
+    t = Math.max(0, Math.min(1, t));
+    function ch(hex, o) { return parseInt(hex.substr(o, 2), 16); }
+    var r = Math.round(ch(a, 1) + (ch(b, 1) - ch(a, 1)) * t);
+    var g = Math.round(ch(a, 3) + (ch(b, 3) - ch(a, 3)) * t);
+    var bl = Math.round(ch(a, 5) + (ch(b, 5) - ch(a, 5)) * t);
+    return "rgb(" + r + "," + g + "," + bl + ")";
+  }
+  var CHURN_LO = "#322c4d", CHURN_HI = "#b5abfc";   // one-hue sequential ramp
+  var churnLogMax = Math.log1p(churnMax);
+  function churnFill(fi) {
+    // log scale: per-file churn is long-tailed (one outlier at churnMax), so a
+    // linear ramp would crush every ordinary file into the dark end.
+    return lerpHex(CHURN_LO, CHURN_HI, Math.log1p(churnOf[fi] || 0) / churnLogMax);
+  }
+  // trim an SVG label to a pixel width (mono ≈ 6.6px/char at our sizes)
+  function fitText(s, w, cpx) {
+    var max = Math.max(1, Math.floor(w / (cpx || 6.6)));
+    return s.length <= max ? s : s.slice(0, Math.max(1, max - 1)) + "…";
+  }
+
+  // squarified treemap (Bruls/Huizing/van Wijk), compact recursion
+  function squarify(data, x0, y0, w0, h0) {
+    var res = [];
+    var items = data.filter(function (d) { return d.value > 0; })
+      .sort(function (a, b) { return b.value - a.value; });
+    var sum = items.reduce(function (s, d) { return s + d.value; }, 0);
+    if (sum <= 0 || w0 <= 0 || h0 <= 0) return res;
+    place(items.map(function (d) { return { d: d, v: d.value / sum * w0 * h0 }; }), x0, y0, w0, h0);
+    function ratio(row, side) {
+      var s = row.reduce(function (a, r) { return a + r.v; }, 0);
+      var mx = Math.max.apply(null, row.map(function (r) { return r.v; }));
+      var mn = Math.min.apply(null, row.map(function (r) { return r.v; }));
+      var t = s / side;
+      return Math.max((t * t) / mn, mx / (t * t));
+    }
+    function place(vals, x, y, w, h) {
+      if (!vals.length) return;
+      var side = Math.min(w, h), row = [], rest = vals.slice(), best = Infinity;
+      while (rest.length) {
+        var cand = row.concat([rest[0]]);
+        var wr = ratio(cand, side);
+        if (row.length && wr > best) break;
+        row = cand; rest.shift(); best = wr;
+      }
+      var rs = row.reduce(function (a, r) { return a + r.v; }, 0);
+      if (w >= h) {
+        var rw = rs / h, oy = y;
+        row.forEach(function (r) { var rh = r.v / rs * h; res.push({ item: r.d, x: x, y: oy, w: rw, h: rh }); oy += rh; });
+        place(rest, x + rw, y, w - rw, h);
+      } else {
+        var rh2 = rs / w, ox = x;
+        row.forEach(function (r) { var rw2 = r.v / rs * w; res.push({ item: r.d, x: ox, y: y, w: rw2, h: rh2 }); ox += rw2; });
+        place(rest, x, y + rh2, w, h - rh2);
+      }
+    }
+    return res;
+  }
+
+  function mapTab() {
+    var built = state.mapView === "trace" ? runTrace()
+      : state.mapView === "mass" ? massMap()
+      : layerCake();
+    var seg = el("div", { class: "seg" },
+      [["layers", "Layers"], ["trace", "Run trace"], ["mass", "Mass"]].map(function (v) {
+        return el("button", { class: state.mapView === v[0] ? "on" : "",
+          on: { click: function () { go("map", v[0]); } } }, [v[1]]);
+      }));
+    var bar = el("div", { class: "map-bar" },
+      [seg].concat(built.controls || [], [el("div", { class: "spacer" })]));
+    return el("div", { class: "map" }, [
+      bar,
+      el("div", { class: "map-body" }, [
+        el("div", { class: "map-canvas" }, [built.content]),
+        built.legend || null,
+      ]),
+    ]);
+  }
+
+  // ── 1. Layer cake ── "what shape is this system" ─────────────────────
+  function layerCake() {
+    var hide = state.hideTests;
+    var visible = FILES.filter(function (f) {
+      return !(hide && f.path.indexOf("tests/") === 0);
+    });
+    var vis = {};
+    visible.forEach(function (f) { vis[f.fi] = true; });
+
+    // one block per file, or one merged block per import cycle with >1 shown file
+    var byComp = {};
+    visible.forEach(function (f) { (byComp[fileComp[f.fi]] = byComp[fileComp[f.fi]] || []).push(f); });
+    var blocks = [];
+    Object.keys(byComp).forEach(function (cid) {
+      var fs = byComp[cid].slice().sort(function (a, b) { return b.loc - a.loc; });
+      var loc = fs.reduce(function (s, f) { return s + (f.loc || 0); }, 0);
+      var cyc = sccMembers[cid].length > 1;
+      blocks.push({
+        id: "b" + cid, files: fs, loc: loc, layer: compLayer[cid], cyc: cyc && fs.length > 1,
+        hue: colorForPath(fs[0].path),
+        label: cyc && fs.length > 1 ? fs.length + " files in a cycle" : fs[0].path.split("/").pop(),
+      });
+    });
+
+    var layers = [];
+    blocks.forEach(function (b) { if (layers.indexOf(b.layer) < 0) layers.push(b.layer); });
+    layers.sort(function (a, b) { return b - a; });   // highest layer at the top
+
+    var PAD = 16, ROWH = 78, GAP = 4, MINW = 48, LBLW = 34;
+    var band = {};
+    var maxBandLoc = 1;
+    layers.forEach(function (L) {
+      band[L] = blocks.filter(function (b) { return b.layer === L; })
+        .sort(function (a, b) { return b.loc - a.loc; });
+      var s = band[L].reduce(function (a, b) { return a + b.loc; }, 0);
+      if (s > maxBandLoc) maxBandLoc = s;
+    });
+    var avail = 980 - LBLW - PAD * 2;
+    var pxPerLoc = Math.min(0.6, avail / maxBandLoc);
+    var innerW = layers.reduce(function (mx, L) {
+      var w = band[L].reduce(function (a, b) { return a + Math.max(MINW, b.loc * pxPerLoc) + GAP; }, 0);
+      return Math.max(mx, w);
+    }, 0);
+    var W = LBLW + PAD * 2 + innerW;
+    var H = PAD * 2 + layers.length * ROWH;
+
+    var pos = {};   // block id -> {cx, cy}
+    var svg = el("svg", { class: "cake", width: W, height: H, viewBox: "0 0 " + W + " " + H });
+    var edgeLayer = el("g", { class: "cake-edges", fill: "none" });
+    svg.appendChild(edgeLayer);
+
+    layers.forEach(function (L, row) {
+      var y = PAD + row * ROWH;
+      svg.appendChild(el("text", { x: LBLW - 8, y: y + ROWH / 2, "text-anchor": "end",
+        "dominant-baseline": "middle", class: "cake-lnum", text: "L" + L }));
+      var x = LBLW + PAD;
+      band[L].forEach(function (b) {
+        var w = Math.max(MINW, b.loc * pxPerLoc), h = ROWH - 22;
+        pos[b.id] = { cx: x + w / 2, cy: y + h / 2, x: x, y: y, w: w, h: h };
+        var titleTxt = b.cyc
+          ? "import cycle: " + b.files.map(function (f) { return f.path.split("/").pop(); }).join(" ⇄ ")
+          : b.files[0].path + " · " + b.loc + " loc";
+        var gEl = el("g", { class: "cake-block" + (b.cyc ? " cyc" : ""),
+          on: {
+            mouseenter: function () { drawCakeEdges(b); },
+            mouseleave: function () { clear(edgeLayer); },
+            click: function () { fileAct(b.files[0])(); },
+          } }, [el("title", { text: titleTxt })]);
+        gEl.appendChild(el("rect", { x: x, y: y, width: w, height: h, rx: 5,
+          fill: hexA(b.hue, b.cyc ? 0.16 : 0.24), stroke: b.hue,
+          "stroke-width": b.cyc ? 2 : 1.1 }));
+        if (b.cyc)
+          gEl.appendChild(el("text", { x: x + 7, y: y + 15, class: "cake-cyc", text: "↺" }));
+        if (w > 34)
+          gEl.appendChild(el("text", { x: x + w / 2, y: y + h / 2 + 1, "text-anchor": "middle",
+            "dominant-baseline": "middle", class: "cake-name",
+            text: fitText(b.cyc ? "cycle · " + b.files.length : b.label, w - 10) }));
+        if (w > 78)
+          gEl.appendChild(el("text", { x: x + w / 2, y: y + h + 12, "text-anchor": "middle",
+            class: "cake-loc", text: b.loc + " loc" }));
+        svg.appendChild(gEl);
+        x += w + GAP;
+      });
+    });
+
+    function drawCakeEdges(b) {
+      clear(edgeLayer);
+      var here = pos[b.id];
+      if (!here) return;
+      var seen = {};
+      b.files.forEach(function (f) {
+        fileAdj[f.fi].forEach(function (t) { if (vis[t]) seen[blockIdOf(t)] = "down"; });
+        fileImpBy[f.fi].forEach(function (s) { if (vis[s]) seen[blockIdOf(s)] = "up"; });
+      });
+      Object.keys(seen).forEach(function (bid) {
+        if (bid === b.id || !pos[bid]) return;
+        var o = pos[bid];
+        var y1 = seen[bid] === "down" ? here.y + here.h : here.y;
+        var y2 = seen[bid] === "down" ? o.y : o.y + o.h;
+        var my = (y1 + y2) / 2;
+        edgeLayer.appendChild(el("path", {
+          d: "M " + here.cx + " " + y1 + " C " + here.cx + " " + my + " " +
+             o.cx + " " + my + " " + o.cx + " " + y2,
+          stroke: b.hue, "stroke-width": 1.4, opacity: 0.7 }));
+      });
+    }
+    function blockIdOf(fi) { return "b" + fileComp[fi]; }
+
+    var controls = [
+      el("button", { class: "pill" + (state.hideTests ? " on" : ""),
+        on: { click: function () { state.hideTests = !state.hideTests; render(); } } },
+        [el("i", { class: "ph ph-flask" }), "Hide tests"]),
+    ];
+    var legend = el("div", { class: "map-legend" }, [
+      el("div", { class: "lk", text: "LAYER CAKE" }),
+      lgRow(el("span", { class: "sw", style: "width:26px;height:12px;border-radius:3px;" +
+        "background:" + hexA(GROUP_HUES[0], 0.24) + ";border:1px solid " + GROUP_HUES[0] }),
+        "block = file · width = lines of code · fill = folder"),
+      lgRow(el("span", { class: "sw", style: "width:14px;height:12px;border-radius:3px;" +
+        "background:transparent;border:2px solid " + GROUP_HUES[0] }), "↺ merged = import cycle"),
+      lgRow(el("span", { class: "sw", style: "border:0" }), "L0 imports nothing in-repo · hover a block for its imports"),
+    ]);
+    return { controls: controls, content: svg, legend: legend };
+  }
+
+  // ── 2. Run trace ── "what happens when this runs" ───────────────────
+  function runTrace() {
+    var root = state.traceRoot != null ? state.traceRoot
+      : (traceRoots.length ? traceRoots[0].i : null);
+    if (root == null)
+      return { content: el("div", { class: "map-empty", text: "No call graph to trace." }) };
+
+    var depth = new Map([[root, 0]]);
+    var order = [root], qi = 0;
+    while (qi < order.length) {
+      var u = order[qi++], du = depth.get(u);
+      (outAdj[u] || []).forEach(function (v) {
+        if (!depth.has(v)) { depth.set(v, du + 1); order.push(v); }
+      });
+    }
+    var cols = [];
+    depth.forEach(function (d, i) { (cols[d] = cols[d] || []).push(i); });
+    var maxD = cols.length - 1;
+    var thin = order.length < 8;   // frontier died early — dynamic dispatch ahead
+
+    var BUDGET = 12, COLW = 208, ROWH = 44, TOP = 30, LEFT = 24;
+    var shown = {}, colShown = [];
+    cols.forEach(function (arr, d) {
+      var ranked = arr.slice().sort(function (a, b) { return N[b].fan_in - N[a].fan_in; });
+      var open = traceExpand[root + ":" + d];
+      var take = open || ranked.length <= BUDGET ? ranked : ranked.slice(0, BUDGET);
+      take.forEach(function (i) { shown[i] = true; });
+      colShown[d] = { list: take, hidden: (open ? 0 : Math.max(0, ranked.length - take.length)) };
+    });
+    var maxRows = colShown.reduce(function (m, c) { return Math.max(m, c.list.length + (c.hidden ? 1 : 0)); }, 1);
+    var W = LEFT * 2 + (maxD + 1) * COLW + (thin ? 220 : 0);
+    var Hh = TOP * 2 + maxRows * ROWH;
+    var yOf = {}, xOf = {};
+    colShown.forEach(function (c, d) {
+      var n = c.list.length + (c.hidden ? 1 : 0);
+      var y0 = TOP + (maxRows - n) * ROWH / 2;
+      c.list.forEach(function (i, k) { yOf[i] = y0 + k * ROWH + ROWH / 2; xOf[i] = LEFT + d * COLW; });
+      c._chipY = y0 + c.list.length * ROWH + ROWH / 2;
+      c._x = LEFT + d * COLW;
+    });
+    var step = state.traceStep;
+    var svg = el("svg", { class: "trace", width: W, height: Hh, viewBox: "0 0 " + W + " " + Hh });
+
+    var eG = el("g", { fill: "none" });
+    svg.appendChild(eG);
+    order.forEach(function (u) {
+      if (!shown[u]) return;
+      (outAdj[u] || []).forEach(function (v) {
+        if (!shown[v] || depth.get(v) !== depth.get(u) + 1) return;
+        var dim = step != null && depth.get(v) > step;
+        var x1 = xOf[u] + 30, x2 = xOf[v] - 8, mx = (x1 + x2) / 2;
+        eG.appendChild(el("path", {
+          d: "M " + x1 + " " + yOf[u] + " C " + mx + " " + yOf[u] + " " + mx + " " + yOf[v] +
+             " " + x2 + " " + yOf[v],
+          stroke: colorForNode(N[u]), "stroke-width": 1.3, opacity: dim ? 0.1 : 0.4 }));
+      });
+    });
+
+    colShown.forEach(function (c, d) {
+      svg.appendChild(el("text", { x: c._x + 12, y: 16, class: "trace-dnum",
+        text: d === 0 ? "root" : "depth " + d }));
+      c.list.forEach(function (i) {
+        var n = N[i], dim = step != null && d > step;
+        var r = 7 + Math.min(6, Math.sqrt(n.fan_in));
+        var gEl = el("g", { class: "trace-st" + (dim ? " dim" : ""),
+          on: { click: function () { go("graph", n.key); } } },
+          [el("title", { text: n.qual + " · " + n.fan_in + " callers" })]);
+        gEl.appendChild(el("circle", { cx: xOf[i], cy: yOf[i], r: r,
+          fill: hexA(colorForNode(n), 0.9), stroke: colorForNode(n), "stroke-width": 1.4 }));
+        gEl.appendChild(el("text", { x: xOf[i] + r + 8, y: yOf[i] - 3, class: "trace-nm",
+          text: fitText(n.name, COLW - r - 20, 6.4) }));
+        gEl.appendChild(el("text", { x: xOf[i] + r + 8, y: yOf[i] + 9, class: "trace-fl",
+          text: fitText(n.file.split("/").pop(), COLW - r - 20, 5.4) }));
+        svg.appendChild(gEl);
+      });
+      if (c.hidden) {
+        var cy = c._chipY;
+        var chip = el("g", { class: "trace-more",
+          on: { click: function () { traceExpand[root + ":" + d] = true; render(); } } });
+        chip.appendChild(el("rect", { x: c._x + 2, y: cy - 12, width: 150, height: 24, rx: 12,
+          fill: "var(--color-neutral-900)", stroke: "var(--color-neutral-800)" }));
+        chip.appendChild(el("text", { x: c._x + 12, y: cy + 4, class: "trace-nm",
+          text: "+ " + c.hidden + " more calls" }));
+        svg.appendChild(chip);
+      }
+    });
+
+    if (thin) {
+      var lastLine = null;
+      (N[root].excerpt || "").split("\n").forEach(function (ln) {
+        if (/\(/.test(ln) && !/^\s*(def|class|@)/.test(ln)) lastLine = ln.trim();
+      });
+      var bx = LEFT + (maxD + 1) * COLW, by = TOP + maxRows * ROWH / 2 - 34;
+      var dg = el("g", { class: "trace-dispatch" });
+      dg.appendChild(el("rect", { x: bx, y: by, width: 200, height: 68, rx: 8,
+        fill: "var(--color-surface-2)", stroke: "var(--color-accent-700)" }));
+      dg.appendChild(el("text", { x: bx + 12, y: by + 20, class: "trace-nm", text: "⚡ dynamic dispatch" }));
+      dg.appendChild(el("text", { x: bx + 12, y: by + 38, class: "trace-fl",
+        text: "the indexer can't follow this" }));
+      if (lastLine)
+        dg.appendChild(el("text", { x: bx + 12, y: by + 55, class: "trace-code",
+          text: lastLine.length > 26 ? lastLine.slice(0, 25) + "…" : lastLine }));
+      svg.appendChild(dg);
+    }
+
+    var rootList = traceRoots.slice();
+    if (!rootList.some(function (r) { return r.i === root; }))
+      rootList.unshift({ i: root, size: order.length - 1 });   // a hand-picked root not in the top ranks
+    var picker = el("select", { class: "map-select",
+      on: { change: function (e) { go("map", "trace/" + e.target.value); } } },
+      rootList.map(function (r) {
+        return el("option", { value: N[r.i].key, selected: r.i === root ? "selected" : null,
+          text: N[r.i].qual + "  (" + r.size + " reached)" });
+      }));
+    var stepLabel = step == null ? "all" : step + " / " + maxD;
+    var controls = [
+      picker,
+      el("div", { class: "stepper" }, [
+        el("button", { "aria-label": "step back",
+          on: { click: function () {
+            state.traceStep = step == null ? Math.max(0, maxD - 1) : Math.max(0, step - 1);
+            render();
+          } } }, [el("i", { class: "ph ph-caret-left" })]),
+        el("b", { class: "mono", text: stepLabel }),
+        el("button", { "aria-label": "step forward",
+          on: { click: function () {
+            state.traceStep = step == null ? 0 : Math.min(maxD, step + 1);
+            if (state.traceStep >= maxD) state.traceStep = null;
+            render();
+          } } }, [el("i", { class: "ph ph-caret-right" })]),
+      ]),
+    ];
+    var legend = el("div", { class: "map-legend" }, [
+      el("div", { class: "lk", text: "RUN TRACE" }),
+      lgRow(el("span", { class: "sw", style: "border:0" }), "column = calls N hops from the root"),
+      lgRow(el("span", { class: "sw dot", style: "background:var(--color-neutral-400);width:13px;height:13px" }),
+        "bigger dot = more callers (fan-in)"),
+      lgRow(el("span", { class: "sw", style: "border:0" }), "◀ ▶ walks the cascade one hop at a time"),
+      lgRow(el("span", { class: "sw", style: "border:0" }), "⚡ = a call resolved at runtime, not statically"),
+    ]);
+    return { controls: controls, content: svg, legend: legend };
+  }
+
+  // ── 3. Mass map ── "where is the code, and what keeps moving" ────────
+  function massMap() {
+    var W = 1000, Hh = 660, GAP = 3, LBL = 15;
+    var groups = {};
+    FILES.forEach(function (f) { (groups[dirGroup(f.path)] = groups[dirGroup(f.path)] || []).push(f); });
+    var gData = Object.keys(groups).map(function (k) {
+      return { key: k, files: groups[k],
+        value: groups[k].reduce(function (s, f) { return s + (f.loc || 0); }, 0) };
+    });
+    var svg = el("svg", { class: "mass", width: W, height: Hh, viewBox: "0 0 " + W + " " + Hh });
+    var defs = el("defs", {}, [
+      (function () {
+        var p = el("pattern", { id: "cm-hatch", width: 6, height: 6,
+          patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" });
+        p.appendChild(el("rect", { width: 6, height: 6, fill: "transparent" }));
+        p.appendChild(el("line", { x1: 0, y1: 0, x2: 0, y2: 6,
+          stroke: "var(--color-neutral-500)", "stroke-width": 1.4 }));
+        return p;
+      })(),
+    ]);
+    svg.appendChild(defs);
+    var hiddenZero = 0;
+
+    squarify(gData, 4, 4, W - 8, Hh - 8).forEach(function (gc) {
+      var grp = gc.item;
+      svg.appendChild(el("rect", { x: gc.x, y: gc.y, width: gc.w, height: gc.h, rx: 4,
+        fill: "none", stroke: hexA(colorForPath(grp.files[0].path), 0.5), "stroke-width": 1 }));
+      svg.appendChild(el("text", { x: gc.x + 6, y: gc.y + 11, class: "mass-grp",
+        fill: colorForPath(grp.files[0].path),
+        text: fitText(grp.key === "(root)" ? "· root" : grp.key, gc.w - 12, 5.6) }));
+      var inner = squarify(grp.files.map(function (f) { return { value: f.loc || 0, f: f }; }),
+        gc.x + GAP, gc.y + LBL, Math.max(0, gc.w - GAP * 2), Math.max(0, gc.h - LBL - GAP));
+      hiddenZero += grp.files.filter(function (f) { return !(f.loc > 0); }).length;
+      inner.forEach(function (fc) {
+        var f = fc.item.f, dead = fileAllDead(f.fi), cw = Math.max(0, fc.w - GAP);
+        var cell = el("g", { class: "mass-cell",
+          on: { click: function () { fileAct(f)(); } } }, [
+          el("title", { text: f.path.split("/").pop() + " · " + (f.loc || 0) + " loc · " +
+            (churnOf[f.fi] || 0) + " commits" + (dead ? " · every function unreachable" : "") }),
+        ]);
+        cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw,
+          height: Math.max(0, fc.h - GAP), rx: 3, fill: churnFill(f.fi) }));
+        if (dead)
+          cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw,
+            height: Math.max(0, fc.h - GAP), rx: 3, fill: "url(#cm-hatch)" }));
+        if (cw > 40 && fc.h > 20) {
+          cell.appendChild(el("text", { x: fc.x + 5, y: fc.y + 13, class: "mass-nm",
+            text: fitText(f.path.split("/").pop(), cw - 8, 5.8) }));
+          if (fc.h > 34)
+            cell.appendChild(el("text", { x: fc.x + 5, y: fc.y + 25, class: "mass-sub",
+              text: (f.loc || 0) + " loc" + (dead ? " · dead" : "") }));
+        }
+        svg.appendChild(cell);
+      });
+    });
+
+    var ramp = el("span", { class: "sw",
+      style: "width:60px;height:10px;border-radius:2px;background:linear-gradient(90deg," +
+        CHURN_LO + "," + CHURN_HI + ")" });
+    var legend = el("div", { class: "map-legend" }, [
+      el("div", { class: "lk", text: "MASS MAP" }),
+      lgRow(el("span", { class: "sw", style: "border:0" }), "area = lines of code · grouped by folder"),
+      lgRow(ramp, "fill = commits touching it (low → high)"),
+      lgRow(el("span", { class: "sw", style: "width:16px;height:12px;background:var(--color-surface-2);" +
+        "background-image:repeating-linear-gradient(45deg,var(--color-neutral-500) 0 1px,transparent 1px 4px)" }),
+        "hatched = every function unreachable"),
+    ]);
+    return { content: svg, legend: legend };
+  }
+
+  function lgRow(sw, txt) { return el("div", { class: "row" }, [sw, txt]); }
 
   // ---- learn tab -------------------------------------
   function orientationCourse() {
@@ -1566,6 +2186,8 @@
     if (banner) frag.appendChild(banner);
     if (state.tab === "graph")
       frag.appendChild(el("div", { class: "view" }, [rail(), stage(), inspector()]));
+    else if (state.tab === "map")
+      frag.appendChild(el("div", { class: "view" }, [mapTab()]));
     else if (state.tab === "timeline")
       frag.appendChild(el("div", { class: "view" }, [timelineTab()]));
     else

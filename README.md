@@ -61,14 +61,25 @@ Configuration is `.codemap/config.toml` (ignore patterns, languages,
 ### Explore
 
 `codemap explore` renders one self-contained `.codemap/explore.html` from the
-index — no server, no build step, opens with a double-click. Three tabs:
+index — no server, no build step, opens with a double-click. Four tabs:
 
 - **Graph** — the whole file/function structure as a neural-style code graph:
   source tree, module lobes wired by organic dendritic edges, a neuron view
   (callers as afferent dendrites, callees as efferent) when a symbol is focused,
   and an inspector with fan-in/out, blast radius, entry path, source, the file's
-  third-party / built-in / internal imports, and a plain-English "what this does"
-  blurb from `.codemap/explanations.json` when present.
+  third-party / built-in / internal imports, a plain-English "what this does"
+  blurb from `.codemap/explanations.json` when present, and a file-anatomy strip
+  (every symbol drawn at its true line span, so you see how much of a file is
+  symbols vs. module-level code).
+- **Map** — three static, laid-out-once views that answer questions the call
+  graph alone doesn't: **Layers** topologically levels the file-import graph into
+  dependency strata (foundation at the bottom, entry points at the top) and draws
+  each import cycle as one merged block; **Run trace** is a subway map of one
+  call chain, depth left-to-right, with a step control that walks the cascade one
+  hop at a time and an explicit marker where a call is resolved at runtime
+  (`args.func(...)`, dynamic dispatch) rather than statically; **Mass** is a
+  treemap where area is lines of code and fill is how often the file changes,
+  hatched when every function in it is unreachable.
 - **Learn** — an authored walkthrough from `.codemap/learn.json` when present
   (see the repo-root `SKILL.md`), else a generated Orientation. `learn.json` and
   `explanations.json` are both optional and fall back silently.
@@ -118,6 +129,9 @@ hold.
 
 - Dynamic imports, `getattr`/dictionary dispatch, string-based routing, dependency injection,
   metaclass-generated methods, and wrapping decorators are invisible or distorted in the graph
+  (the Map tab's Run trace marks where a chain hits one of these instead of silently stopping);
+  a CLI whose subcommands dispatch through argparse `set_defaults(func=…)` is the common case —
+  `main` looks like it reaches almost nothing, and the symbols past that call read as unreachable
 - Caller resolution is name-based, narrowed by same-file and then by import evidence
   (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`, shown per edge) — an `AMBIGUOUS` call, or any call at
   all outside Python/TS/JS, can still be a false positive; false negatives remain possible

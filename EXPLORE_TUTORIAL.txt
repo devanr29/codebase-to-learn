@@ -4,14 +4,14 @@
 
 `codemap explore` turns the symbol graph in .codemap/index.db into ONE
 self-contained file, .codemap/explore.html, that you open in a browser. No
-server, no build step. Three tabs: Graph, Learn, Timeline.
+server, no build step. Four tabs: Graph, Map, Learn, Timeline.
 
 All commands below assume you are in the repo root. This project ships a virtual
 environment at .venv, so the Python is:
 
     .venv/Scripts/python -m codemap <command>
 
-If you have installed codemap globally (see section 9) you can drop the prefix
+If you have installed codemap globally (see section 11) you can drop the prefix
 and just type:  codemap <command>
 
 
@@ -50,9 +50,9 @@ someone, commit it in another repo -- it needs nothing else to work.
 Useful flags:
     --out <path>       write somewhere other than .codemap/explore.html
     --quiet            no summary line
-    --max-symbols N    cap graph nodes (default from config; see section 8)
+    --max-symbols N    cap graph nodes (default from config; see section 9)
     --json             print the raw graph model as JSON and write nothing
-    --emit-brief       write the analysis pack for the Learn course (section 6)
+    --emit-brief       write the analysis pack for the Learn course (section 7)
 
 
 -------------------------------------------------------------------------------
@@ -80,8 +80,11 @@ FOCUS = the neuron view.
 
 RIGHT INSPECTOR -- for the focused symbol:
     * fan-in / fan-out counts
+    * a file-anatomy strip: the whole file as a bar, each symbol a block at its
+      real line range, coloured by kind -- the empty gaps are module-level code
     * a blast-radius bar: "editing this reaches N callers across M files"
     * the shortest path from an entry point (e.g. GET /report -> ... -> fetch)
+    * a "Trace calls from here" link into the Map tab's Run trace (section 5)
     * the symbol's source, and an "Open in editor" link
 
 LEGEND (bottom-right) -- read this:
@@ -92,7 +95,54 @@ LEGEND (bottom-right) -- read this:
 
 
 -------------------------------------------------------------------------------
- 5. The Timeline tab
+ 5. The Map tab  (structure, not connections)
+-------------------------------------------------------------------------------
+
+The Graph tab answers "what calls what". The Map tab answers three questions it
+doesn't: what SHAPE is the system, what happens when it RUNS, and where is the
+code. Three views, switched with the buttons at the top left. Everything is
+built from the same graph -- no extra step, no extra data.
+
+LAYERS -- the dependency skeleton.
+    Files are stacked into layers by their in-repo imports: L0 at the bottom
+    imports nothing else in the repo (config, logging, small helpers), each
+    layer above imports only from below, entry points end up at the top.
+    * block width  = lines of code
+    * block colour = folder (same colours as the Graph tab legend)
+    * a block marked with a loop arrow is an IMPORT CYCLE -- several files that
+      import each other, collapsed into one block; hover it for the members
+    * hover any block to light up what it imports (downward) and what imports
+      it (upward)
+    * click a block to jump to that file in the Graph tab
+    * "Hide tests" drops tests/** so the production skeleton stands alone
+
+RUN TRACE -- one call chain as a subway map.
+    Pick a starting function from the dropdown (they are ranked by how much
+    they reach). Columns are call depth: the root on the left, what it calls
+    in the next column, and so on.
+    * dot size    = how many callers that function has
+    * dot colour  = folder
+    * "+ N more calls" appears when a column is busy; click to expand it
+    * the < and > buttons step a highlight one hop at a time, so you can watch
+      the cascade instead of reading a wall of lines
+    * a lightning-bolt card means the chain hit a call the indexer can't
+      follow statically -- e.g. a CLI's `args.func(args)`, where the real
+      target is chosen at runtime. The trace stops there ON PURPOSE and tells
+      you, rather than pretending the function is a dead end.
+    In the Graph tab's inspector there is a "Trace calls from here" link that
+    opens this view on the focused symbol.
+
+MASS -- a treemap of the whole repo.
+    * rectangle area = lines of code, grouped by folder
+    * fill          = how many commits have touched the file (darker = quiet,
+      brighter = changes a lot)
+    * a hatched rectangle = every function in that file is unreachable at the
+      current tier -- a candidate for deletion, or a sign of missing edges
+    * click a rectangle to open the file in the Graph tab
+
+
+-------------------------------------------------------------------------------
+ 6. The Timeline tab
 -------------------------------------------------------------------------------
 
 Newest commit first. Each card shows:
@@ -106,7 +156,7 @@ Graph tab.
 
 
 -------------------------------------------------------------------------------
- 6. The Learn tab  (guided course)
+ 7. The Learn tab  (guided course)
 -------------------------------------------------------------------------------
 
 Out of the box the Learn tab shows a generated ORIENTATION: entry points, the
@@ -137,7 +187,7 @@ If learn.json is ever malformed, the tab silently falls back to the Orientation
 
 
 -------------------------------------------------------------------------------
- 7. Keep it fresh automatically  (optional)
+ 8. Keep it fresh automatically  (optional)
 -------------------------------------------------------------------------------
 
     .venv/Scripts/python -m codemap install-hook
@@ -155,7 +205,7 @@ Manual `codemap explore` still works when this is false.
 
 
 -------------------------------------------------------------------------------
- 8. Config knobs  (.codemap/config.toml)
+ 9. Config knobs  (.codemap/config.toml)
 -------------------------------------------------------------------------------
 
     [explore]
@@ -167,7 +217,7 @@ Manual `codemap explore` still works when this is false.
 
 
 -------------------------------------------------------------------------------
- 9. Run against a different repository
+ 10. Run against a different repository
 -------------------------------------------------------------------------------
 
 --path works on every subcommand:
@@ -178,7 +228,7 @@ Manual `codemap explore` still works when this is false.
 
 
 -------------------------------------------------------------------------------
- 10. Running without the ".venv/Scripts/python -m" prefix
+ 11. Running without the ".venv/Scripts/python -m" prefix
 -------------------------------------------------------------------------------
 
 OPTION A -- install codemap as its own command (recommended):
@@ -202,7 +252,7 @@ OPTION C -- call the venv's console script directly:
 
 
 -------------------------------------------------------------------------------
- 11. Troubleshooting
+ 12. Troubleshooting
 -------------------------------------------------------------------------------
 
 Yellow "Built from ... HEAD is now ..." banner
