@@ -8,7 +8,8 @@
   var DATA = JSON.parse(document.getElementById("codemap-data").textContent);
   var APP = document.getElementById("app");
   var SVGNS = "http://www.w3.org/2000/svg";
-  var SVG_TAGS = { svg: 1, g: 1, path: 1, circle: 1, text: 1, ellipse: 1, line: 1, rect: 1 };
+  var SVG_TAGS = { svg: 1, g: 1, path: 1, circle: 1, text: 1, ellipse: 1, line: 1, rect: 1,
+                   animate: 1, animateMotion: 1 };
 
   // ---- tiny DOM helper -------------------------------------------------
   function el(tag, attrs, kids) {
@@ -52,8 +53,6 @@
   N.forEach(function (n) { keyToI[n.key] = n.i; });
   var fileByPath = {};
   FILES.forEach(function (f) { fileByPath[f.path] = f; });
-  var incidentEdges = N.map(function () { return []; });
-  E.forEach(function (e, i) { incidentEdges[e.s].push(i); incidentEdges[e.t].push(i); });
 
   function bfs(start, adj, maxHops) {
     var dist = new Map([[start, 0]]);
@@ -122,6 +121,16 @@
     for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
     return Math.abs(h % 100000) + 1;
   }
+  // a packet: glow + core, moved along the edge by SMIL (paced = constant speed).
+  // animateMotion writes only a transform on this tiny <g> — no re-rasterisation.
+  function comet(pathD, col, dur, begin, small) {
+    var gc = el("g", { class: "pkt" });
+    gc.appendChild(el("circle", { r: small ? 4 : 5.5, fill: col, opacity: 0.16 }));
+    gc.appendChild(el("circle", { r: small ? 1.6 : 2.2, fill: "#f5f4ff", opacity: 0.95 }));
+    gc.appendChild(el("animateMotion", { dur: dur + "s", begin: begin + "s",
+      repeatCount: "indefinite", path: pathD }));
+    return gc;
+  }
 
   var VBW = 1040, VBH = 700;
   var NODE_STYLE = {
@@ -134,7 +143,122 @@
     ext:   { r: 5,  fill: "#1f2130", stroke: "#595d6c", halo: 0,  hc: "rgba(0,0,0,0)" },
   };
 
+  // ---- folder colour system ---------------------------------------------
+  // Eight hues in a fixed, CVD-safe order (the data-viz "dark" categorical
+  // ramp, validated against this canvas surface). Each folder is assigned one
+  // by size; the 9th folder onward folds into a neutral "other". Colour only
+  // reinforces the spatial lobe grouping — the lobe outline, its label and the
+  // legend all carry the same information, so identity is never colour-alone.
+  var GROUP_HUES = ["#3987e5", "#d95926", "#199e70", "#c98500",
+                    "#d55181", "#008300", "#9085e9", "#e66767"];
+  var GROUP_OTHER = "#8a8fa3";
+  var IMPORT_EDGE = "#8a8fa3";
+  function dirGroup(path) {
+    var i = String(path == null ? "" : path).lastIndexOf("/");
+    return i < 0 ? "(root)" : path.slice(0, i);
+  }
+  function hexA(hex, a) {
+    var h = hex.replace("#", "");
+    return "rgba(" + parseInt(h.slice(0, 2), 16) + "," + parseInt(h.slice(2, 4), 16) +
+      "," + parseInt(h.slice(4, 6), 16) + "," + a + ")";
+  }
+  var groupColor = {};   // every folder present -> hex (distinct hue or GROUP_OTHER)
+  var groupOrder = [];   // folders that earned a distinct hue, in legend order
+  (function () {
+    var weight = {};
+    FILES.forEach(function (f) {
+      var k = dirGroup(f.path);
+      weight[k] = (weight[k] || 0) + (f.symbols.length || 1);
+    });
+    Object.keys(weight).sort(function (a, b) {
+      return weight[b] - weight[a] || (a < b ? -1 : 1);
+    }).forEach(function (k, i) {
+      groupColor[k] = i < GROUP_HUES.length ? GROUP_HUES[i] : GROUP_OTHER;
+      if (i < GROUP_HUES.length) groupOrder.push(k);
+    });
+  })();
+  function colorForPath(p) { return groupColor[dirGroup(p)] || GROUP_OTHER; }
+  function colorForNode(n) { return n && n.file ? colorForPath(n.file) : GROUP_OTHER; }
+  function moduleColor(name) { return groupColor[name] || GROUP_OTHER; }
+
+  // ---- traffic model --------------------------------------------------
+  // No runtime profile exists, so "traffic" is derived by BFS outward from the
+  // real entry points. Two passes: one over the call graph (symbol grain) and
+  // one over the file-import graph (file / module grain, and as a fallback for
+  // symbols the sparse name-based call graph never links). Depth = hops from the
+  // nearest entry, -1 = never reached. Reachable edges carry a flowing "current";
+  // the busiest also carry comet packets. Unreachable code visibly carries
+  // nothing — the animation is signal, not decoration.
+  var FLOW_BUDGET = 220;   // max edges given the marching-dash current (a paint prop)
+  var COMET_BUDGET = 90;   // max edges given a moving packet (cheap: a transform)
+  var PKT_SPEED = 165;     // viewBox units / second a packet travels
+  var CASCADE = 0.55;      // seconds of stagger per BFS hop, so a wave radiates out
+
+  function bfsDepths(n, seeds, adj) {
+    var depth = new Int32Array(n);
+    for (var i = 0; i < n; i++) depth[i] = -1;
+    var frontier = [];
+    seeds.forEach(function (s) { if (depth[s] < 0) { depth[s] = 0; frontier.push(s); } });
+    for (var d = 1; frontier.length; d++) {
+      var next = [];
+      for (var k = 0; k < frontier.length; k++) {
+        var nb = adj[frontier[k]] || [];
+        for (var j = 0; j < nb.length; j++)
+          if (depth[nb[j]] < 0) { depth[nb[j]] = d; next.push(nb[j]); }
+      }
+      frontier = next;
+    }
+    return depth;
+  }
+
+  var ENTRY_SEEDS = [];
+  N.forEach(function (nd) { if (nd.entry && nd.entry.length) ENTRY_SEEDS.push(nd.i); });
+  if (!ENTRY_SEEDS.length)            // no detected entry: call-graph roots
+    N.forEach(function (nd) { if (nd.fan_in === 0 && nd.fan_out > 0) ENTRY_SEEDS.push(nd.i); });
+  if (!ENTRY_SEEDS.length)            // still nothing (a pure cycle): busiest few
+    ENTRY_SEEDS = N.slice().sort(function (a, b) { return b.fan_out - a.fan_out; })
+      .slice(0, 8).map(function (nd) { return nd.i; });
+  var entrySet = new Set(ENTRY_SEEDS);
+  var flowDepth = bfsDepths(N.length, ENTRY_SEEDS, outAdj);
+
+  // file-import graph: edge s -> t means "s imports t", i.e. execution can pass
+  // from s into t — same caller->callee direction as the call graph.
+  var fileAdj = FILES.map(function () { return []; });
+  var fileImported = new Set();
+  (DATA.file_edges || []).forEach(function (fe) { fileAdj[fe.s].push(fe.t); fileImported.add(fe.t); });
+  // Seeds = files holding an entry-point symbol PLUS import-graph roots (nothing
+  // imports them: a script you run, a test module the runner collects). Both are
+  // places a traversal legitimately begins, so e.g. tests/ lights up as its own
+  // source rather than going dark.
+  var fileSeeds = [];
+  FILES.forEach(function (f, fi) {
+    if (!fileImported.has(fi) ||
+        (f.symbols || []).some(function (si) { return N[si].entry && N[si].entry.length; }))
+      fileSeeds.push(fi);
+  });
+  var fileFlow = bfsDepths(FILES.length, fileSeeds, fileAdj);
+  var fileFlowByPath = {};
+  FILES.forEach(function (f, fi) { fileFlowByPath[f.path] = fileFlow[fi]; });
+
+  // symbol reachability, call graph first, file-import graph as the fallback
+  function symDepth(i) {
+    if (flowDepth[i] >= 0) return flowDepth[i];
+    var fd = fileFlowByPath[N[i].file];
+    return fd == null ? -1 : fd;
+  }
+  function moduleDepth(name) {        // grain <=1: min reached file depth in the module
+    var best = -1;
+    FILES.forEach(function (f, fi) {
+      if (f.module !== name) return;
+      var d = fileFlow[fi];
+      if (d >= 0 && (best < 0 || d < best)) best = d;
+    });
+    return best;
+  }
+
   // ---- app state ---------------------------------------------------
+  var reduceMotion = window.matchMedia &&
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   var state = {
     tab: "graph",
     grain: 2,
@@ -146,6 +270,7 @@
     view: { x: 0, y: 0, k: 1 },
     touched: null,
     module: null,
+    flow: !reduceMotion,
   };
 
   // ---- routing ---------------------------------------------------
@@ -356,7 +481,7 @@
       mods.forEach(function (m, mi) {
         var c = centers[m.name];
         placed.push({ i: "mod:" + m.name, x: c.x, y: c.y, style: NODE_STYLE.hot,
-          label: m.name + "  (" + m.symbol_count + ")", kind: "mod",
+          label: m.name + "  (" + m.symbol_count + ")", kind: "mod", group: moduleColor(m.name),
           act: function () { state.grain = 2; state.view = { x: 0, y: 0, k: 1 }; render(); } });
       });
       var seen = {};
@@ -364,7 +489,9 @@
         var a = FILES[fe.s].module, b = FILES[fe.t].module;
         if (a === b || seen[a + " " + b]) return;
         seen[a + " " + b] = 1;
-        links.push({ a: centers[a], b: centers[b], seed: hashSeed(a + b), hot: true });
+        var md = moduleDepth(a);
+        links.push({ a: centers[a], b: centers[b], seed: hashSeed(a + b), hot: true,
+          grp: moduleColor(a), live: md >= 0, dep: md < 0 ? 0 : md, vol: 8 });
       });
       return { placed: placed, links: links, lobes: lobes };
     }
@@ -399,6 +526,7 @@
           : it.ref.fan_in >= 6 ? NODE_STYLE.hot : NODE_STYLE.node;
         placed.push({ i: it.idx == null ? it.key : it.idx, x: x, y: y, style: style,
           label: it.label, kind: it.kind, dead: dead,
+          group: it.kind === "file" ? colorForPath(it.ref.path) : colorForNode(it.ref),
           act: it.kind === "file" ? fileAct(it.ref) : null });
       });
     });
@@ -406,8 +534,13 @@
     if (grain === 2) {
       (DATA.file_edges || []).forEach(function (fe) {
         var a = pos["file:" + FILES[fe.s].path], b = pos["file:" + FILES[fe.t].path];
-        if (a && b) links.push({ a: a, b: b, seed: fe.s * 131 + fe.t,
-          hot: FILES[fe.s].module !== FILES[fe.t].module });
+        if (!a || !b) return;
+        var fd = fileFlow[fe.s], tf = FILES[fe.t];
+        links.push({ a: a, b: b, seed: fe.s * 131 + fe.t,
+          hot: FILES[fe.s].module !== FILES[fe.t].module,
+          grp: colorForPath(FILES[fe.s].path),
+          live: fd >= 0, dep: fd < 0 ? 0 : fd,
+          vol: (tf.symbols || []).reduce(function (s, si) { return s + N[si].fan_in; }, 0) });
       });
     } else {
       var cap = 0;
@@ -415,7 +548,10 @@
         var a = pos[N[e.s].key], b = pos[N[e.t].key];
         if (!a || !b) return;
         if (e.tier === 1 && N[e.s].fan_in < 3 && N[e.t].fan_in < 3 && cap++ > 220) return;
-        links.push({ a: a, b: b, seed: e.s * 131 + e.t, hot: e.tier === 2, dyn: e.namebased });
+        var sd = symDepth(e.s);
+        links.push({ a: a, b: b, seed: e.s * 131 + e.t, hot: e.tier === 2,
+          s: e.s, t: e.t, grp: colorForNode(N[e.s]),
+          live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[e.t].fan_in });
       });
     }
     return { placed: placed, links: links, lobes: lobes };
@@ -439,10 +575,14 @@
           var style = N[idx].entry.length ? NODE_STYLE.entry
             : N[idx].fan_in >= 6 ? NODE_STYLE.hot : NODE_STYLE.node;
           placed.push({ i: idx, x: x, y: y, style: style, label: N[idx].name,
-            kind: side === "in" ? "caller" : "callee" });
+            kind: side === "in" ? "caller" : "callee", group: colorForNode(N[idx]) });
+          var src = side === "in" ? idx : f, dst = side === "in" ? f : idx;
+          var sd = symDepth(src);
           links.push({ a: side === "in" ? { x: x, y: y } : soma,
             b: side === "in" ? soma : { x: x, y: y },
-            seed: hashSeed(N[idx].key), hot: h === 1, thin: side === "in" });
+            seed: hashSeed(N[idx].key), hot: h === 1, thin: side === "in",
+            s: src, t: dst, grp: colorForNode(N[idx]),
+            live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[dst].fan_in });
         });
       });
     }
@@ -454,8 +594,11 @@
       file.imports.slice(0, 6).forEach(function (dep, k) {
         var ang = -0.6 + (k / Math.max(file.imports.length - 1, 1)) * 1.2;
         var x = soma.x + Math.cos(ang) * 430 * 0.98, y = soma.y + Math.sin(ang) * 430 * 0.72;
-        placed.push({ i: "ext:" + dep, x: x, y: y, style: NODE_STYLE.ext, label: dep, kind: "ext" });
-        links.push({ a: soma, b: { x: x, y: y }, seed: hashSeed(dep), dyn: true });
+        placed.push({ i: "ext:" + dep, x: x, y: y, style: NODE_STYLE.ext, label: dep,
+          kind: "ext", group: IMPORT_EDGE });
+        var sd = symDepth(f);
+        links.push({ a: soma, b: { x: x, y: y }, seed: hashSeed(dep), imp: true,
+          live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: 0 });
       });
     }
     return { placed: placed, links: links, lobes: [] };
@@ -467,42 +610,87 @@
       transform: "translate(" + state.view.x + "," + state.view.y + ") scale(" + state.view.k + ")" });
 
     lay.lobes.forEach(function (lo) {
+      var lc = moduleColor(lo.name), plain = lc === GROUP_OTHER;
       g.appendChild(el("ellipse", { cx: lo.x, cy: lo.y, rx: lo.rx, ry: lo.ry,
-        fill: "rgba(147,151,171,.035)", stroke: "rgba(147,151,171,.18)", "stroke-width": 1 }));
+        fill: plain ? "rgba(147,151,171,.035)" : hexA(lc, 0.055),
+        stroke: plain ? "rgba(147,151,171,.18)" : hexA(lc, 0.34), "stroke-width": 1.2 }));
       g.appendChild(el("text", { x: lo.x, y: lo.y - lo.ry - 6, "text-anchor": "middle",
-        "font-size": 12, "font-weight": 600, "letter-spacing": ".08em", fill: "#75798c",
-        text: lo.name.toUpperCase() }));
+        "font-size": 12, "font-weight": 600, "letter-spacing": ".08em",
+        fill: plain ? "#75798c" : lc, text: lo.name.toUpperCase() }));
     });
 
-    var hlSet = null;
-    if (state.highlight != null) {
-      hlSet = new Set();
-      (incidentEdges[state.highlight] || []).forEach(function (ei) { hlSet.add(E[ei].s + " " + E[ei].t); });
+    // pick which live edges get motion, cheapest first. Depth-ascending keeps the
+    // animated set as intact chains radiating from the entry points, not scatter.
+    var animate = state.flow;   // default honours prefers-reduced-motion; the pill overrides
+    var flowSet = null, cometSet = null, flowN = 0;
+    if (animate) {
+      var liveIdx = [];
+      lay.links.forEach(function (lk, i) { if (lk.live && lk.a && lk.b) liveIdx.push(i); });
+      liveIdx.sort(function (x, y) {
+        var lx = lay.links[x], ly = lay.links[y];
+        return (lx.dep - ly.dep) || (ly.vol - lx.vol);
+      });
+      var unbudgeted = state.focus != null || state.grain <= 1;   // few links here
+      flowSet = new Set(liveIdx.slice(0, unbudgeted ? liveIdx.length : FLOW_BUDGET));
+      cometSet = new Set(liveIdx.slice(0, unbudgeted ? liveIdx.length : COMET_BUDGET));
+      flowN = flowSet.size;
     }
+
     var edgeG = el("g", { fill: "none", "stroke-linecap": "round" });
-    lay.links.forEach(function (lk) {
+    lay.links.forEach(function (lk, li) {
       if (!lk.a || !lk.b) return;
       var d = dendrite(lk.a, lk.b, lk.seed, { bow: lk.hot ? 0.42 : 0.3 });
-      var col = lk.dyn ? "var(--edge-dyn)" : lk.hot ? "var(--edge-hot)" : "var(--edge-neutral)";
-      var w = lk.hot ? 1.6 : lk.thin ? 1 : 1.1;
-      var op = hlSet ? 0.1 : lk.dyn ? 0.5 : 0.8;
-      var grp = el("g");
-      if (lk.hot && !hlSet)
-        grp.appendChild(el("path", { d: d.d, stroke: "rgba(145,132,217,.28)", "stroke-width": 7, opacity: 0.5 }));
-      grp.appendChild(el("path", { d: d.d, stroke: col, "stroke-width": w, opacity: op }));
-      grp.appendChild(el("path", { d: d.b1, stroke: col, "stroke-width": 0.7, opacity: op * 0.6 }));
-      grp.appendChild(el("path", { d: d.b2, stroke: col, "stroke-width": 0.6, opacity: op * 0.4 }));
+      var imp = !!lk.imp;
+      var col = imp ? IMPORT_EDGE : (lk.grp || GROUP_OTHER);
+      var w = imp ? 1.5 : lk.hot ? 2.8 : lk.thin ? 1.9 : 2.2;
+      var op = imp ? 0.5 : lk.hot ? 0.92 : 0.76;
+      var grp = el("g", { class: "edge" });
+      if (!imp)   // soft colour glow: a run of same-folder edges reads as one strand
+        grp.appendChild(el("path", { d: d.d, stroke: col, "stroke-width": w + 4,
+          opacity: lk.hot ? 0.16 : 0.09 }));
+      grp.appendChild(el("path", { d: d.d, stroke: col, "stroke-width": w, opacity: op,
+        "stroke-dasharray": imp ? "5 4" : null }));
+      grp.appendChild(el("path", { d: d.b1, stroke: col, "stroke-width": w * 0.38, opacity: op * 0.55 }));
+      grp.appendChild(el("path", { d: d.b2, stroke: col, "stroke-width": w * 0.32, opacity: op * 0.38 }));
+
+      if (animate && flowSet.has(li)) {   // the "current": one shared CSS keyframe
+        var fp = el("path", { class: "flow", d: d.d, stroke: col,
+          "stroke-width": Math.max(1.3, w * 0.6), opacity: Math.min(0.95, op + 0.12) });
+        fp.style.animationDelay = (lk.dep * CASCADE + rnd(lk.seed) * 0.5) + "s";
+        grp.appendChild(fp);
+      }
+      if (animate && cometSet.has(li)) {   // discrete packets on the hottest paths
+        var dx = lk.b.x - lk.a.x, dy = lk.b.y - lk.a.y;
+        var dur = Math.max(0.9, Math.min(4.2, Math.hypot(dx, dy) * 1.15 / PKT_SPEED));
+        var begin = lk.dep * CASCADE;
+        grp.appendChild(comet(d.d, col, dur, begin, false));
+        if (lk.vol >= 6) grp.appendChild(comet(d.d, col, dur, begin + dur / 2, true));
+      }
+
+      edgeItems.push({ el: grp, s: lk.s == null ? -1 : lk.s, t: lk.t == null ? -1 : lk.t });
       edgeG.appendChild(grp);
     });
     g.appendChild(edgeG);
+    lastFlowN = flowN;
 
     var nodeG = el("g");
     lay.placed.forEach(function (p) {
       var st = p.style;
+      var ring = p.group || st.stroke;
       var wrap = el("g", { class: "gnode" });
       if (st.halo) wrap.appendChild(el("circle", { cx: p.x, cy: p.y, r: st.halo, fill: st.hc }));
+      if (animate && typeof p.i === "number" && entrySet.has(p.i)) {   // where packets are born
+        var pr = el("circle", { class: "emit", cx: p.x, cy: p.y, r: st.r + 2,
+          fill: "none", stroke: ring, "stroke-width": 1.4 });
+        var b = (-(rnd(p.i + 1) * 2.4)) + "s";
+        pr.appendChild(el("animate", { attributeName: "r", values: (st.r + 2) + ";" + (st.r + 17),
+          dur: "2.4s", begin: b, repeatCount: "indefinite" }));
+        pr.appendChild(el("animate", { attributeName: "opacity", values: "0.55;0",
+          dur: "2.4s", begin: b, repeatCount: "indefinite" }));
+        wrap.appendChild(pr);
+      }
       wrap.appendChild(el("circle", { class: "body", cx: p.x, cy: p.y, r: st.r,
-        fill: st.fill, stroke: st.stroke, "stroke-width": 1.4 }));
+        fill: st.fill, stroke: ring, "stroke-width": p.kind === "focus" ? 2 : 1.6 }));
       wrap.appendChild(el("text", { x: p.x, y: p.y + st.r + 12, "text-anchor": "middle",
         "font-size": p.kind === "focus" ? 12 : 10.5,
         fill: p.kind === "focus" ? "#f5f4ff" : p.dead ? "#595d6c" : "#b2b6ca", text: p.label }));
@@ -512,8 +700,9 @@
       if (act)
         wrap.addEventListener("click", function (ev) { ev.stopPropagation(); act(); });
       if (typeof p.i === "number") {
-        wrap.addEventListener("mouseenter", function () { state.highlight = p.i; paintGraph(); });
-        wrap.addEventListener("mouseleave", function () { state.highlight = null; paintGraph(); });
+        nodeItems.push({ el: wrap, i: p.i });
+        wrap.addEventListener("mouseenter", function () { setHighlight(p.i); });
+        wrap.addEventListener("mouseleave", function () { setHighlight(null); });
       }
       nodeG.appendChild(wrap);
     });
@@ -521,12 +710,110 @@
     return g;
   }
 
-  var canvasEl, svgEl;
+  // ---- graph paint / pan / zoom ---------------------------------------
+  // The scene <g> is built once per structural change (grain, focus, hops,
+  // showDead). Pan and zoom only rewrite its `transform` — no relayout, no DOM
+  // churn — and hover only nudges opacity. That is what keeps the canvas smooth.
+  var canvasEl, svgEl, sceneG, edgeItems = [], nodeItems = [];
+  var drag = null, panPend = null, panRaf = 0, settleT = 0, lastFlowN = 0, animPaused = false;
+
+  // Freeze every animation for the duration of a gesture. stroke-dashoffset is a
+  // main-thread paint prop; re-tessellating dashes along 200+ beziers every frame
+  // would undo the transform-only pan/zoom. So during a drag nothing animates.
+  function freezeAnims() {
+    if (animPaused) return;
+    animPaused = true;
+    if (svgEl && svgEl.pauseAnimations) svgEl.pauseAnimations();
+  }
+  function thawAnims() {
+    if (!animPaused) return;
+    animPaused = false;
+    if (svgEl && svgEl.unpauseAnimations) svgEl.unpauseAnimations();
+  }
+
+  function clampK(k) { return Math.max(0.3, Math.min(4, k)); }
+  function applyView() {
+    if (sceneG) sceneG.setAttribute("transform",
+      "translate(" + state.view.x + "," + state.view.y + ") scale(" + state.view.k + ")");
+    updateCap();
+  }
+  // zoom about a point in viewBox space, holding it fixed on screen
+  function zoomToward(px, py, f) {
+    var nk = clampK(state.view.k * f);
+    f = nk / state.view.k;
+    state.view.x = px - f * (px - state.view.x);
+    state.view.y = py - f * (py - state.view.y);
+    state.view.k = nk;
+  }
+  function zoomAt(f) { zoomToward(VBW / 2, VBH / 2, f); applyView(); }
+  function vbPoint(e) {
+    var r = svgEl.getBoundingClientRect();
+    var s = Math.min(r.width / VBW, r.height / VBH) || 1;
+    return { x: (e.clientX - r.left - (r.width - VBW * s) / 2) / s,
+             y: (e.clientY - r.top - (r.height - VBH * s) / 2) / s };
+  }
+  function liveView() {   // pan/wheel: suspend the eased transition for 1:1 tracking
+    if (canvasEl) canvasEl.classList.add("dragging");
+    freezeAnims();
+    clearTimeout(settleT);
+    settleT = setTimeout(function () {
+      if (canvasEl) canvasEl.classList.remove("dragging");
+      thawAnims();
+    }, 160);
+    applyView();
+  }
+  function setHighlight(i) {
+    if (state.highlight === i) return;
+    state.highlight = i;
+    applyHighlight();
+  }
+  function applyHighlight() {
+    var h = state.highlight, near = null;
+    if (h != null) {
+      near = new Set([h]);
+      (outAdj[h] || []).forEach(function (x) { near.add(x); });
+      (inAdj[h] || []).forEach(function (x) { near.add(x); });
+    }
+    edgeItems.forEach(function (it) {
+      it.el.style.opacity = h == null ? "" : (it.s === h || it.t === h ? "1" : "0.06");
+    });
+    nodeItems.forEach(function (it) {
+      it.el.style.opacity = h == null ? "" : (near.has(it.i) ? "1" : "0.22");
+    });
+  }
   function paintGraph() {
     if (!svgEl) return;
+    edgeItems = [];
+    nodeItems = [];
     clear(svgEl);
-    svgEl.appendChild(renderGraphSVG());
+    sceneG = renderGraphSVG();
+    svgEl.appendChild(sceneG);
+    applyView();
+    applyHighlight();
   }
+
+  // window-level drag listeners: bound once, not per render
+  window.addEventListener("mousemove", function (e) {
+    if (!drag) return;
+    panPend = e;
+    if (panRaf) return;
+    panRaf = requestAnimationFrame(function () {
+      panRaf = 0;
+      state.view.x = drag.vx + (panPend.clientX - drag.x);
+      state.view.y = drag.vy + (panPend.clientY - drag.y);
+      liveView();
+    });
+  });
+  window.addEventListener("mouseup", function () {
+    if (!drag && !animPaused) return;
+    drag = null;
+    // covers both a finished drag and a bare click (which armed no settle timer)
+    clearTimeout(settleT);
+    settleT = setTimeout(function () {
+      if (canvasEl) canvasEl.classList.remove("dragging");
+      thawAnims();
+    }, 120);
+  });
 
   function stage() {
     var n = state.focus != null ? N[state.focus] : null;
@@ -562,10 +849,14 @@
     var resetPill = el("button", { class: "pill",
       on: { click: function () { state.focus = null; state.fileScope = null; state.touched = null; go("graph"); } } },
       [el("i", { class: "ph ph-arrow-counter-clockwise" }), "Whole graph"]);
+    var flowPill = el("button", { class: "pill" + (state.flow ? " on" : ""),
+      on: { click: function () { state.flow = !state.flow; paintGraph(); updateCap(); } } },
+      [el("i", { class: "ph ph-broadcast" }), "Traffic"]);
 
     var bar = el("div", { class: "stage-bar" }, [
       crumb, grainSeg, state.focus != null ? hop : null,
       el("div", { class: "spacer" }),
+      flowPill,
       state.focus != null ? resetPill : deadPill,
     ]);
 
@@ -580,30 +871,53 @@
   }
   function updateCap() {
     var cap = canvasEl && canvasEl.querySelector(".zoombox .cap");
-    if (cap) cap.textContent = state.focus != null
+    if (!cap) return;
+    var base = state.focus != null
       ? "depth " + state.hops + " · neuron view"
       : ["package", "module", "file", "function"][state.grain] + " grain · " +
         DATA.stats.symbols + " nodes";
+    cap.textContent = state.flow && lastFlowN ? base + " · " + lastFlowN + " flows" : base;
   }
   function legend() {
-    return el("div", { class: "legend" }, [
-      el("div", { class: "lk", text: "EDGE" }),
-      lrow("var(--edge-hot)", "same-file call (tier 2)"),
-      lrow("var(--edge-neutral)", "cross-file, name-based (tier 1)"),
-      lrow("var(--edge-dyn)", "import / external"),
-      el("div", { class: "row", style: "margin-top:4px;color:#75798c;font-size:10px",
-        text: "module-level calls are not shown" }),
-    ]);
-  }
-  function lrow(c, t) {
-    return el("div", { class: "row" }, [el("span", { class: "sw", style: "background:" + c }), t]);
+    var box = el("div", { class: "legend" }, [el("div", { class: "lk", text: "FOLDERS" })]);
+    groupOrder.forEach(function (k) {
+      box.appendChild(el("div", { class: "row" }, [
+        el("span", { class: "sw dot", style: "background:" + groupColor[k] }),
+        el("span", { class: "gname", text: k === "(root)" ? "· repo root" : k }),
+      ]));
+    });
+    if (Object.keys(groupColor).length > groupOrder.length)
+      box.appendChild(el("div", { class: "row" }, [
+        el("span", { class: "sw dot", style: "background:" + GROUP_OTHER }),
+        el("span", { class: "gname", text: "other folders" }),
+      ]));
+    box.appendChild(el("div", { class: "lk", style: "margin-top:9px", text: "EDGE" }));
+    box.appendChild(el("div", { class: "row" }, [
+      el("span", { class: "sw", style: "background:var(--color-neutral-300)" }),
+      "call · thicker = same file",
+    ]));
+    box.appendChild(el("div", { class: "row" }, [el("span", { class: "sw dash" }), "import / external"]));
+    if (state.flow) {
+      box.appendChild(el("div", { class: "lk", style: "margin-top:9px", text: "TRAFFIC" }));
+      box.appendChild(el("div", { class: "row" }, [
+        el("span", { class: "sw flowsw" }), "flow · entry → callee",
+      ]));
+      box.appendChild(el("div", { class: "row" }, [
+        el("span", { class: "sw dot", style: "background:#f5f4ff" }), "packet · more = higher fan-in",
+      ]));
+      box.appendChild(el("div", { class: "row" }, [
+        el("span", { class: "sw", style: "background:var(--color-neutral-800)" }),
+        "no motion = unreachable",
+      ]));
+    }
+    return box;
   }
   function zoombox() {
     var box = el("div", { class: "zoombox" }, [
       el("div", { class: "btns" }, [
-        zbtn("ph ph-plus", function () { zoomBy(1.2); }),
-        zbtn("ph ph-minus", function () { zoomBy(1 / 1.2); }),
-        zbtn("ph ph-crosshair", function () { state.view = { x: 0, y: 0, k: 1 }; paintGraph(); }),
+        zbtn("ph ph-plus", function () { zoomAt(1.25); }),
+        zbtn("ph ph-minus", function () { zoomAt(1 / 1.25); }),
+        zbtn("ph ph-crosshair", function () { state.view = { x: 0, y: 0, k: 1 }; applyView(); }),
       ]),
       el("div", { class: "cap" }),
     ]);
@@ -611,23 +925,19 @@
     return box;
   }
   function zbtn(icon, fn) { return el("button", { on: { click: fn } }, [el("i", { class: icon })]); }
-  function zoomBy(f) { state.view.k = Math.max(0.3, Math.min(4, state.view.k * f)); paintGraph(); }
   function wireCanvas() {
-    var drag = null;
     canvasEl.addEventListener("mousedown", function (e) {
       if (e.target.closest(".gnode")) return;
+      e.preventDefault();
       drag = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y };
+      canvasEl.classList.add("dragging");
+      freezeAnims();
     });
-    window.addEventListener("mousemove", function (e) {
-      if (!drag) return;
-      state.view.x = drag.vx + (e.clientX - drag.x);
-      state.view.y = drag.vy + (e.clientY - drag.y);
-      paintGraph();
-    });
-    window.addEventListener("mouseup", function () { drag = null; });
     canvasEl.addEventListener("wheel", function (e) {
       e.preventDefault();
-      zoomBy(e.deltaY < 0 ? 1.1 : 1 / 1.1);
+      var p = vbPoint(e);
+      zoomToward(p.x, p.y, e.deltaY < 0 ? 1.12 : 1 / 1.12);
+      liveView();
     }, { passive: false });
   }
 
