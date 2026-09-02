@@ -56,6 +56,28 @@ _register([".js", ".jsx", ".mjs", ".cjs"], _JS)
 _register([".ts", ".mts", ".cts"], _TS)
 _register([".tsx"], _TSX)
 
+# Newer additions (spec M15 language breadth): T1 only — no per-language
+# resolver, so tier=1 across the board, matching javascript's precedent for a
+# "capture works, cross-file resolution doesn't" language. Grammar names are
+# tree-sitter-language-pack's; verified against the pack's own manifest.
+_GO = LanguageSpec("go", "go", "go", tier=1)
+_RUST = LanguageSpec("rust", "rust", "rust", tier=1)
+_JAVA = LanguageSpec("java", "java", "java", tier=1)
+_CSHARP = LanguageSpec("csharp", "csharp", "csharp", tier=1)
+_RUBY = LanguageSpec("ruby", "ruby", "ruby", tier=1)
+_PHP = LanguageSpec("php", "php", "php", tier=1)
+_C = LanguageSpec("c", "c", "c", tier=1)
+_CPP = LanguageSpec("cpp", "cpp", "cpp", tier=1)
+
+_register([".go"], _GO)
+_register([".rs"], _RUST)
+_register([".java"], _JAVA)
+_register([".cs"], _CSHARP)
+_register([".rb"], _RUBY)
+_register([".php"], _PHP)
+_register([".c", ".h"], _C)
+_register([".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"], _CPP)
+
 
 def spec_for_path(path: str) -> LanguageSpec | None:
     ext = Path(path).suffix.lower()

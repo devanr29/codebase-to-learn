@@ -81,6 +81,46 @@ def is_stdlib(module: str) -> bool:
     return module.split(".")[0] in _STDLIB
 
 
+# Per-language stdlib signals for classify_import (spec M15 language breadth).
+# Deliberately small, well-known sets rather than exhaustive package lists —
+# same "best effort, not perfect" bar the rest of this module already holds
+# to for Python/JS. `resolve._kind_of` mirrors these so the two places that
+# bucket a raw import string agree.
+_RUST_STDLIB = frozenset({"std", "core", "alloc", "proc_macro"})
+_JAVA_STDLIB_PREFIXES = ("java.", "javax.")
+_CSHARP_STDLIB_PREFIXES = ("System", "Microsoft")
+_RUBY_STDLIB = frozenset({
+    "json", "set", "date", "time", "uri", "net/http", "fileutils", "logger",
+    "optparse", "yaml", "digest", "base64", "socket", "thread", "singleton",
+    "forwardable", "ostruct", "pp", "pathname", "tempfile", "csv", "erb",
+    "open-uri", "securerandom", "benchmark", "English", "abbrev",
+})
+
+
+def is_go_stdlib(module: str) -> bool:
+    """Go's own convention, not a maintained list: every third-party module
+    path is required to be a domain (``github.com/...``), so it always has a
+    dot in its first path segment. A path without one is standard library."""
+    first = module.split("/", 1)[0]
+    return "." not in first
+
+
+def is_rust_stdlib(module: str) -> bool:
+    return module.split("::", 1)[0] in _RUST_STDLIB
+
+
+def is_java_stdlib(module: str) -> bool:
+    return module.startswith(_JAVA_STDLIB_PREFIXES)
+
+
+def is_csharp_stdlib(module: str) -> bool:
+    return module.startswith(_CSHARP_STDLIB_PREFIXES)
+
+
+def is_ruby_stdlib(module: str) -> bool:
+    return module in _RUBY_STDLIB
+
+
 def _internal_names(entries: list[discovery.FileEntry]) -> set[str]:
     """Every token that could name an in-repo module: top-level dirs, package
     dirs, file stems, and dotted paths. Wider than a top-level-root check so a
@@ -99,6 +139,16 @@ def _internal_names(entries: list[discovery.FileEntry]) -> set[str]:
     return names
 
 
+def _quoted(text: str) -> str:
+    """First quoted substring, any of "'`, unquoted if none found."""
+    for quote in ('"', "'", "`"):
+        if quote in text:
+            a = text.index(quote)
+            b = text.index(quote, a + 1)
+            return text[a + 1 : b]
+    return text
+
+
 def classify_import(raw: str, lang: str, internal_names: set[str]) -> tuple[str, bool]:
     """Return ``(module, is_external)`` for a raw import statement.
 
@@ -107,18 +157,55 @@ def classify_import(raw: str, lang: str, internal_names: set[str]) -> tuple[str,
     imports, in-repo modules, and the standard library are all internal.
     """
     text = raw.strip()
+
     if lang in ("typescript", "tsx", "javascript"):
-        mod = ""
-        for quote in ('"', "'", "`"):
-            if quote in text:
-                a = text.index(quote)
-                b = text.index(quote, a + 1)
-                mod = text[a + 1 : b]
-                break
+        mod = _quoted(text)
         if mod.startswith("."):
             return mod, False
         top = mod.lstrip("@").split("/")[0]
         return mod, top not in internal_names and mod not in internal_names
+
+    if lang == "go":
+        mod = _quoted(text)
+        internal = is_go_stdlib(mod) or mod.rsplit("/", 1)[-1] in internal_names
+        return mod, not internal
+
+    if lang == "rust":
+        mod = text.removeprefix("use ").rstrip(";").strip()
+        top = mod.split("::", 1)[0]
+        if top in ("crate", "self", "super"):
+            return mod, False  # in-crate path — the closest thing Rust has to relative
+        internal = is_rust_stdlib(mod) or top in internal_names
+        return mod, not internal
+
+    if lang == "java":
+        mod = text.removeprefix("import ").removeprefix("static ").rstrip(";").strip()
+        internal = is_java_stdlib(mod) or mod.split(".")[0] in internal_names or mod in internal_names
+        return mod, not internal
+
+    if lang == "csharp":
+        mod = text.removeprefix("using ").removeprefix("static ").rstrip(";").strip()
+        mod = mod.split("=", 1)[-1].strip()  # `using Alias = Some.Namespace;`
+        internal = is_csharp_stdlib(mod) or mod.split(".")[0] in internal_names or mod in internal_names
+        return mod, not internal
+
+    if lang == "ruby":
+        relative = text.startswith("require_relative")
+        mod = _quoted(text)
+        if relative or mod.startswith((".", "/")):
+            return mod, False
+        internal = is_ruby_stdlib(mod) or mod.split("/")[0] in internal_names
+        return mod, not internal
+
+    if lang == "php":
+        mod = text.removeprefix("use ").rstrip(";").strip().lstrip("\\")
+        top = mod.split("\\")[0]
+        return mod, top not in internal_names and mod not in internal_names
+
+    if lang in ("c", "cpp"):
+        angled = "#include <" in text
+        mod = _quoted(text) if not angled else text[text.index("<") + 1 : text.rindex(">")]
+        return mod, False  # a system header and a local one are both "not a dependency"
 
     # python
     if text.startswith("from "):
@@ -405,11 +492,27 @@ def _index_repo_entry_points(conn: sqlite3.Connection, root, sha: str) -> None:
 
 
 def _index_worktree(conn: sqlite3.Connection, cfg: Config, stats: ScanStats) -> None:
+    """Sync the ``worktree`` pseudo-commit to the current on-disk state (spec M15).
+
+    This is the graph's root now: it reflects whatever is on disk — including
+    changes not yet committed — via content-hash comparison against the
+    previous sync, exactly like an incremental commit index. For a git repo
+    its ``parent_sha`` is the actual HEAD, so ``codemap explain worktree`` can
+    diff "what's uncommitted" with the same machinery used for any two real
+    commits. Deliberately does **not** touch ``meta.last_indexed_commit`` —
+    that key means "how far the git history walk has resumed from" and must
+    stay a real commit sha for ``scan()`` to resume incrementally; the caller
+    sets ``meta.graph_head`` instead, which is what a *view* (explore/status/
+    snapshot) should read to find the graph a user would actually want to see.
+    """
     sha = WORKTREE_SHA
+    root = cfg.root
+    parent = gitio.head(root) if gitio.is_repo(root) else get_meta(conn, "last_indexed_commit")
     conn.execute(
         "INSERT INTO commits(sha, parent_sha, ts, author, message, indexed_at) "
-        "VALUES(?,?,?,?,?,?) ON CONFLICT(sha) DO UPDATE SET indexed_at=excluded.indexed_at",
-        (sha, get_meta(conn, "last_indexed_commit"), int(time.time()), "", "(working tree)", int(time.time())),
+        "VALUES(?,?,?,?,?,?) ON CONFLICT(sha) DO UPDATE SET "
+        "parent_sha=excluded.parent_sha, indexed_at=excluded.indexed_at",
+        (sha, parent, int(time.time()), "", "(working tree)", int(time.time())),
     )
     entries = discovery.iter_worktree(cfg)
     internal_roots = _internal_names(entries)
@@ -446,6 +549,18 @@ def _index_worktree(conn: sqlite3.Connection, cfg: Config, stats: ScanStats) -> 
     conn.commit()
 
 
+def sync_worktree(conn: sqlite3.Connection, cfg: Config) -> ScanStats:
+    """Public entry point for a worktree-only sync (no git history walk).
+
+    Used by ``scan()`` and by anything that wants to refresh the live graph
+    in isolation (e.g. a future watch mode).
+    """
+    stats = ScanStats()
+    _index_worktree(conn, cfg, stats)
+    set_meta(conn, "graph_head", WORKTREE_SHA)
+    return stats
+
+
 # ---------------------------------------------------------------------------- scan
 
 
@@ -456,43 +571,60 @@ def scan(
     since: str | None = None,
     until: str = "HEAD",
 ) -> ScanStats:
+    """Index new commits (spec M2/M3), then sync the live worktree graph (M10).
+
+    The two halves are independent: the history walk below is what it always
+    was — resumable, keyed to real commit shas, bounded by ``since``/``until``.
+    The worktree sync is what makes the graph the tool answers questions
+    against a *live* one, not gated behind a commit — it runs whenever a
+    caller asks for the ordinary "everything up to now" scan (``until`` at its
+    default of ``"HEAD"``, which is every real invocation — the CLI never
+    overrides it). A caller that bounds ``until`` to a specific historical
+    commit is asking to inspect that point in history in isolation, so the
+    live graph — and ``meta.graph_head``, which views read to find it — is
+    left untouched.
+    """
     stats = ScanStats()
     root = cfg.root
 
     if not gitio.is_repo(root):
         _index_worktree(conn, cfg, stats)
+        set_meta(conn, "graph_head", WORKTREE_SHA)
         return stats
 
-    if gitio.head(root) is None:
-        return stats  # empty repo, nothing committed yet
+    if gitio.head(root) is not None:
+        start = since or get_meta(conn, "last_indexed_commit")
+        if start is not None:
+            try:
+                resolve_sha(root, start)
+            except gitio.GitError:
+                start = None  # stale/unknown ref — fall back to full history
 
-    start = since or get_meta(conn, "last_indexed_commit")
-    if start is not None:
-        try:
-            resolve_sha(root, start)
-        except gitio.GitError:
-            start = None  # stale/unknown ref — fall back to full history
+        shas = gitio.rev_list(root, start, until)
+        if not shas and start is None:
+            shas = [resolve_sha(root, until)]
 
-    shas = gitio.rev_list(root, start, until)
-    if not shas and start is None:
-        shas = [resolve_sha(root, until)]
+        from . import impact, intent, report, semdiff
 
-    from . import impact, intent, report, semdiff
+        head_sha = resolve_sha(root, until)
+        for sha in shas:
+            index_commit(conn, cfg, sha, stats)
+            stats.commits_indexed += 1
+            meta = gitio.commit_meta(root, sha)
+            intent.capture(conn, cfg, sha, meta.message, consume=(sha == head_sha))
+            parent = parent_sha(conn, sha)
+            if parent is None or _commit_indexed(conn, parent):
+                changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
+                impacts = impact.annotate(conn, cfg, parent, sha, changes)
+                report.write_commit_file(conn, cfg, sha, impacts=impacts)
+        conn.commit()
 
-    head_sha = resolve_sha(root, until)
-    for sha in shas:
-        index_commit(conn, cfg, sha, stats)
-        stats.commits_indexed += 1
-        meta = gitio.commit_meta(root, sha)
-        intent.capture(conn, cfg, sha, meta.message, consume=(sha == head_sha))
-        parent = parent_sha(conn, sha)
-        if parent is None or _commit_indexed(conn, parent):
-            changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
-            impacts = impact.annotate(conn, cfg, parent, sha, changes)
-            report.write_commit_file(conn, cfg, sha, impacts=impacts)
-    conn.commit()
+        from . import retention
 
-    from . import retention
+        retention.prune(conn, cfg)
 
-    retention.prune(conn, cfg)
+    if until == "HEAD":
+        _index_worktree(conn, cfg, stats)
+        set_meta(conn, "graph_head", WORKTREE_SHA)
+
     return stats

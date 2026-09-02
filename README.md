@@ -1,14 +1,26 @@
 # codemap — change explainer for AI-assisted codebases
 
-`codemap` is a git-triggered CLI that answers one question after each commit:
+`codemap` keeps a symbol-level graph rooted in **the worktree** — the code as it
+is on disk right now, uncommitted changes included. `codemap scan` (with no
+flags — every real invocation) always syncs that live graph, so `codemap
+explore` / `codemap status` / `codemap snapshot` show the current code even
+before you commit.
+
+Git is the overlay on top of that graph, not its root. It drives two things:
+incremental *updates* (a post-commit hook re-syncs only what changed) and
+*history* — the question this tool was built to answer, after each commit:
 
 > What changed, why, what does it affect, and which forty lines should I read myself?
 
-It keeps a symbol-level graph of the repository across commits, computes a
-**semantic diff** between consecutive graphs, classifies each change by severity,
-attaches the stated intent behind it, and appends a short markdown entry.
+For that, `codemap` also walks git history, computes a **semantic diff**
+between consecutive commits, classifies each change by severity, attaches the
+stated intent behind it, and appends a short markdown entry. `codemap explain
+worktree` runs that same machinery against the live graph, to explain what
+you've changed but haven't committed yet.
 
-The graph is not the deliverable. The graph exists so that a diff can be explained.
+The graph is not the deliverable. It exists so a diff — historical or
+uncommitted — can be explained, and so the current architecture can be browsed
+without needing a commit first.
 
 ## Install
 
@@ -22,23 +34,29 @@ root, and every command takes `--path <repo>` to run against another repository.
 ## Use
 
 ```
-codemap scan                 # index new commits, write change entries
+codemap scan                 # sync the live worktree graph; index any new commits
 codemap explain HEAD         # print the markdown entry for a commit
+codemap explain worktree     # …what you've changed but haven't committed yet
 codemap explain HEAD --breakdown   # …plus the raw change list
 codemap catchup              # one digest of everything since `codemap reviewed`
 codemap reviewed HEAD        # advance the reviewed marker
-codemap snapshot             # architecture view from the current graph
+codemap snapshot             # architecture view of the current (live) graph
 codemap explore              # render .codemap/explore.html — the browsable surface
 codemap explore --open       # …and open it
 codemap explore --emit-brief # analysis pack for the course-authoring skill
 codemap note "why I'm about to commit"   # record intent for the next commit
 codemap install-hook         # post-commit hook: scan + explain + explore, always exits 0
-codemap status               # index state
+codemap status                # index state — `graph:` shows what explore/snapshot are reading
 ```
 
-Change entries land in `.codemap/changes/<ts>-<sha7>.md`. Configuration is
-`.codemap/config.toml` (ignore patterns, languages, `impact_depth`, `retention`,
-an off-by-default LLM narrative stage, and an `[explore]` block).
+`codemap explore` / `codemap status` / `codemap snapshot` always read the live
+worktree graph once one exists (`.codemap`'s `meta.graph_head`) — this is the
+graph a real `codemap scan` produces. Commit-scoped queries (`codemap explain
+<sha>`, `codemap catchup`) are unaffected: they read the git history walk,
+exactly as before. Change entries land in `.codemap/changes/<ts>-<sha7>.md`.
+Configuration is `.codemap/config.toml` (ignore patterns, languages,
+`impact_depth`, `retention`, an off-by-default LLM narrative stage, and an
+`[explore]` block).
 
 ### Explore
 
@@ -88,15 +106,24 @@ Every language records its tier and every report states it, so "no callers
 found" is always distinguishable from "callers not resolvable at this tier".
 State lives in one SQLite file, `.codemap/index.db`, versioned per commit.
 
-Languages shipped: Python, TypeScript/TSX, JavaScript/JSX. Adding one is a
-registry entry plus a `tags.scm` — no Python code.
+Languages shipped: Python and TypeScript/TSX/JavaScript/JSX at tier 2 (same-file
+call resolution is validated for these); Go, Rust, Java, C#, Ruby, PHP, C and
+C++ at tier 1 (capture only, freshly added, no per-language resolver yet).
+Adding one is a registry entry plus a `tags.scm` — no Python code — except
+where the language's import syntax needs teaching to `indexer.classify_import`,
+which is genuine per-language logic and the one place that claim doesn't fully
+hold.
 
 ## Known blind spots
 
 - Dynamic imports, `getattr`/dictionary dispatch, string-based routing, dependency injection,
   metaclass-generated methods, and wrapping decorators are invisible or distorted in the graph
-- At T1, caller lists are name-based: expect false positives, and false negatives across
-  aliased imports
+- Caller resolution is name-based, narrowed by same-file and then by import evidence
+  (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`, shown per edge) — an `AMBIGUOUS` call, or any call at
+  all outside Python/TS/JS, can still be a false positive; false negatives remain possible
+  across aliased imports
+- Go and Rust methods (receiver- and `impl`-declared, not nested in their type) show up with
+  a flat name, not a `Type.method` one — see `CODEMAP_SPEC.md` §14
 - Impact analysis is structural only. It cannot tell you whether a change is *correct*
 - Intent marked `inferred` is a guess, not a record
 

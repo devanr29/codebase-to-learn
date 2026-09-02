@@ -6,7 +6,10 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
--- keys: schema_version, last_indexed_commit, last_reviewed_commit
+-- keys: schema_version, last_indexed_commit, last_reviewed_commit, graph_head
+-- (graph_head, spec M15: the sha a *view* — explore/status/snapshot — should
+-- read; "worktree" once a live sync has run, else falls back to
+-- last_indexed_commit, which tracks git-history-walk resumption only)
 
 CREATE TABLE IF NOT EXISTS commits (
     sha        TEXT PRIMARY KEY,

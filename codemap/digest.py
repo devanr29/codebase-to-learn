@@ -124,7 +124,8 @@ def catchup(conn: sqlite3.Connection, cfg: Config) -> str:
 
 
 def snapshot(conn: sqlite3.Connection, cfg: Config) -> str:
-    sha = get_meta(conn, "last_indexed_commit")
+    # see site/model.py::build() for why graph_head is preferred (spec M15)
+    sha = get_meta(conn, "graph_head") or get_meta(conn, "last_indexed_commit")
     if not sha:
         return "No index yet — run `codemap scan` first."
 

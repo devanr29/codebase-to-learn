@@ -371,6 +371,125 @@ the explorer does not use it.
 
 ---
 
+## 13. Worktree-rooted graph (M15)
+
+Through M14, the graph a user *reads* (`explore`/`status`/`snapshot`) was
+always the last commit `scan()` had processed — the working tree only entered
+the picture for a non-git directory. M15 makes the worktree the graph's root
+for every repository, git included, so the explorer shows the code as it is
+on disk right now, uncommitted changes included, without gating that view
+behind a commit.
+
+`scan()` gains a second, independent step: after the git-history walk (M2/M3,
+unchanged), it syncs the `worktree` pseudo-commit (`indexer.WORKTREE_SHA`) —
+the same content-hash-based incremental mechanism M2 already used for a
+non-git directory, now exercised for a real repo too. This step runs whenever
+a caller asks for the ordinary "everything up to now" scan (`until` at its
+default, `"HEAD"` — every real invocation; the CLI never overrides it). A
+caller that bounds `until` to a specific historical commit — the test suite
+does this throughout, to inspect one point in history in isolation — leaves
+the live graph untouched, so M2–M14's contracts hold exactly as written.
+
+Two meta keys now do different jobs: `last_indexed_commit` still means "how
+far the git-history walk has resumed from" (M2's resumption pointer,
+unchanged). A new `graph_head` is what a *view* should read to find the graph
+a user actually wants to see: `"worktree"` once a sync has run, else falling
+back to `last_indexed_commit` (the bounded-`until` case above).
+`site/model.py::build()` and `digest.snapshot()` read `graph_head` first.
+
+`codemap explain worktree` reuses `semdiff.diff_commits`/`impact.analyze`
+unchanged, diffing HEAD against the live pseudo-commit, to explain what's
+changed but not yet committed — the same machinery M4/M5 already built,
+pointed at a pseudo-commit instead of two real ones.
+
+Non-goal, deliberately: M15 does not persist a diff for `worktree` into the
+`changes` table (`codemap explain worktree` recomputes it on demand, the same
+"unpersisted" path M4 already had for a pruned commit) — the timeline and
+`catchup` continue to iterate only real commits.
+
+---
+
+## 14. Language breadth (M16)
+
+Go, Rust, Java, C#, Ruby, PHP, C and C++ join Python/TS/TSX/JS — one
+`LanguageSpec` + one `tags.scm` each, exactly the M1 registry contract, using
+grammars `tree-sitter-language-pack` already ships. All eight land at **tier
+1**: capture-only, no per-language resolver, matching javascript's existing
+precedent for "works, isn't specially validated yet." Two real limitations,
+both from grammar shape rather than a missed spot:
+
+- **Go and Rust methods get a flat name, not a receiver-qualified one.** A Go
+  method is declared via a receiver (`func (s *Store) Put(...)`), not nested
+  inside the type it operates on; a Rust `impl` block is a separate top-level
+  declaration from the `struct`/`trait` it implements. Neither byte-range-nests
+  inside a captured parent the way Python/TS/Java/C#/Ruby/C++ methods do, so
+  `parsing.py`'s generic function->method promotion (and the qualified-name
+  prefix that comes with it) doesn't fire. Go's grammar at least distinguishes
+  `method_declaration` from `function_declaration` at the node-type level, so
+  it's captured directly as `kind="method"`; Rust's `function_item` is used for
+  both, and a second, impl-scoped pattern to recover the distinction would
+  double-capture every impl method (tree-sitter matches overlapping patterns
+  independently, not exclusively) — left as plain `kind="function"` instead.
+- **`indexer.classify_import` needed genuine per-language code**, contradicting
+  the "registry entry + tags.scm, no Python code" claim for extraction. Each
+  language's import statement has different syntax (`"quoted"` Go paths,
+  `use a::b;` Rust, `import a.b;` Java, `#include <x>` vs `"x"` C/C++, …), and
+  the fallback for anything unlisted was silently assuming Python's syntax —
+  correct for nothing new here. Each new language's stdlib-vs-third-party
+  signal is a small, well-known set or a simple heuristic (Go: no dot in the
+  first path segment, since every real module path is domain-shaped; Rust:
+  `std`/`core`/`alloc`/`proc_macro`; Java/C#: `java./javax.` and
+  `System/Microsoft` prefixes; Ruby: a short common-gems list), not an
+  exhaustive package registry — the same "best effort" bar Python/JS already
+  held to. `resolve.py::_kind_of` mirrors the same signals for the `internal
+  |stdlib|third_party` bucket the explorer shows, and takes `internal_names` to
+  disambiguate a same-repo path from a real stdlib one where a heuristic could
+  otherwise collide (concretely: a Go module declared without a domain-shaped
+  path, e.g. `module myrepo` rather than `module github.com/user/myrepo` —
+  both legal).
+
+Not shipped: Kotlin and Swift. Both grammars declared the definition/name
+relationship without the named `field:` this whole capture contract leans on
+(Kotlin's `class_declaration`/`function_declaration` hold their name as an
+un-fielded child; Swift's parameter list isn't wrapped in any single node a
+`@params` capture could point at), so a clean tags.scm for either needs either
+a grammar-version-specific workaround or a change to the capture contract
+itself — a real design decision, not a mechanical add, and out of scope here.
+
+## 15. Resolution uplift (M17)
+
+`impact.call_graph` gains a middle tier between "same file" and "any same-named
+symbol repo-wide": before falling all the way to the T1 fallback, it now checks
+whether a same-named symbol lives in a file the caller actually imports, using
+`resolve.resolve_imports` — the same import-resolution machinery
+`site/model.py`'s file graph already relies on. Every edge is tagged with which
+tier won:
+
+| Confidence | Won by |
+|---|---|
+| `EXTRACTED` | a same-named symbol in the caller's own file |
+| `INFERRED` | nothing same-file, but exactly one same-named symbol in a file the caller imports |
+| `AMBIGUOUS` | the T1 fallback — every same-named symbol repo-wide, one candidate with no import evidence or several genuinely competing ones |
+
+**Confidence is metadata, not a filter**: which edges exist in the graph is
+byte-for-byte unchanged from before this tier existed — `test_impact.py`'s
+existing caller-set assertions pass with zero changes, and
+`test_resolution_uplift.py::test_confidence_never_changes_which_edges_exist`
+states that guarantee directly. `site/model.py`'s edges gain a `confidence`
+field alongside the existing `tier`/`namebased` pair (kept, not replaced —
+other consumers already read those two).
+
+Deliberately not built: `refs.target_symbol_id` / `imports.resolved_file_id`
+staying persisted (still always NULL, computed at query time as before) —
+promoting them into the write path would need re-resolving on every commit
+during the history walk, and the columns already exist unused in the schema
+for whoever picks that up later. Also not built: the real cross-file
+resolution graphify has for JS/TS specifically (tsconfig `paths`/`baseUrl`,
+workspace packages, `index.*` barrels) — a substantial, JS/TS-specific
+undertaking on its own, separate from the general three-tier mechanism above.
+
+---
+
 ## 9. Testing
 
 `tests/fixtures/build_repo.py` constructs a **real git repository** via `subprocess`, with a

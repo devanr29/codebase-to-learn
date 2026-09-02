@@ -22,7 +22,7 @@ from pathlib import Path
 
 from . import gitio, normalize
 from .config import Config
-from .indexer import classify_import
+from .indexer import WORKTREE_SHA, classify_import
 from .languages.registry import spec_for_path
 
 STRUCTURAL, BEHAVIORAL, COSMETIC = "structural", "behavioral", "cosmetic"
@@ -152,6 +152,16 @@ def _lines(src: bytes, start: int, end: int) -> bytes:
     return b"\n".join(src.split(b"\n")[max(start - 1, 0) : end])
 
 
+def _read_source(cfg: Config, sha: str, path: str) -> bytes | None:
+    """``gitio.show_bytes`` for a real commit; a worktree read for the live
+    pseudo-commit (spec M15) — ``git show worktree:<path>`` is not a thing."""
+    if sha == WORKTREE_SHA:
+        from .discovery import read_worktree_bytes
+
+        return read_worktree_bytes(cfg.root, path)
+    return gitio.show_bytes(cfg.root, sha, path)
+
+
 def _is_rename_fallout(
     cfg: Config, prev_sha: str, curr_sha: str, ps: _Sym, cs: _Sym, renames: dict[str, str]
 ) -> bool:
@@ -159,8 +169,8 @@ def _is_rename_fallout(
     spec = spec_for_path(path)
     if spec is None:
         return False
-    prev_src = gitio.show_bytes(cfg.root, prev_sha, _path_of(ps.key))
-    curr_src = gitio.show_bytes(cfg.root, curr_sha, path)
+    prev_src = _read_source(cfg, prev_sha, _path_of(ps.key))
+    curr_src = _read_source(cfg, curr_sha, path)
     if not prev_src or not curr_src:
         return False
     pt = normalize.tokens_from_bytes(_lines(prev_src, ps.start_line, ps.end_line), spec)

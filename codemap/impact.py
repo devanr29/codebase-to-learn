@@ -19,8 +19,11 @@ from dataclasses import dataclass, field
 
 import networkx as nx
 
+from . import resolve
 from .config import Config
 from .languages.registry import spec_for_path
+
+EXTRACTED, INFERRED, AMBIGUOUS = "EXTRACTED", "INFERRED", "AMBIGUOUS"
 
 # change types whose impact is worth computing — a change to something that
 # already had dependents. A brand-new symbol has no N-1 graph node, so
@@ -83,14 +86,51 @@ def _path_of(key: str) -> str:
 # --------------------------------------------------------------------------- graph
 
 
+def _imports_by_file(conn: sqlite3.Connection, sha: str) -> dict[str, set[str]]:
+    """``file path -> resolved file paths it imports``, at ``sha`` — the
+    evidence a call needs to earn ``INFERRED`` rather than falling all the way
+    to a global, over-broad name match (spec M15 resolution uplift)."""
+    paths = {
+        r["path"]
+        for r in conn.execute(
+            "SELECT f.path FROM file_versions fv JOIN files f ON f.id = fv.file_id "
+            "WHERE fv.commit_sha = ? AND fv.status != 'deleted'",
+            (sha,),
+        )
+    }
+    pairs = [
+        (r["path"], r["raw"])
+        for r in conn.execute(
+            "SELECT f.path AS path, i.raw AS raw FROM imports i "
+            "JOIN files f ON f.id = i.file_id WHERE i.commit_sha = ?",
+            (sha,),
+        )
+    ]
+    out: dict[str, set[str]] = {}
+    for ri in resolve.resolve_imports(pairs, paths):
+        if ri.target:
+            out.setdefault(ri.importer, set()).add(ri.target)
+    return out
+
+
 def call_graph(conn: sqlite3.Connection, sha: str) -> nx.DiGraph:
     """Directed graph of symbol keys; an edge ``caller -> callee`` for every
-    reference, resolved by name.
+    reference, resolved in three tiers (spec M15) — each edge carries a
+    ``confidence`` attribute recording which one won, but which edges exist
+    is unchanged from before this tier was added: confidence is metadata, not
+    a filter.
 
-    A same-file callee wins over same-named symbols elsewhere (the T2 "same-file
-    call edge" rule) — this alone removes most of the T1 false positives from
-    common helper names. Only when nothing in the caller's own file matches does
-    the edge fan out to every same-named symbol (genuine T1, over-broad)."""
+    1. **EXTRACTED** — a same-named symbol in the caller's own file. The T2
+       "same-file call edge" rule; removes most T1 false positives from
+       common helper names.
+    2. **INFERRED** — nothing in the caller's own file, but exactly one
+       same-named symbol lives in a file the caller actually imports
+       (``resolve.resolve_imports``, the same machinery the explorer's file
+       graph already uses).
+    3. **AMBIGUOUS** — the T1 fallback: every same-named symbol repo-wide,
+       whether that's one candidate with no import evidence connecting it or
+       several genuinely competing ones.
+    """
     g = nx.DiGraph()
     id_to_key: dict[int, str] = {}
     name_to_keys: dict[str, list[str]] = {}
@@ -103,6 +143,8 @@ def call_graph(conn: sqlite3.Connection, sha: str) -> nx.DiGraph:
         name_to_keys.setdefault(r["name"], []).append(r["key"])
         g.add_node(r["key"])
 
+    imports_by_file = _imports_by_file(conn, sha)
+
     for r in conn.execute(
         "SELECT from_symbol_id, target_name FROM refs "
         "WHERE commit_sha = ? AND from_symbol_id IS NOT NULL",
@@ -114,9 +156,23 @@ def call_graph(conn: sqlite3.Connection, sha: str) -> nx.DiGraph:
         candidates = [k for k in name_to_keys.get(r["target_name"], ()) if k != src]
         if not candidates:
             continue
+
         same_file = [k for k in candidates if _path_of(k) == _path_of(src)]
-        for dst in same_file or candidates:
-            g.add_edge(src, dst)
+        if same_file:
+            for dst in same_file:
+                g.add_edge(src, dst, confidence=EXTRACTED)
+            continue
+
+        imported = imports_by_file.get(_path_of(src), ())
+        via_import = [k for k in candidates if _path_of(k) in imported]
+        if via_import:
+            confidence = INFERRED if len(via_import) == 1 else AMBIGUOUS
+            for dst in via_import:
+                g.add_edge(src, dst, confidence=confidence)
+            continue
+
+        for dst in candidates:
+            g.add_edge(src, dst, confidence=AMBIGUOUS)
     return g
 
 

@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from . import intent, semdiff
 from .config import Config
 from .impact import Impact
+from .indexer import WORKTREE_SHA
 
 _INTENT_LABEL = {
     "session": "from session",
@@ -128,6 +129,7 @@ def render_commit(
     cfg: Config,
     sha: str,
     *,
+    changes: list[semdiff.Change] | None = None,
     impacts: dict[str, Impact] | None = None,
     narrative: str | None = None,
 ) -> str:
@@ -139,7 +141,12 @@ def render_commit(
         if meta and meta["ts"]
         else "?"
     )
-    changes = semdiff.load_changes(conn, sha)
+    # `changes` is only ever passed by a caller that computed it without
+    # persisting (spec M15's `explain worktree` — the live pseudo-commit's
+    # diff is deliberately never written to the `changes` table). Every other
+    # caller relies on the stored rows, which is the common, cheap path.
+    if changes is None:
+        changes = semdiff.load_changes(conn, sha)
     src, text = intent.load(conn, sha)
 
     structural = [c for c in changes if c.severity == semdiff.STRUCTURAL]
@@ -147,7 +154,8 @@ def render_commit(
     cosmetic_n = sum(1 for c in changes if c.severity == semdiff.COSMETIC)
     deps = sorted({c.details.get("module", c.subject) for c in changes if c.change_type == "dependency_added"})
 
-    lines = [f"## {sha[:7]} — {date}"]
+    header_sha = sha if sha == WORKTREE_SHA else sha[:7]
+    lines = [f"## {header_sha} — {date}"]
 
     if src == "inferred":
         lines.append("**Intent:** [inferred] no stated intent — treat any narrative as a guess.")

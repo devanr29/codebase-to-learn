@@ -49,6 +49,7 @@ def cmd_status(args: argparse.Namespace) -> int:
         schema_version = db.get_meta(conn, "schema_version", "?")
         last_indexed = db.get_meta(conn, "last_indexed_commit")
         last_reviewed = db.get_meta(conn, "last_reviewed_commit")
+        graph_head = db.get_meta(conn, "graph_head")
 
         counts = {
             name: conn.execute(sql).fetchone()["n"]
@@ -62,6 +63,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"db:          {cfg.db_path}")
         print(f"last indexed:  {last_indexed or '(never)'}")
         print(f"last reviewed: {last_reviewed or '(never)'}")
+        graph_desc = "worktree (uncommitted changes included)" if graph_head == "worktree" else (graph_head or "(none)")
+        print(f"graph:         {graph_desc}")
         if sum(counts.values()) == 0:
             print("index:       empty")
         else:
@@ -110,7 +113,9 @@ def cmd_explain(args: argparse.Namespace) -> int:
         return 0
     conn = db.connect(cfg.db_path)
     try:
-        sha = indexer.resolve_sha(root, args.rev)
+        # "worktree" is the live pseudo-commit (spec M15) — uncommitted changes
+        # included. It isn't a git ref, so it bypasses resolve_sha entirely.
+        sha = indexer.WORKTREE_SHA if args.rev == "worktree" else indexer.resolve_sha(root, args.rev)
         parent = indexer.parent_sha(conn, sha)
         changes = semdiff.load_changes(conn, sha)
         if not changes and parent is not None:
@@ -119,7 +124,7 @@ def cmd_explain(args: argparse.Namespace) -> int:
             # DB UPDATE (which would match nothing here) is not needed
             changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=False)
         impacts = impact.analyze(conn, cfg, parent, sha, changes) if changes else {}
-        print(report.render_commit(conn, cfg, sha, impacts=impacts))
+        print(report.render_commit(conn, cfg, sha, changes=changes, impacts=impacts))
         if args.breakdown:
             print()
             semdiff.print_breakdown(sha, changes, impacts)
@@ -281,7 +286,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--since", help="index from this commit forward (default: last indexed)")
 
     sp = add("explain", cmd_explain, "print the markdown change entry for a commit")
-    sp.add_argument("rev", nargs="?", default="HEAD", help="commit (default: HEAD)")
+    sp.add_argument(
+        "rev", nargs="?", default="HEAD",
+        help="commit, or 'worktree' for uncommitted changes (default: HEAD)",
+    )
     sp.add_argument("--breakdown", action="store_true", help="also print the raw change list")
 
     add("catchup", cmd_catchup, "digest every change since the last-reviewed marker")

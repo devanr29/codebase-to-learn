@@ -17,7 +17,16 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 from . import discovery
-from .indexer import _internal_names, classify_import, is_stdlib
+from .indexer import (
+    _internal_names,
+    classify_import,
+    is_csharp_stdlib,
+    is_go_stdlib,
+    is_java_stdlib,
+    is_rust_stdlib,
+    is_ruby_stdlib,
+    is_stdlib,
+)
 from .languages.registry import spec_for_path
 
 _PY_EXTS = (".py", ".pyi")
@@ -111,7 +120,7 @@ def resolve_imports(
         spec = spec_for_path(importer)
         lang = spec.name if spec else "python"
         mod, external = classify_import(raw, lang, internal)
-        kind = _kind_of(mod, lang, external)
+        kind = _kind_of(mod, lang, external, internal)
         if external or not mod:
             out.append(ResolvedImport(importer, raw, None, bool(external), kind, mod))
             continue
@@ -125,15 +134,44 @@ def resolve_imports(
     return out
 
 
-def _kind_of(mod: str, lang: str, external: bool) -> str:
+def _kind_of(
+    mod: str, lang: str, external: bool, internal_names: set[str] | None = None
+) -> str:
     """Bucket a classified import: relative and in-repo -> internal, the
-    language's own standard library -> stdlib, everything else -> third_party."""
+    language's own standard library -> stdlib, everything else -> third_party.
+
+    ``internal_names`` (optional, defaults to none matching) disambiguates a
+    same-repo import from a real stdlib one where the two heuristics could
+    otherwise collide — chiefly Go, whose "no dot in the first path segment"
+    stdlib signal also matches an internal package path under a module name
+    that isn't itself domain-shaped (``module myrepo`` rather than
+    ``module github.com/user/myrepo``, both legal ``go.mod`` forms).
+    """
     if not mod or mod.startswith("."):
         return "internal"
+    names = internal_names or set()
     top = mod.lstrip("@").split("/")[0].split(".")[0]
     if lang == "python":
         return "third_party" if external else ("stdlib" if is_stdlib(mod) else "internal")
-    # typescript / javascript
-    if top in _NODE_BUILTINS or mod.startswith("node:"):
-        return "stdlib"
+    if lang in ("typescript", "javascript", "tsx"):
+        if top in _NODE_BUILTINS or mod.startswith("node:"):
+            return "stdlib"
+        return "third_party" if external else "internal"
+    if lang == "go":
+        if mod.rsplit("/", 1)[-1] in names:
+            return "internal"
+        return "stdlib" if is_go_stdlib(mod) else ("third_party" if external else "internal")
+    if lang == "rust":
+        if mod.split("::", 1)[0] in names:
+            return "internal"
+        return "stdlib" if is_rust_stdlib(mod) else ("third_party" if external else "internal")
+    if lang == "java":
+        return "stdlib" if is_java_stdlib(mod) else ("third_party" if external else "internal")
+    if lang == "csharp":
+        return "stdlib" if is_csharp_stdlib(mod) else ("third_party" if external else "internal")
+    if lang == "ruby":
+        return "stdlib" if is_ruby_stdlib(mod) else ("third_party" if external else "internal")
+    if lang in ("c", "cpp"):
+        return "internal"  # classify_import never marks a C/C++ include external — see there
+    # php and anything else unlisted: no stdlib concept modeled
     return "third_party" if external else "internal"

@@ -58,7 +58,10 @@ def build(
     max_symbols: int = 1500,
     max_snippet_lines: int = 40,
 ) -> dict:
-    sha = get_meta(conn, "last_indexed_commit")
+    # `graph_head` points at the live worktree graph whenever a normal scan
+    # has run (spec M15); it falls back to `last_indexed_commit` for a graph
+    # built by bounding `scan(until=...)` to a specific historical commit.
+    sha = get_meta(conn, "graph_head") or get_meta(conn, "last_indexed_commit")
     if not sha:
         return {"empty": True, "generator": f"codemap {__version__}"}
 
@@ -166,15 +169,24 @@ def build(
             }
         )
 
-    # -- call edges (index pairs; tier 2 = same-file, tier 1 = name-based) --
+    # -- call edges (index pairs; tier 2 = same-file, tier 1 = name-based;
+    #    confidence is the finer-grained M15 signal — EXTRACTED/INFERRED/
+    #    AMBIGUOUS — kept alongside tier/namebased rather than replacing them,
+    #    since existing consumers of this shape read those two fields) -------
     edges: list[dict] = []
-    for src, dst in g.edges():
+    for src, dst, edata in g.edges(data=True):
         si, ti = key_to_i.get(src), key_to_i.get(dst)
         if si is None or ti is None:
             continue
         same_file = _path_of(src) == _path_of(dst)
         edges.append(
-            {"s": si, "t": ti, "tier": 2 if same_file else 1, "namebased": not same_file}
+            {
+                "s": si,
+                "t": ti,
+                "tier": 2 if same_file else 1,
+                "namebased": not same_file,
+                "confidence": edata.get("confidence", "AMBIGUOUS"),
+            }
         )
 
     # -- imports -> file edges -------------------------------------------
