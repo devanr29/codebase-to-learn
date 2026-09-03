@@ -353,7 +353,8 @@ button { font-family: inherit; }
   display: flex;
   flex-direction: column;
   gap: 5px;
-  padding: 10px 12px;
+  padding: 8px 12px 10px;
+  max-width: 200px;
   max-height: 44vh;
   overflow-y: auto;
   border: 1px solid var(--color-neutral-800);
@@ -363,16 +364,37 @@ button { font-family: inherit; }
   font-size: 11px;
   color: var(--color-neutral-400);
 }
+.legend.dragging { user-select: none; }
+.legend.collapsed { max-height: none; overflow: visible; }
+.legend-head { display: flex; align-items: center; gap: 6px; margin-bottom: 1px; }
+.legend-head .lk { margin-bottom: 0; }
+.legend-head .spacer { margin-left: auto; }
+.legend-grip { cursor: grab; color: var(--color-neutral-600); font-size: 13px; touch-action: none; }
+.legend.dragging .legend-grip { cursor: grabbing; }
+.legend-toggle {
+  border: none; background: transparent; color: var(--color-neutral-500);
+  cursor: pointer; display: grid; place-items: center; padding: 2px; border-radius: 4px;
+}
+.legend-toggle:hover { color: var(--color-accent-200); background: var(--color-neutral-900); }
+/* the folder path — root plus every open segment — lets a drilled-down
+   legend jump back to any ancestor in one click, not just one level up. */
+.legend-path {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 2px;
+  font: 400 10px var(--font-mono); color: var(--color-neutral-500); margin: -1px 0 2px;
+}
+.legend-path .seg { cursor: pointer; border-radius: 3px; padding: 0 2px; }
+.legend-path .seg:hover { color: var(--color-accent-300); background: var(--color-neutral-900); }
+.legend-path .seg.cur { color: var(--color-neutral-300); cursor: default; }
+.legend-path .seg.cur:hover { background: none; }
+.legend-path i { font-size: 8px; color: var(--color-neutral-700); }
 .legend .lk { font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin-bottom: 2px; }
 .legend .row { display: flex; align-items: center; gap: 7px; }
-/* legend folder rows double as filter toggles: the picked folders stay lit, the
-   rest of the legend dims, and matching-colour nodes/edges drop to a wash. */
-.legend .row.folder { cursor: pointer; border-radius: 4px; margin: 0 -4px; padding: 1px 4px; }
-.legend .row.folder:hover { background: var(--color-neutral-900); }
-.legend .row.folder.on { background: var(--color-accent-900); }
-.legend .row.folder.off { opacity: 0.45; }
-.legend .row.reset { cursor: pointer; color: var(--color-accent-400); font: 400 10px var(--font-mono); }
-.legend .row.reset:hover { color: var(--color-accent-300); }
+/* a "nav" row drills the legend into that folder (and isolates it in the
+   graph) or, for a leaf folder's files, jumps straight to that file. */
+.legend .row.nav { cursor: pointer; border-radius: 4px; margin: 0 -4px; padding: 1px 4px; }
+.legend .row.nav:hover { background: var(--color-neutral-900); }
+.legend .row.nav > i { width: 12px; text-align: center; flex: none; font-size: 11px; color: var(--color-neutral-500); }
+.legend .row.note { color: var(--color-neutral-600); font-style: italic; padding: 1px 0; }
 .legend .sw { width: 16px; height: 2px; border-radius: 2px; flex: none; }
 .legend .sw.dot { width: 10px; height: 10px; border-radius: 3px; }
 .legend .sw.dash { background: none !important; border-top: 2px dashed var(--edge-import); border-radius: 0; }
@@ -819,4 +841,198 @@ button { font-family: inherit; }
     top: var(--bar-h); right: 0; bottom: 0; left: 0;
     background: rgba(8, 9, 16, 0.55);
   }
+}
+
+/* ── simulate tab ─────────────────────────────────────────────── */
+.sim { flex: 1; min-width: 0; display: flex; min-height: 0; }
+.sim-rail {
+  width: 220px; flex: none; overflow-y: auto;
+  border-right: 1px solid var(--color-divider);
+  padding: 12px 10px; display: flex; flex-direction: column; gap: 3px;
+}
+.sim-rail .lk { font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin: 2px 6px 6px; }
+.sim-scenario {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 8px; border-radius: 6px; cursor: pointer;
+  color: var(--color-neutral-300); font-size: 12px;
+}
+.sim-scenario i { color: var(--color-neutral-600); flex: none; }
+.sim-scenario:hover { background: var(--color-neutral-900); }
+.sim-scenario.active { background: var(--color-accent-900); color: var(--color-accent-100); }
+.sim-scenario.active i { color: var(--color-accent-400); }
+.sim-scenario-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-legend {
+  margin-top: auto; padding-top: 10px; border-top: 1px solid var(--color-divider);
+  display: flex; flex-direction: column; gap: 6px; font-size: 10.5px; color: var(--color-neutral-600);
+}
+.sim-legend .row { display: flex; align-items: flex-start; gap: 6px; line-height: 1.4; }
+.sim-legend .row i { margin-top: 1px; flex: none; }
+
+.sim-body { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: auto; padding: 14px; gap: 10px; }
+.sim-note, .sim-crash {
+  font-size: 11.5px; padding: 7px 11px; border-radius: 6px;
+  display: flex; align-items: center; gap: 8px;
+  background: var(--color-surface-2); color: var(--color-neutral-400);
+  border: 1px solid var(--color-neutral-800);
+}
+.sim-crash { color: var(--sev-structural); border-color: var(--color-accent-700); }
+
+.sim-grid {
+  display: grid; gap: 12px; min-height: 0;
+  grid-template-columns: 1fr 260px;
+  grid-template-rows: minmax(160px, 1fr) minmax(200px, 1.2fr);
+  grid-template-areas: "stage stack" "flow source";
+  flex: 1;
+}
+.sim-pane {
+  border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md);
+  background: var(--color-surface); overflow: auto; min-height: 0;
+}
+.sim-stage { grid-area: stage; display: flex; }
+.sim-stackbox { grid-area: stack; padding: 10px 12px; }
+.sim-flowbox { grid-area: flow; background: radial-gradient(120% 90% at 35% 20%, #1b1e2e 0%, #141622 55%, #101220 100%); }
+.sim-flowbox svg { display: block; }
+.sim-sourcebox { grid-area: source; display: flex; flex-direction: column; }
+
+.sim-stackbox .lk { font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin-bottom: 8px; }
+.sim-stacklist { display: flex; flex-direction: column-reverse; gap: 4px; }
+.sim-stack-empty { color: var(--color-neutral-700); font-size: 11px; font-style: italic; }
+.sim-frame { display: flex; align-items: center; gap: 7px; font: 400 11.5px var(--font-mono); color: var(--color-neutral-300); }
+.sim-frame-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.sim-frame-name { color: var(--color-neutral-100); }
+.sim-frame-file { color: var(--color-neutral-600); font-size: 10px; }
+
+.sim-source-hd {
+  flex: none; display: flex; align-items: center; gap: 7px;
+  padding: 8px 12px; border-bottom: 1px solid var(--color-divider);
+  font: 400 11px var(--font-mono); color: var(--color-neutral-400);
+}
+.sim-source-body { overflow: auto; flex: 1; padding: 4px 0; }
+.sim-source-empty { padding: 14px; color: var(--color-neutral-700); font-size: 11.5px; font-style: italic; }
+.sim-line { display: flex; font: 400 11.5px/1.6 var(--font-mono); white-space: pre; }
+.sim-lineno { width: 40px; flex: none; text-align: right; padding-right: 10px; color: var(--color-neutral-700); user-select: none; }
+.sim-code { color: var(--color-neutral-300); white-space: pre-wrap; word-break: break-word; }
+.sim-line.active { background: var(--color-accent-900); }
+.sim-line.active .sim-lineno { color: var(--color-accent-300); }
+.sim-line.active .sim-code { color: var(--color-accent-100); }
+
+.sim-node { cursor: pointer; }
+.sim-dot { transition: r .18s ease, opacity .18s ease; }
+.sim-lbl { font: 400 10.5px/1 var(--font-mono); fill: var(--color-neutral-200); pointer-events: none; }
+.sim-sub { font: 400 8.5px/1 var(--font-mono); fill: var(--color-neutral-600); pointer-events: none; }
+.sim-node.pending .sim-dot { opacity: 0.28; }
+.sim-node.pending .sim-lbl, .sim-node.pending .sim-sub { opacity: 0.35; }
+.sim-node.done .sim-dot { opacity: 0.55; }
+.sim-node.onstack .sim-dot { opacity: 0.9; }
+.sim-node.active .sim-dot { r: 11; opacity: 1; filter: drop-shadow(0 0 6px currentColor); }
+.sim-node.active .sim-lbl { fill: var(--color-accent-100); }
+.sim-edge { opacity: 0.1; stroke-linecap: round; transition: opacity .2s ease; }
+.sim-edge.lit { opacity: 0.55; }
+
+.sim-narrbox {
+  flex: none; display: flex; flex-direction: column; gap: 5px;
+  padding: 11px 14px; border-radius: var(--radius-md);
+  border: 1px solid var(--color-neutral-800); background: var(--color-surface);
+}
+.sim-narr-row { display: flex; align-items: flex-start; gap: 9px; font-size: 12.5px; line-height: 1.5; }
+.sim-narr-row i { margin-top: 2px; flex: none; color: var(--color-neutral-600); }
+.sim-narr-row.user { color: var(--color-neutral-100); }
+.sim-narr-row.code { color: var(--color-neutral-400); }
+.sim-narr-cond { font: 400 11px var(--font-mono); color: var(--color-accent-400); padding-left: 25px; }
+
+.sim-transportbox { flex: none; }
+.sim-transport { display: flex; align-items: center; gap: 6px; padding: 6px 4px; }
+.sim-tbtn {
+  width: 26px; height: 26px; display: grid; place-items: center; flex: none;
+  border: 1px solid var(--color-neutral-800); border-radius: 6px;
+  background: var(--color-surface-2); color: var(--color-neutral-400); cursor: pointer;
+}
+.sim-tbtn:hover { border-color: var(--color-accent); color: var(--color-accent-200); }
+.sim-tbtn:disabled { opacity: 0.35; cursor: default; pointer-events: none; }
+.sim-tbtn.play { width: 32px; height: 32px; color: var(--color-accent-200); border-color: var(--color-accent-700); }
+.sim-scrub { flex: 1; accent-color: var(--color-accent); min-width: 60px; }
+.sim-counter { font: 500 11px var(--font-mono); color: var(--color-neutral-300); min-width: 58px; text-align: center; }
+.sim-speed button { min-width: 26px; text-align: center; font: 400 11px var(--font-mono); }
+
+.sim-term, .sim-browser, .sim-api, .sim-file {
+  flex: 1; display: flex; flex-direction: column; min-height: 0; width: 100%;
+}
+.sim-term-hd { flex: none; display: flex; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--color-divider); }
+.sim-term-dot { width: 9px; height: 9px; border-radius: 50%; }
+.sim-term-dot.r { background: #e5675f; } .sim-term-dot.y { background: #e5b95f; } .sim-term-dot.g { background: #5fbf6b; }
+.sim-term-body { flex: 1; overflow: auto; padding: 10px 12px; font: 400 12px/1.6 var(--font-mono); color: #c8d0e0; }
+.sim-term-cmd { color: #f3f5fe; margin-bottom: 4px; }
+.sim-term-cmd::before { content: ""; }
+.sim-term-line { white-space: pre-wrap; word-break: break-word; color: var(--color-neutral-400); }
+.sim-term-line.err { color: var(--sev-structural); }
+.sim-term-cursor { display: inline-block; width: 7px; height: 13px; background: var(--color-accent-300); animation: cm-caret 1s step-end infinite; vertical-align: -2px; }
+@keyframes cm-caret { 50% { opacity: 0; } }
+
+.sim-browser-bar { flex: none; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-bottom: 1px solid var(--color-divider); }
+.sim-browser-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--color-neutral-700); flex: none; }
+.sim-browser-url { font: 400 11px var(--font-mono); color: var(--color-neutral-400); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-browser-page { flex: 1; padding: 14px; display: flex; flex-direction: column; gap: 8px; overflow: auto; }
+.sim-browser-block { height: 16px; border-radius: 3px; background: var(--color-neutral-800); animation: cm-fadein .3s ease; }
+.sim-browser-block:nth-child(2) { width: 70%; } .sim-browser-block:nth-child(3) { width: 88%; }
+@keyframes cm-fadein { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+.sim-browser-spinner {
+  width: 22px; height: 22px; margin: auto; border-radius: 50%;
+  border: 2px solid var(--color-neutral-800); border-top-color: var(--color-accent);
+  animation: cm-spin .8s linear infinite;
+}
+@keyframes cm-spin { to { transform: rotate(360deg); } }
+
+.sim-api { padding: 14px; gap: 10px; }
+.sim-api-card { border: 1px solid var(--color-neutral-800); border-radius: 6px; padding: 9px 11px; background: var(--color-surface-2); }
+.sim-api-lbl { font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.08em; color: var(--color-neutral-600); margin-bottom: 5px; }
+.sim-api-body { font: 400 11.5px var(--font-mono); color: var(--color-neutral-300); white-space: pre-wrap; word-break: break-word; }
+
+.sim-file { align-items: center; justify-content: center; gap: 6px; padding: 20px; text-align: center; }
+.sim-file-icon { font-size: 34px; color: var(--color-neutral-600); }
+.sim-file-name { font: 400 12px var(--font-mono); color: var(--color-neutral-200); }
+.sim-file-bytes { font-size: 11px; color: var(--color-neutral-600); }
+
+.sim-empty {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 10px; color: var(--color-neutral-600); text-align: center; padding: 40px;
+}
+.sim-empty i { font-size: 28px; }
+.sim-empty p { max-width: 380px; font-size: 12.5px; line-height: 1.6; }
+
+.sim-inline {
+  display: flex; align-items: center; gap: 10px; margin-top: 10px;
+  padding: 10px 12px; border: 1px solid var(--color-accent-700); border-radius: var(--radius-md);
+  background: var(--color-accent-900); cursor: pointer;
+}
+.sim-inline:hover { border-color: var(--color-accent); }
+.sim-inline i { font-size: 18px; color: var(--color-accent-300); flex: none; }
+.sim-inline-title { font-size: 12.5px; color: var(--color-accent-100); font-weight: 500; }
+.sim-inline-sub { font-size: 11px; color: var(--color-accent-400); }
+
+@media (prefers-reduced-motion: reduce) {
+  .sim-dot, .sim-edge, .sim-browser-block { transition: none; animation: none; }
+  .sim-term-cursor { animation: none; opacity: 1; }
+}
+@media (max-width: 1180px) {
+  .sim-rail { width: 180px; }
+  .sim-grid { grid-template-columns: 1fr 220px; }
+}
+/* Below 900px there's no room for a 2-column grid — stack every pane full-width
+   and scroll the body; the transport bar and narration stay reachable at all times. */
+@media (max-width: 900px) {
+  .sim { flex-direction: column; }
+  .sim-rail { width: auto; max-height: 130px; border-right: 0; border-bottom: 1px solid var(--color-divider); flex-direction: row; flex-wrap: wrap; }
+  .sim-legend { display: none; }
+  .sim-grid { grid-template-columns: 1fr; grid-template-areas: "stage" "flow" "stack" "source"; grid-template-rows: 200px 220px 160px 220px; }
+  /* .sim-grid is `flex: 1` on desktop so it fills the remaining column height;
+     left alone here, its fixed 800px of row tracks would overflow that
+     flex-shrunk box while narration/transport (later flex siblings) render
+     at the box's edge — on top of the still-visible overflow. Let it take
+     its natural (rows-sum) height instead, so the page just scrolls. */
+  .sim-grid { flex: none; }
+  /* the full transport (5 icon buttons + scrub + counter + 3-way speed toggle)
+     doesn't fit one row under ~420px — give the scrub its own row and let the
+     rest wrap onto a second one instead of clipping past the viewport edge. */
+  .sim-transport { flex-wrap: wrap; }
+  .sim-scrub { flex-basis: 100%; order: -1; }
 }

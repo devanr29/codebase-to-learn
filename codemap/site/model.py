@@ -103,7 +103,7 @@ def build(
 
     # -- symbols --------------------------------------------------------
     sym_rows = conn.execute(
-        "SELECT s.key, s.kind, s.name, s.qualified_name AS qual, f.path AS file, "
+        "SELECT s.id AS sid, s.key, s.kind, s.name, s.qualified_name AS qual, f.path AS file, "
         "sv.signature, sv.start_line, sv.end_line, sv.docstring "
         "FROM symbol_versions sv JOIN symbols s ON s.id = sv.symbol_id "
         "JOIN files f ON f.id = s.file_id WHERE sv.commit_sha = ? "
@@ -112,6 +112,23 @@ def build(
     ).fetchall()
 
     g = call_graph(conn, sha)
+
+    # call-site line numbers: `call_graph()` matches refs by (from_symbol_id,
+    # target_name) but only keeps the edge, not where it happened — Simulate
+    # needs a frame's calls in the order they appear in the source, which the
+    # graph alone can't give. Re-derive that same key here rather than
+    # touching the shared `impact.call_graph()` hot path.
+    id_by_key = {r["key"]: r["sid"] for r in sym_rows}
+    name_by_key = {r["key"]: r["name"] for r in sym_rows}
+    line_by_ref: dict[tuple[int, str], int] = {
+        (r["from_symbol_id"], r["target_name"]): r["line"]
+        for r in conn.execute(
+            "SELECT from_symbol_id, target_name, MIN(line) AS line FROM refs "
+            "WHERE commit_sha = ? AND from_symbol_id IS NOT NULL "
+            "GROUP BY from_symbol_id, target_name",
+            (sha,),
+        )
+    }
 
     change_counts: dict[str, int] = {
         r["key"]: r["n"]
@@ -191,6 +208,7 @@ def build(
         if si is None or ti is None:
             continue
         same_file = _path_of(src) == _path_of(dst)
+        line = line_by_ref.get((id_by_key.get(src), name_by_key.get(dst)))
         edges.append(
             {
                 "s": si,
@@ -198,6 +216,7 @@ def build(
                 "tier": 2 if same_file else 1,
                 "namebased": not same_file,
                 "confidence": edata.get("confidence", "AMBIGUOUS"),
+                "line": line,
             }
         )
 
@@ -324,6 +343,11 @@ def build(
 
     course = _learn.load(cfg)
 
+    # -- simulate scenarios (optional; Lane 1 is derived client-side) -----
+    from . import simulate as _simulate
+
+    sim = _simulate.build(cfg, key_to_i)
+
     out = {
         "generator": f"codemap {__version__}",
         "built_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -356,6 +380,7 @@ def build(
         "dependencies": dependencies,
         "timeline": timeline,
         "learn": course,
+        "sim": sim,
     }
     return out
 

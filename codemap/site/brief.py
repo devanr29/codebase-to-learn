@@ -20,6 +20,79 @@ def _fence(lang: str) -> str:
     return {"python": "python", "typescript": "ts", "tsx": "tsx", "javascript": "js"}.get(lang, "")
 
 
+def _derive_scenario_steps(
+    nodes: list[dict], out_calls: dict[int, list[tuple[int, int]]], root_i: int,
+    budget: int = 50, depth_cap: int = 6,
+) -> list[dict]:
+    """A Python mirror of explore.js's client-side Lane-1 `deriveSteps` — same
+    idea (DFS in call-site line order, recursion folded, depth-capped), kept
+    deliberately simpler since this only ever seeds a brief for a human/Claude
+    to narrate, never the shipped runtime (that stays entirely in explore.js
+    so Simulate keeps working with zero authoring on any repo)."""
+    steps: list[dict] = []
+    on_stack: set[int] = set()
+
+    def visit(i: int, depth: int) -> None:
+        if len(steps) >= budget:
+            return
+        key = nodes[i]["key"]
+        steps.append({"node": key, "t": "call"})
+        if i in on_stack:
+            steps.append({"node": key, "t": "note", "code": "calls itself — fold this in the narration"})
+        elif depth >= depth_cap:
+            steps.append({"node": key, "t": "note", "code": "depth limit reached here"})
+        else:
+            on_stack.add(i)
+            for t, _line in out_calls.get(i, [])[:6]:
+                if len(steps) >= budget:
+                    break
+                visit(t, depth + 1)
+            on_stack.discard(i)
+        steps.append({"node": key, "t": "return"})
+
+    visit(root_i, 1)
+    return steps
+
+
+def _emit_scenarios_derived(briefs_dir, data: dict, written: list[str]) -> None:
+    """``.codemap/briefs/scenarios-derived.json`` — the same call-graph-derived
+    steps Simulate's Lane 1 computes on its own, pre-extracted so the
+    course-authoring skill narrates/trims a real call tree instead of
+    reconstructing one by hand (SKILL.md step 6, references/scenarios-schema.md)."""
+    import json as _json
+
+    nodes = data["nodes"]
+    out_calls: dict[int, list[tuple[int, int]]] = {}
+    fan_in = [0] * len(nodes)
+    for e in data["edges"]:
+        out_calls.setdefault(e["s"], []).append((e["t"], e.get("line") or 0))
+        fan_in[e["t"]] += 1
+    for lst in out_calls.values():
+        lst.sort(key=lambda p: p[1])
+
+    roots = list(dict.fromkeys(ep["node"] for ep in data["entry_points"] if ep["node"] is not None))
+    if len(roots) < 5:
+        ranked = sorted(
+            range(len(nodes)),
+            key=lambda i: -(fan_in[i] + nodes[i]["churn"] * 2 + len(out_calls.get(i, ()))),
+        )
+        for i in ranked:
+            if i not in roots:
+                roots.append(i)
+            if len(roots) >= 5:
+                break
+
+    scenarios = []
+    for i in roots[:5]:
+        steps = _derive_scenario_steps(nodes, out_calls, i)
+        if len(steps) >= 2:
+            scenarios.append({"root_key": nodes[i]["key"], "root_qual": nodes[i]["qual"], "steps": steps})
+
+    path = briefs_dir / "scenarios-derived.json"
+    path.write_text(_json.dumps({"scenarios": scenarios}, indent=2), encoding="utf-8")
+    written.append(str(path))
+
+
 def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     briefs_dir = cfg.codemap_dir / "briefs"
     briefs_dir.mkdir(parents=True, exist_ok=True)
@@ -63,10 +136,19 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
               "`references/explanations-schema.md`. Key every entry by the symbol "
               "`key:` printed in the per-module briefs. Cover at least every "
               "snippet in those briefs (hotspots + entry points).")
+    ov.append("3. (only if asked to simulate/walk through a run) "
+              "`.codemap/scenarios.json` — narrated steps for the Simulate tab. "
+              "Follow `references/scenarios-schema.md`. `scenarios-derived.json` "
+              "in this directory already has a real call tree per likely entry "
+              "point (node key, call/return/note, in call-site order) — narrate "
+              "and trim that rather than reconstructing one by hand. For real "
+              "branch/output fidelity, record an actual run instead: "
+              "`codemap trace --name \"<title>\" -- <command>`.")
     ov.append("")
-    ov.append("Both files are optional and fall back silently — but you were asked "
-              "for both.")
+    ov.append("All three files are optional and fall back silently — but you were "
+              "asked for what you were asked for.")
     _write(briefs_dir / "00-overview.md", ov, written)
+    _emit_scenarios_derived(briefs_dir, data, written)
 
     # ---- one brief per module ------------------------------------
     mod_edges: dict[str, set[str]] = {m["name"]: set() for m in modules}

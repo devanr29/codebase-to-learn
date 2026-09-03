@@ -490,6 +490,60 @@ undertaking on its own, separate from the general three-tier mechanism above.
 
 ---
 
+## 16. Simulate tab (M18)
+
+Every explorer view through M17 is static and simultaneous — the whole
+structure at once. M18 adds a fifth tab, **Simulate**: a transport-controlled
+player that walks one *scenario* — one thing a person does with the software —
+call by call, pairing the user's world (a terminal/browser/API/file stage)
+with the code's world (an animated call-flow graph, a live call stack, the
+source line executing) and two narration lines per step. Three lanes feed the
+same normalized step shape, increasing in fidelity:
+
+1. **Derived** (⚡) — computed entirely client-side in `explore.js` from the
+   call graph, the same architectural pattern as the Map tab's own
+   `layerCake`/`runTrace`/`massMap` (payload facts in, view derived in the
+   browser). The one new fact it needed: `site/model.py` now attaches a
+   call-site `line` to every edge (re-deriving `impact.call_graph`'s own
+   `(from_symbol_id, target_name)` match against `refs.line`, without
+   touching that shared hot path) — without it, a frame's calls are an
+   unordered set. Works on any repo, authors nothing; the tab always shows
+   the honesty banner that branches/loops are possibilities, not choices.
+2. **Authored** (✏) — `.codemap/scenarios.json`, loaded by `site/scenarios.py`
+   (absent/malformed fails soft, same contract as `learn.py`/`explain.py`),
+   written by the course-authoring skill (`SKILL.md`, "Simulate" step;
+   `references/scenarios-schema.md`). `--emit-brief` also writes
+   `.codemap/briefs/scenarios-derived.json` — a Python mirror of the same
+   derive algorithm — so authoring means narrating a real call tree, not
+   reconstructing one by hand.
+3. **Recorded** (⏺) — a new top-level command, `codemap trace -- <command>`
+   (`tracer.py`): a `sys.setprofile` call/return recorder that runs the
+   target **in-process** (the only way to see its frames at all), maps every
+   frame to a symbol key via the existing index rather than re-parsing
+   source, and tees stdout/stderr with real timing so the terminal stage
+   replays actual output at the actual moments. Real branches taken, real
+   loop counts, real values (`--values`, off by default, secret-named
+   arguments redacted), real durations. Written to
+   `.codemap/traces/<slug>.json`; never hand-authored.
+
+`site/simulate.py` assembles `data.sim` from lanes 2 and 3 only (lane 1 stays
+client-side on purpose, so it never goes stale relative to a `max_symbols`
+budget cut and keeps working on a repo with neither `scenarios.json` nor a
+trace) — resolving every step's symbol key to a graph node index, silently
+dropping a step whose key doesn't resolve to a currently-kept node (same
+fail-soft contract as `explanations.json`), and dropping a scenario left with
+fewer than 2 resolvable steps.
+
+`paintStep(i)` is a pure function of `i` — every normalized step carries its
+own call-stack snapshot, computed once by `normalizeSteps()` (which also
+back-fills `from` and default plain-fact narration for a recorded step that
+carries neither, from the same stack). Scrubbing is therefore exact and
+instant, and `#/sim/<scenario-id>/<step>` deep-links reproduce a frame
+byte-for-byte identical to reaching it by playback. Layout is computed once
+per scenario switch, never per step, so nodes never move while playing.
+
+---
+
 ## 9. Testing
 
 `tests/fixtures/build_repo.py` constructs a **real git repository** via `subprocess`, with a

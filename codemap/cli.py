@@ -231,6 +231,41 @@ def cmd_explore(args: argparse.Namespace) -> int:
         conn.close()
 
 
+
+# --------------------------------------------------------------------------- trace
+
+
+def cmd_trace(args: argparse.Namespace) -> int:
+    """Record a real run of the target codebase for the Simulate tab's Lane 3
+    (see ``codemap/tracer.py``). Runs *in this process* -- pass what you'd
+    type after ``python``, e.g. ``codemap trace -- -m codemap explore``."""
+    from . import tracer as _tracer
+
+    root = _find_root(Path(args.path) if args.path else None)
+    cfg = config.load(root)
+    if not cfg.db_path.exists():
+        print("no index yet -- run `codemap scan` first")
+        return 0
+    argv = list(args.cmd or [])
+    if argv and argv[0] == "--":
+        argv = argv[1:]
+    if not argv:
+        print("codemap trace: nothing to run -- pass a command after `--`", file=sys.stderr)
+        return 2
+
+    name = args.name or " ".join(argv)
+    trace = _tracer.record(cfg, argv, name=name, values=args.values)
+    out_path = _tracer.write(cfg, trace)
+    n_steps = len(trace["steps"])
+    msg = f"wrote {out_path}  ({n_steps} step{'' if n_steps == 1 else 's'})"
+    if trace.get("truncated"):
+        msg += f" -- truncated at {_tracer.MAX_STEPS}"
+    if trace.get("crashed"):
+        msg += "\n  target raised: " + trace["crashed"]
+    print(msg)
+    return 0
+
+
 def cmd_reviewed(args: argparse.Namespace) -> int:
     root = _find_root(Path(args.path) if args.path else None)
     cfg = config.load(root)
@@ -304,6 +339,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--quiet", action="store_true", help="suppress the summary line")
     sp.add_argument("--if-enabled", action="store_true",
                     help="no-op unless [explore] rebuild_on_commit is true (used by the hook)")
+
+    sp = add("trace", cmd_trace, "record a real run for the Simulate tab (Lane 3)")
+    sp.add_argument("--name", help="scenario title (default: the command itself)")
+    sp.add_argument("--values", action="store_true", help="capture call-argument reprs (truncated; secret-named args redacted)")
+    sp.add_argument("cmd", nargs=argparse.REMAINDER, help="what to run, e.g. `-- -m codemap explore`")
 
     sp = add("reviewed", cmd_reviewed, "advance the last-reviewed marker")
     sp.add_argument("rev", nargs="?", default="HEAD", help="commit (default: HEAD)")

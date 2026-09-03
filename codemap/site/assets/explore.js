@@ -111,6 +111,12 @@
   var outAdj = N.map(function () { return []; });
   var inAdj = N.map(function () { return []; });
   E.forEach(function (e) { outAdj[e.s].push(e.t); inAdj[e.t].push(e.s); });
+  // per-caller calls, in call-site order — the Graph/Map views only need "is
+  // there an edge", but Simulate (Lane 1) needs "in what order does this
+  // frame make its calls", which only the line number on each edge carries.
+  var outCalls = N.map(function () { return []; });
+  E.forEach(function (e) { outCalls[e.s].push({ t: e.t, line: e.line || 0, conf: e.confidence }); });
+  outCalls.forEach(function (list) { list.sort(function (a, b) { return a.line - b.line; }); });
   var keyToI = {};
   N.forEach(function (n) { keyToI[n.key] = n.i; });
   var fileByPath = {};
@@ -226,10 +232,6 @@
                     "#d55181", "#008300", "#9085e9", "#e66767"];
   var GROUP_OTHER = "#8a8fa3";
   var IMPORT_EDGE = "#8a8fa3";
-  // sentinel key for the legend's single "other folders" row, which stands in
-  // for every long-tail folder folded into GROUP_OTHER's shared colour — see
-  // the folder-filter note above toggleFolder().
-  var OTHER_KEY = " other";
   function dirGroup(path) {
     var i = String(path == null ? "" : path).lastIndexOf("/");
     return i < 0 ? "(root)" : path.slice(0, i);
@@ -240,7 +242,6 @@
       "," + parseInt(h.slice(4, 6), 16) + "," + a + ")";
   }
   var groupColor = {};   // every folder present -> hex (distinct hue or GROUP_OTHER)
-  var groupOrder = [];   // folders that earned a distinct hue, in legend order
   (function () {
     var weight = {};
     FILES.forEach(function (f) {
@@ -251,7 +252,6 @@
       return weight[b] - weight[a] || (a < b ? -1 : 1);
     }).forEach(function (k, i) {
       groupColor[k] = i < GROUP_HUES.length ? GROUP_HUES[i] : GROUP_OTHER;
-      if (i < GROUP_HUES.length) groupOrder.push(k);
     });
   })();
   function colorForPath(p) { return groupColor[dirGroup(p)] || GROUP_OTHER; }
@@ -469,6 +469,13 @@
     hideTests: false,     // Map/layers: drop tests/** and collapse empty bands
     mobileRail: false,    // narrow viewport: source tree shown as an overlay, not a column
     mobileInsp: false,    // narrow viewport: inspector shown as an overlay, not a column
+    folderScope: "",      // legend: folder path currently drilled into ("" = repo root)
+    legendCollapsed: false, // legend: collapsed to just its header bar
+    legendPos: null,      // legend: {left, top} px within the canvas once dragged, else default corner
+    simScenario: null,    // Simulate: current scenario id
+    simStep: 0,           // Simulate: current step index into that scenario's normalized steps
+    simPlaying: false,    // Simulate: transport is auto-advancing
+    simSpeed: 1,          // Simulate: playback speed multiplier (1 | 2 | 4)
   };
 
   // ---- routing ---------------------------------------------------
@@ -491,8 +498,11 @@
   window.addEventListener("hashchange", route);
 
   function route() {
+    if (state.simPlaying) simPause();   // a real navigation (incl. our own scenario-switch
+                                         // `go()`) always means "stop the timer" — in-tab
+                                         // step/scrub never calls route(), see simSetStep().
     var r = parseHash();
-    state.tab = ["graph", "learn", "timeline", "map"].indexOf(r.tab) >= 0 ? r.tab : "graph";
+    state.tab = ["graph", "learn", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "graph";
     if (state.tab === "graph") {
       if (r.arg && keyToI[r.arg] != null) { state.focus = keyToI[r.arg]; state.fileScope = null; }
       else if (!r.arg) state.focus = null;
@@ -507,6 +517,18 @@
         if (key && keyToI[key] != null) { state.traceRoot = keyToI[key]; state.traceStep = null; }
         else if (state.traceRoot == null && traceRoots.length) state.traceRoot = traceRoots[0].i;
       }
+    } else if (state.tab === "sim") {
+      // "#/sim/<scenario-id>/<step>" — the id itself may contain "/" (e.g. a
+      // symbol key), so split off the trailing numeric step, not the first "/".
+      var simParts = r.arg.split("/");
+      var lastPart = simParts[simParts.length - 1];
+      var hasStep = simParts.length > 1 && /^\d+$/.test(lastPart);
+      var scId = hasStep ? simParts.slice(0, -1).join("/") : r.arg;
+      if (scId && simById[scId]) state.simScenario = scId;
+      else if (!state.simScenario || !simById[state.simScenario])
+        state.simScenario = SIM_SCENARIOS.length ? SIM_SCENARIOS[0].id : null;
+      state.simStep = hasStep ? parseInt(lastPart, 10) : 0;
+      state.simPlaying = false;
     }
     render();
   }
@@ -517,6 +539,7 @@
     var tabs = [
       ["graph", "ph ph-graph", "Graph"],
       ["map", "ph ph-stack", "Map"],
+      ["sim", "ph ph-play-circle", "Simulate"],
       ["learn", "ph ph-graduation-cap", "Learn"],
       ["timeline", "ph ph-git-commit", "Timeline"],
     ].map(function (t) {
@@ -578,6 +601,22 @@
   }
   var TREE = buildTree();
   var treeOpen = {};
+  // walks TREE by path segments — used by the graph legend to look up "what
+  // folders live directly inside the folder currently drilled into", so the
+  // legend can mirror the real directory tree instead of a flat repo-wide list.
+  function treeNodeAt(path) {
+    if (!path) return TREE;
+    var segs = path.split("/"), cur = TREE;
+    for (var i = 0; i < segs.length; i++) {
+      cur = cur.dirs[segs[i]];
+      if (!cur) return null;
+    }
+    return cur;
+  }
+  function parentFolder(path) {
+    var i = path.lastIndexOf("/");
+    return i < 0 ? "" : path.slice(0, i);
+  }
 
   function renderTreeNode(node, prefix, depth, frag) {
     Object.keys(node.dirs).sort().forEach(function (dn) {
@@ -692,20 +731,30 @@
       else { state.grain = 2; render(); }   // no symbols to focus: fall back to Function grain
     };
   }
-  // A folder crumb "opens" that folder: drop any focus and isolate every folder
-  // at or below the clicked path prefix. state.folders holds folder KEYS (not
-  // colours) — several unrelated long-tail folders can share GROUP_OTHER's one
-  // hex, so filtering by colour would light up every folder that happens to
-  // share that colour, anywhere in the repo, not just the ones under `prefix`.
-  // An ancestor folder with no colour of its own still isolates correctly, by
-  // sweeping up every descendant's key.
+  // Isolates every folder at or below `prefix`: state.folders holds folder
+  // KEYS (not colours) — several unrelated long-tail folders can share
+  // GROUP_OTHER's one hex, so filtering by colour would light up every folder
+  // that happens to share that colour, anywhere in the repo, not just the
+  // ones under `prefix`. An ancestor folder with no colour of its own still
+  // isolates correctly, by sweeping up every descendant's key. `prefix === ""`
+  // (repo root) intentionally matches nothing, i.e. clears the filter.
+  // state.folderScope records `prefix` itself, verbatim, so the legend (see
+  // legend() / openFolder()) knows which folder it's currently browsing.
+  function isolateFolder(prefix) {
+    var hits = new Set();
+    Object.keys(groupColor).forEach(function (k) {
+      if (k === prefix || k.indexOf(prefix + "/") === 0) hits.add(k);
+    });
+    state.folders = hits;
+    state.folderScope = prefix;
+  }
+  // A folder crumb "opens" that folder: drop any focus and isolate its
+  // subtree. Reached only from an already-focused symbol's breadcrumb, so —
+  // unlike the legend's own openFolder() below — it deliberately backs out of
+  // that focus rather than layering the filter on top of it.
   function crumbFolder(prefix) {
     return function () {
-      var hits = new Set();
-      Object.keys(groupColor).forEach(function (k) {
-        if (k === prefix || k.indexOf(prefix + "/") === 0) hits.add(k);
-      });
-      state.folders = hits;
+      isolateFolder(prefix);
       state.focus = null;
       state.fileScope = null;
       state.pin = null;
@@ -1106,16 +1155,15 @@
         else if (it.t === h) near.add(it.s);
       });
     }
-    // it.grp here is a folder KEY (dirGroup path, or the OTHER_KEY sentinel for
-    // the legend's "other folders" row) — never a colour — so two folders that
-    // happen to share GROUP_OTHER's hex never light each other up. See the note
-    // above crumbFolder().
+    // it.grp here is a folder KEY (a dirGroup path) — never a colour — so two
+    // folders that happen to share GROUP_OTHER's hex never light each other
+    // up just because a click matched one of them. See the note above
+    // isolateFolder().
     var filtering = state.folders && state.folders.size > 0;
     function fdim(fk) {
       if (!filtering) return false;
       if (fk == null) return true;
-      if (state.folders.has(fk)) return false;
-      return !(state.folders.has(OTHER_KEY) && groupColor[fk] === GROUP_OTHER);
+      return !state.folders.has(fk);
     }
     edgeItems.forEach(function (it) {
       var o = 1;
@@ -1131,17 +1179,17 @@
       it.el.classList.toggle("pinned", state.pin != null && it.key === state.pin);
     });
   }
-  function toggleFolder(key) {
-    if (state.folders.has(key)) state.folders.delete(key);
-    else state.folders.add(key);
+  // Legend-driven folder browsing is a cheap lens change (opacity only, via
+  // applyHighlight()) — it must not disturb whatever symbol is currently
+  // focused/pinned, so unlike crumbFolder() it never touches state.focus and
+  // never triggers a full go()/render(). prefix === "" isolates nothing,
+  // i.e. resets to "show every folder" — clearFolders() is just that case.
+  function openFolder(prefix) {
+    isolateFolder(prefix);
     applyHighlight();
     refreshLegend();
   }
-  function clearFolders() {
-    state.folders.clear();
-    applyHighlight();
-    refreshLegend();
-  }
+  function clearFolders() { openFolder(""); }
   function refreshLegend() {
     var old = canvasEl && canvasEl.querySelector(".legend");
     if (old) old.replaceWith(legend());
@@ -1328,33 +1376,119 @@
     }
     cap.textContent = state.flow && lastFlowN ? base + " · " + lastFlowN + " flows" : base;
   }
-  function legend() {
-    var box = el("div", { class: "legend" }, [el("div", { class: "lk", text: "FOLDERS" })]);
-    var sel = state.folders;
-    // each folder row is a filter toggle — click one to isolate it, the rest of
-    // the graph drops to a wash (not hidden). Empty selection = show everything.
-    // `key` is a folder path (or OTHER_KEY for the catch-all row below) — the
-    // filter is matched on that key, never on `hex`, which the "other folders"
-    // row shares with every long-tail folder in the repo.
-    function folderRow(key, hex, label) {
-      var on = sel.has(key);
-      return el("div", {
-        class: "row folder" + (on ? " on" : "") + (sel.size && !on ? " off" : ""),
-        title: "click to isolate this folder",
-        on: { click: function () { toggleFolder(key); } },
-      }, [
-        el("span", { class: "sw dot", style: "background:" + hex }),
-        el("span", { class: "gname", text: label }),
-      ]);
+  // Drags the legend panel by its grip handle, repositioning it with an
+  // explicit left/top (replacing the default right/bottom CSS anchor) and
+  // clamping it inside the canvas. Position survives across rebuilds via
+  // state.legendPos, the same way collapse/scope survive via their own
+  // state fields — the legend node itself is thrown away and rebuilt on
+  // almost every interaction (refreshLegend(), every render()), so nothing
+  // can live on the DOM node itself.
+  function wireLegendDrag(grip, box) {
+    if (state.legendPos) {
+      box.style.left = state.legendPos.left + "px";
+      box.style.top = state.legendPos.top + "px";
+      box.style.right = "auto";
+      box.style.bottom = "auto";
     }
-    groupOrder.forEach(function (k) {
-      box.appendChild(folderRow(k, groupColor[k], k === "(root)" ? "· repo root" : k));
+    // stopPropagation on mousedown (not just the pointerdown below) belt-
+    // and-braces against canvasEl's own mousedown-driven pan-drag picking up
+    // this same gesture — pointerdown's preventDefault suppresses the
+    // synthesized compatibility mouse events on most browsers, but not all.
+    grip.addEventListener("mousedown", function (e) { e.stopPropagation(); });
+    var drag = null;
+    grip.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      var r = box.getBoundingClientRect(), cr = canvasEl.getBoundingClientRect();
+      drag = { x: e.clientX, y: e.clientY, left: r.left - cr.left, top: r.top - cr.top,
+        cw: cr.width, ch: cr.height, bw: r.width, bh: r.height };
+      box.classList.add("dragging");
+      try { grip.setPointerCapture(e.pointerId); } catch (err) { /* unsupported: drag still works while the pointer stays over grip */ }
+      e.preventDefault();
     });
-    if (Object.keys(groupColor).length > groupOrder.length)
-      box.appendChild(folderRow(OTHER_KEY, GROUP_OTHER, "other folders"));
-    if (sel.size)
-      box.appendChild(el("div", { class: "row reset", on: { click: clearFolders } },
-        [el("span", { class: "sw" }), "show all folders"]));
+    grip.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      var nl = Math.max(4, Math.min(drag.left + (e.clientX - drag.x), drag.cw - drag.bw - 4));
+      var nt = Math.max(4, Math.min(drag.top + (e.clientY - drag.y), drag.ch - drag.bh - 4));
+      box.style.left = nl + "px";
+      box.style.top = nt + "px";
+      box.style.right = "auto";
+      box.style.bottom = "auto";
+      state.legendPos = { left: nl, top: nt };
+    });
+    function endDrag(e) {
+      if (!drag) return;
+      drag = null;
+      box.classList.remove("dragging");
+      try { grip.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+    }
+    grip.addEventListener("pointerup", endDrag);
+    grip.addEventListener("pointercancel", endDrag);
+  }
+  function legend() {
+    var scope = state.folderScope;
+    var box = el("div", { class: "legend" + (state.legendCollapsed ? " collapsed" : "") });
+    // rows inside the legend already do the right thing on click (drill in,
+    // jump the path, collapse, …) — none of that should also count as
+    // "clicked the canvas backdrop", which unpins whatever node is pinned.
+    box.addEventListener("click", function (e) { e.stopPropagation(); });
+    var grip = el("i", { class: "ph ph-dots-six-vertical legend-grip", "aria-hidden": "true", title: "Drag to move" });
+    box.appendChild(el("div", { class: "legend-head" }, [
+      grip,
+      el("span", { class: "lk", text: "FOLDERS" }),
+      el("div", { class: "spacer" }),
+      el("button", { class: "legend-toggle", "aria-label": state.legendCollapsed ? "Show legend" : "Hide legend",
+        on: { click: function () { state.legendCollapsed = !state.legendCollapsed; refreshLegend(); } } },
+        [el("i", { class: state.legendCollapsed ? "ph ph-caret-up" : "ph ph-caret-down" })]),
+    ]));
+    wireLegendDrag(grip, box);
+    if (state.legendCollapsed) return box;
+
+    // Dynamic, drilldown FOLDERS section: rather than one flat, repo-wide
+    // list, it mirrors TREE at whatever folder is currently "open" — root by
+    // default, or wherever a folder crumb / a row below last pointed. Picking
+    // a row both narrows this list to that folder's own children *and*
+    // isolates it in the graph (openFolder() does both, via state.folders).
+    if (scope) {
+      var segs = scope.split("/");
+      var pathRow = el("div", { class: "legend-path" }, [
+        el("span", { class: "seg", text: "root", on: { click: function () { openFolder(""); } } }),
+      ]);
+      segs.forEach(function (s, i) {
+        pathRow.appendChild(el("i", { class: "ph ph-caret-right" }));
+        var last = i === segs.length - 1;
+        var upto = segs.slice(0, i + 1).join("/");
+        var attrs = { class: last ? "seg cur" : "seg", text: s };
+        if (!last) attrs.on = { click: function () { openFolder(upto); } };
+        pathRow.appendChild(el("span", attrs));
+      });
+      box.appendChild(pathRow);
+    }
+    var node = treeNodeAt(scope) || TREE;
+    var childNames = Object.keys(node.dirs || {}).sort();
+    if (childNames.length) {
+      childNames.forEach(function (name) {
+        var childPath = scope ? scope + "/" + name : name;
+        // only a folder that directly holds files has one true colour in the
+        // graph itself (see colorForPath) — a pass-through folder that holds
+        // only subfolders gets a plain glyph rather than a made-up swatch.
+        var hex = Object.prototype.hasOwnProperty.call(groupColor, childPath) ? groupColor[childPath] : null;
+        box.appendChild(el("div", {
+          class: "row nav", title: "open " + childPath,
+          on: { click: function () { openFolder(childPath); } },
+        }, [
+          hex ? el("span", { class: "sw dot", style: "background:" + hex }) : el("i", { class: "ph ph-folder" }),
+          el("span", { class: "gname", text: name }),
+        ]));
+      });
+    } else {
+      box.appendChild(el("div", { class: "row note", text: "no subfolders here" }));
+      node.files.slice().sort(function (a, b) { return a.path < b.path ? -1 : 1; }).forEach(function (f) {
+        box.appendChild(el("div", { class: "row nav", title: f.path, on: { click: fileAct(f) } }, [
+          el("i", { class: fileIcon(f.lang) }),
+          el("span", { class: "gname", text: f.path.split("/").pop() }),
+        ]));
+      });
+    }
     box.appendChild(el("div", { class: "lk", style: "margin-top:9px", text: "EDGE" }));
     box.appendChild(el("div", { class: "row" }, [
       el("span", { class: "sw", style: "background:var(--color-neutral-300)" }),
@@ -1611,25 +1745,41 @@
     return sec;
   }
   function tierOf(path) { var f = fileByPath[path]; return f ? "T" + f.tier : "—"; }
+  // "<focus symbol>:<section label>" -> true once that section's "+N more"
+  // has been opened — same idea as traceExpand above, scoped per symbol so
+  // expanding one caller/callee list doesn't leave every other symbol you
+  // later focus looking pre-expanded.
+  var listExpand = {};
   function listSection(label, idxs) {
-    var sec = el("div", { class: "section" }, [el("div", { class: "lbl", text: label })]);
-    var uniq = Array.from(new Set(idxs || []));
-    if (!uniq.length) {
-      sec.appendChild(el("div", { class: "rowitem muted", text: "none at this tier" }));
+    var key = state.focus + ":" + label;
+    function build() {
+      var sec = el("div", { class: "section" }, [el("div", { class: "lbl", text: label })]);
+      var uniq = Array.from(new Set(idxs || []));
+      if (!uniq.length) {
+        sec.appendChild(el("div", { class: "rowitem muted", text: "none at this tier" }));
+        return sec;
+      }
+      var open = listExpand[key];
+      var take = open ? uniq : uniq.slice(0, 14);
+      take.forEach(function (i) {
+        var n = N[i];
+        sec.appendChild(el("div", { class: "rowitem is-link",
+          on: { click: function () { go("graph", n.key); } } }, [
+          el("span", { class: "rk", text: kindLabel(n.kind) }),
+          el("span", { class: "rn", text: n.qual }),
+          el("span", { class: "rc", text: n.file.split("/").pop() }),
+        ]));
+      });
+      // rebuilt in place (not a full render()) so opening the list doesn't
+      // reset the inspector's scroll position the way navigating away and
+      // back would.
+      if (uniq.length > 14 && !open)
+        sec.appendChild(el("div", { class: "rowitem is-link muted",
+          on: { click: function () { listExpand[key] = true; sec.replaceWith(build()); } } },
+          ["+" + (uniq.length - 14) + " more"]));
       return sec;
     }
-    uniq.slice(0, 14).forEach(function (i) {
-      var n = N[i];
-      sec.appendChild(el("div", { class: "rowitem is-link",
-        on: { click: function () { go("graph", n.key); } } }, [
-        el("span", { class: "rk", text: kindLabel(n.kind) }),
-        el("span", { class: "rn", text: n.qual }),
-        el("span", { class: "rc", text: n.file.split("/").pop() }),
-      ]));
-    });
-    if (uniq.length > 14)
-      sec.appendChild(el("div", { class: "rowitem muted", text: "+" + (uniq.length - 14) + " more" }));
-    return sec;
+    return build();
   }
   function entryPathTo(target) {
     var entries = N.filter(function (n) { return n.entry.length; }).map(function (n) { return n.i; });
@@ -2101,6 +2251,9 @@
     var stepLabel = step == null ? "all" : step + " / " + maxD;
     var controls = [
       picker,
+      el("button", { class: "pill", on: { click: function () {
+        go("sim", "derive:" + N[root].key + "/0");
+      } } }, [el("i", { class: "ph ph-play-circle" }), "Simulate ▶"]),
       el("div", { class: "stepper" }, [
         el("button", { "aria-label": "step back",
           on: { click: function () {
@@ -2204,6 +2357,524 @@
   }
 
   function lgRow(sw, txt) { return el("div", { class: "row" }, [sw, txt]); }
+
+  // ---- simulate tab -------------------------------------
+  // Three lanes feed the same normalized step shape (references/scenarios-schema.md):
+  //   ⚡ derived  — computed right here, from the call graph + each edge's call-site
+  //                    line (model.py attaches it; see `outCalls` above). Works on any
+  //                    repo, authors nothing, and is honest that it's a guess: branches
+  //                    and loops are shown as "could happen", never resolved either way.
+  //   ✏ authored — DATA.sim.scenarios with source "authored", written by the
+  //                    codebase-to-course skill into .codemap/scenarios.json.
+  //   ⏺ recorded — DATA.sim.scenarios with source "recorded", produced by a real
+  //                    `codemap trace` run (codemap/tracer.py) — real branches taken,
+  //                    real loop counts, real output, real timing.
+  // Every scenario ends up as {id, title, trigger, source, root, steps}. `steps` is
+  // normalized lazily into an array where each entry already carries its own call-stack
+  // snapshot (normalizeSteps) — paintSimStep(i) is a pure function of i, so scrubbing
+  // is exact and instant and a deep link always renders the same frame.
+
+  function excerptLineAt(n, line) {
+    if (!n.excerpt || !line || !n.line) return null;
+    var idx = line - n.line[0];
+    var lines = n.excerpt.split("\n");
+    return idx >= 0 && idx < lines.length ? lines[idx] : null;
+  }
+  function condFor(callerN, line) {
+    var code = excerptLineAt(callerN, line) || "";
+    if (/^\s*(for|while)\b/.test(code))
+      return { kind: /^\s*for\b/.test(code) ? "for" : "while", text: "repeats — this can run more than once" };
+    if (/^\s*(if|elif)\b/.test(code)) return { kind: "if", text: "only when this branch is taken" };
+    if (/^\s*try\b/.test(code)) return { kind: "try", text: "only if nothing above this raises" };
+    return null;
+  }
+  function looksLikeCall(line) { return /\(/.test(line) && !/^\s*(def|class|@)/.test(line); }
+
+  var SIM_BUDGET = 90, SIM_DEPTH_CAP = 7;
+  function deriveSteps(rootI) {
+    var steps = [], onStack = {};
+    function visit(i, fromI, line, conf, depth) {
+      if (steps.length >= SIM_BUDGET) return;
+      var n = N[i];
+      var recursive = !!onStack[i];
+      var cond = fromI != null ? condFor(N[fromI], line) : null;
+      var user, code;
+      if (fromI == null) {
+        user = "You run this — nothing is on screen yet.";
+        code = n.qual + " starts.";
+      } else {
+        code = N[fromI].name + " calls " + n.name + (line ? " at line " + line : "") + ".";
+        user = depth > 2
+          ? "Still waiting — several calls deep now, inside " + n.name + "."
+          : "Still nothing on screen — execution just moved into " + n.name + ".";
+      }
+      steps.push({ t: "call", node: i, from: fromI, line: line || null, cond: cond, conf: conf || null,
+        user: user, code: code });
+      if (recursive) {
+        steps.push({ t: "note", node: i, user: "", code: n.name + " calls itself — folded here to keep the trace readable." });
+      } else if (depth >= SIM_DEPTH_CAP) {
+        steps.push({ t: "note", node: i, user: "", code: "trace depth limit reached here." });
+      } else {
+        var calls = (outCalls[i] || []).slice(0, 8);
+        if (!calls.length) {
+          var dyn = (n.excerpt || "").split("\n").some(looksLikeCall);
+          if (dyn) steps.push({ t: "note", node: i, user: "", code: "⚡ dynamic dispatch — the indexer can't follow this call." });
+        }
+        onStack[i] = true;
+        calls.forEach(function (c) { visit(c.t, i, c.line, c.conf, depth + 1); });
+        onStack[i] = false;
+      }
+      steps.push({ t: "return", node: i, user: "", code: n.name + " finishes and returns to its caller." });
+    }
+    visit(rootI, null, null, null, 1);
+    return steps;
+  }
+
+  var derivedCache = {};
+  function derivedScenario(rootI) {
+    var id = "derive:" + N[rootI].key;
+    if (!derivedCache[id])
+      derivedCache[id] = { id: id, title: N[rootI].qual + " runs", source: "derived", root: rootI,
+        trigger: { surface: "terminal", text: N[rootI].qual } };
+    return derivedCache[id];
+  }
+  var SIM_SCENARIOS = [];
+  (DATA.sim && DATA.sim.scenarios || []).forEach(function (s) { s._raw = s.steps; SIM_SCENARIOS.push(s); });
+  traceRoots.slice(0, 6).forEach(function (r) { SIM_SCENARIOS.push(derivedScenario(r.i)); });
+  var simById = {};
+  SIM_SCENARIOS.forEach(function (s) { simById[s.id] = s; });
+  function ensureScenario(id) {
+    if (simById[id]) return simById[id];
+    if (id && id.indexOf("derive:") === 0) {
+      var idx = keyToI[id.slice(7)];
+      if (idx != null) {
+        var sc = derivedScenario(idx);
+        if (!simById[sc.id]) { simById[sc.id] = sc; SIM_SCENARIOS.push(sc); }
+        return sc;
+      }
+    }
+    return null;
+  }
+
+  // A recorded (Lane 3) step carries no narration and no explicit `from` —
+  // a real run has facts, not prose. Both are filled in here from the stack
+  // itself so a trace with zero authoring still gets a readable player: a
+  // drawable edge (`from` = whoever was on top of the stack), and a plain-
+  // fact sentence in the same voice the derived lane already uses.
+  function defaultNarration(st, callerI) {
+    var n = N[st.node];
+    if (st.t === "call") {
+      if (callerI == null) return { user: "You run this — nothing is on screen yet.", code: n.qual + " starts." };
+      var caller = N[callerI];
+      return {
+        user: "Still nothing on screen — execution just moved into " + n.name + ".",
+        code: (caller ? caller.name : "the caller") + " calls " + n.name + (st.line ? " at line " + st.line : "") + ".",
+      };
+    }
+    if (st.t === "return") return { user: "", code: n.name + " finishes and returns to its caller." };
+    if (st.t === "emit") return { user: "", code: n.name + " produces output." };
+    return { user: "", code: "" };
+  }
+  function normalizeSteps(raw) {
+    var stack = [], out = [], prevTs = null;
+    raw.forEach(function (st) {
+      var callerBefore = stack.length ? stack[stack.length - 1] : null;
+      var from = st.from != null ? st.from : (st.t === "call" ? callerBefore : null);
+      if (st.t === "call") stack.push(st.node);
+      var snap = stack.slice();
+      var dur = st.t === "note" ? 650 : st.t === "emit" ? 380 : 520;
+      if (typeof st.ts === "number") {
+        dur = prevTs == null ? 200 : Math.max(90, Math.min(2200, st.ts - prevTs));
+        prevTs = st.ts;
+      }
+      var hasText = (st.user && st.user.trim()) || (st.code && st.code.trim());
+      var fallback = hasText ? null : defaultNarration(st, from);
+      out.push({
+        t: st.t, node: st.node, from: from,
+        line: st.line || null, cond: st.cond || null, conf: st.conf || null,
+        user: (st.user && st.user.trim()) || (fallback ? fallback.user : ""),
+        code: (st.code && st.code.trim()) || (fallback ? fallback.code : ""),
+        emit: st.emit || null, args: st.args || null,
+        depth: snap.length, stack: snap, dur: dur,
+      });
+      if (st.t === "return" && stack.length) stack.pop();
+    });
+    return out;
+  }
+  function scenarioSteps(sc) {
+    if (!sc._norm) sc._norm = normalizeSteps(sc._raw || (sc._raw = deriveSteps(sc.root)));
+    return sc._norm;
+  }
+  function simCurrent() { return state.simScenario ? simById[state.simScenario] : null; }
+  function stepReached(steps, i, node) {
+    for (var k = 0; k <= i; k++) if (steps[k].node === node) return true;
+    return false;
+  }
+
+  // layout is computed once per scenario, not per step — nodes never move while playing.
+  function layoutSim(steps) {
+    var order = [], seen = {}, depthOf = {};
+    steps.forEach(function (st) {
+      if (st.t === "call" && !seen[st.node]) { seen[st.node] = true; order.push(st.node); depthOf[st.node] = st.depth; }
+    });
+    var COLW = 190, ROWH = 46, TOP = 26, LEFT = 20;
+    var cols = {};
+    order.forEach(function (ni) { (cols[depthOf[ni]] = cols[depthOf[ni]] || []).push(ni); });
+    var depths = Object.keys(cols).map(Number).sort(function (a, b) { return a - b; });
+    var pos = {};
+    depths.forEach(function (d) {
+      cols[d].forEach(function (ni, k) { pos[ni] = { x: LEFT + (d - 1) * COLW, y: TOP + k * ROWH }; });
+    });
+    var maxRows = Math.max.apply(null, depths.map(function (d) { return cols[d].length; }).concat([1]));
+    return {
+      pos: pos, order: order,
+      W: LEFT * 2 + Math.max(1, depths.length) * COLW,
+      H: TOP * 2 + maxRows * ROWH,
+    };
+  }
+
+  function buildSimFlow(steps, layout) {
+    var svg = el("svg", { class: "sim-flow", width: layout.W, height: layout.H,
+      viewBox: "0 0 " + layout.W + " " + layout.H });
+    var edgeLayer = el("g", { class: "sim-edges", fill: "none" });
+    var nodeLayer = el("g", { class: "sim-nodes" });
+    svg.appendChild(edgeLayer); svg.appendChild(nodeLayer);
+    var edgeEls = {}, nodeEls = {}, seenEdge = {};
+    steps.forEach(function (st) {
+      if (st.t !== "call" || st.from == null) return;
+      var key = st.from + ">" + st.node;
+      if (seenEdge[key]) return;
+      seenEdge[key] = true;
+      var a = layout.pos[st.from], b = layout.pos[st.node];
+      if (!a || !b) return;
+      var d = dendrite({ x: a.x + 78, y: a.y + 14 }, { x: b.x, y: b.y + 14 }, hashSeed(key), { bow: 0.26 });
+      var p = el("path", { class: "sim-edge", d: d.d, stroke: colorForNode(N[st.node]), "stroke-width": 1.4 });
+      edgeLayer.appendChild(p);
+      edgeEls[key] = p;
+    });
+    layout.order.forEach(function (ni) {
+      var p = layout.pos[ni], n = N[ni];
+      var g = el("g", { class: "sim-node pending", transform: "translate(" + p.x + "," + p.y + ")",
+        on: { click: function () { go("graph", n.key); } } }, [el("title", { text: n.qual })]);
+      g.appendChild(el("circle", { class: "sim-dot", cx: 8, cy: 14, r: 8,
+        fill: hexA(colorForNode(n), 0.85), stroke: colorForNode(n), "stroke-width": 1.4 }));
+      g.appendChild(el("text", { x: 22, y: 11, class: "sim-lbl", text: fitText(n.name, 150, 6.2) }));
+      g.appendChild(el("text", { x: 22, y: 23, class: "sim-sub", text: fitText(n.file.split("/").pop(), 150, 5.2) }));
+      nodeLayer.appendChild(g);
+      nodeEls[ni] = g;
+    });
+    return { svg: svg, nodeEls: nodeEls, edgeEls: edgeEls };
+  }
+
+  function stackPane(stack) {
+    var box = el("div", { class: "sim-stacklist" });
+    if (!stack.length) { box.appendChild(el("div", { class: "sim-stack-empty", text: "— empty —" })); return box; }
+    stack.forEach(function (ni, depth) {
+      var n = N[ni];
+      box.appendChild(el("div", { class: "sim-frame", style: "padding-left:" + (depth * 14) + "px" }, [
+        el("span", { class: "sim-frame-dot", style: "background:" + colorForNode(n) }),
+        el("span", { class: "sim-frame-name", text: n.name }),
+        el("span", { class: "sim-frame-file", text: n.file.split("/").pop() }),
+      ]));
+    });
+    return box;
+  }
+
+  function sourcePane(n, activeLine) {
+    var box = el("div", { class: "sim-source" });
+    box.appendChild(el("div", { class: "sim-source-hd" }, [
+      el("i", { class: fileIcon(fileByPath[n.file] ? fileByPath[n.file].lang : "") }),
+      el("span", { text: n.file }),
+    ]));
+    if (!n.excerpt) {
+      box.appendChild(el("div", { class: "sim-source-empty", text: "source not captured for this symbol" }));
+      return box;
+    }
+    var body = el("div", { class: "sim-source-body" });
+    n.excerpt.split("\n").forEach(function (ln, i) {
+      var lineNo = n.line[0] + i;
+      body.appendChild(el("div", { class: "sim-line" + (lineNo === activeLine ? " active" : "") }, [
+        el("span", { class: "sim-lineno", text: String(lineNo) }),
+        el("span", { class: "sim-code", text: ln }),
+      ]));
+    });
+    box.appendChild(body);
+    return box;
+  }
+
+  function narrationPane(st) {
+    var box = el("div", { class: "sim-narr", "aria-live": "polite" });
+    box.appendChild(el("div", { class: "sim-narr-row user" }, [el("i", { class: "ph ph-user-fill" }), st.user || "—"]));
+    box.appendChild(el("div", { class: "sim-narr-row code" }, [el("i", { class: "ph ph-gear-fine" }), st.code || "—"]));
+    if (st.cond)
+      box.appendChild(el("div", { class: "sim-narr-cond" },
+        [(st.cond.kind === "for" || st.cond.kind === "while" ? "↻ " : st.cond.kind === "try" ? "⚠ " : "◇ ") + st.cond.text]));
+    if (st.conf === "AMBIGUOUS")
+      box.appendChild(el("div", { class: "sim-narr-cond", text: "◇ one of several same-named targets — shown as the most likely" }));
+    return box;
+  }
+
+  function terminalStage(sc, steps, i) {
+    var box = el("div", { class: "sim-term" });
+    box.appendChild(el("div", { class: "sim-term-hd" }, [
+      el("span", { class: "sim-term-dot r" }), el("span", { class: "sim-term-dot y" }), el("span", { class: "sim-term-dot g" }),
+    ]));
+    var body = el("div", { class: "sim-term-body" });
+    body.appendChild(el("div", { class: "sim-term-cmd", text: "$ " + ((sc.trigger && sc.trigger.text) || sc.title) }));
+    for (var k = 0; k <= i; k++) {
+      var em = steps[k].emit;
+      if (em && em.surface === "terminal")
+        body.appendChild(el("div", { class: "sim-term-line" + (em.stream === "stderr" ? " err" : ""), text: em.text }));
+    }
+    var done = i === steps.length - 1 && steps[i].depth === 0 && steps[i].t !== "call";
+    if (!done) body.appendChild(el("span", { class: "sim-term-cursor" }));
+    box.appendChild(body);
+    return box;
+  }
+  function browserStage(sc, steps, i) {
+    var box = el("div", { class: "sim-browser" });
+    box.appendChild(el("div", { class: "sim-browser-bar" }, [
+      el("span", { class: "sim-browser-dot" }),
+      el("span", { class: "sim-browser-url", text: (sc.trigger && sc.trigger.text) || "" }),
+    ]));
+    var page = el("div", { class: "sim-browser-page" });
+    var blocks = 0;
+    for (var k = 0; k <= i; k++) if (steps[k].emit && steps[k].emit.surface === "browser") blocks++;
+    if (!blocks) page.appendChild(el("div", { class: "sim-browser-spinner" }));
+    for (var b = 0; b < Math.min(blocks, 6); b++) page.appendChild(el("div", { class: "sim-browser-block" }));
+    box.appendChild(page);
+    return box;
+  }
+  function apiStage(sc, steps, i) {
+    var box = el("div", { class: "sim-api" });
+    var req = null, res = null;
+    for (var k = 0; k <= i; k++) {
+      var em = steps[k].emit;
+      if (em && em.surface === "api") { if (req == null) req = em.text; else res = em.text; }
+    }
+    box.appendChild(el("div", { class: "sim-api-card" }, [el("div", { class: "sim-api-lbl", text: "REQUEST" }),
+      el("div", { class: "sim-api-body", text: req || "…" })]));
+    box.appendChild(el("div", { class: "sim-api-card" }, [el("div", { class: "sim-api-lbl", text: "RESPONSE" }),
+      el("div", { class: "sim-api-body", text: res || "…" })]));
+    return box;
+  }
+  function fileStage(sc, steps, i) {
+    var box = el("div", { class: "sim-file" });
+    var bytes = 0, name = "";
+    for (var k = 0; k <= i; k++) {
+      var em = steps[k].emit;
+      if (em && em.surface === "file") { bytes += em.text.length; if (!name) name = em.text.split(" ")[0]; }
+    }
+    box.appendChild(el("i", { class: "ph ph-file-text sim-file-icon" }));
+    box.appendChild(el("div", { class: "sim-file-name", text: name || "…" }));
+    box.appendChild(el("div", { class: "sim-file-bytes", text: bytes + " bytes written" }));
+    return box;
+  }
+  function stageFor(sc, steps, i) {
+    var surface = (sc.trigger && sc.trigger.surface) || "terminal";
+    if (surface === "browser") return browserStage(sc, steps, i);
+    if (surface === "api") return apiStage(sc, steps, i);
+    if (surface === "file") return fileStage(sc, steps, i);
+    return terminalStage(sc, steps, i);
+  }
+
+  var SIM_LANE_ICON = { derived: "ph-lightning", authored: "ph-pencil-simple", recorded: "ph-record" };
+  function simRail() {
+    var box = el("div", { class: "sim-rail" }, [el("div", { class: "lk", text: "SCENARIOS" })]);
+    SIM_SCENARIOS.forEach(function (sc) {
+      var active = state.simScenario === sc.id;
+      box.appendChild(el("div", { class: "sim-scenario" + (active ? " active" : ""),
+        on: { click: function () { go("sim", sc.id + "/0"); } } }, [
+        el("i", { class: "ph " + (SIM_LANE_ICON[sc.source] || "ph-lightning") }),
+        el("span", { class: "sim-scenario-title", text: sc.title }),
+      ]));
+    });
+    box.appendChild(el("div", { class: "sim-legend" }, [
+      el("div", { class: "row" }, [el("i", { class: "ph ph-lightning" }), "derived — computed from the call graph, not a real run"]),
+      el("div", { class: "row" }, [el("i", { class: "ph ph-pencil-simple" }), "authored — written for this course"]),
+      el("div", { class: "row" }, [el("i", { class: "ph ph-record" }), "recorded — a real `codemap trace` run"]),
+    ]));
+    return box;
+  }
+
+  function buildTransport(m) {
+    var restartBtn = el("button", { class: "sim-tbtn", "aria-label": "restart",
+      on: { click: function () { simSetStep(0); } } }, [el("i", { class: "ph ph-skip-back" })]);
+    var prevBtn = el("button", { class: "sim-tbtn", "aria-label": "step back",
+      on: { click: function () { simSetStep(state.simStep - 1); } } }, [el("i", { class: "ph ph-caret-left" })]);
+    var playIcon = el("i", { class: "ph ph-play" });
+    var playBtn = el("button", { class: "sim-tbtn play", "aria-label": "play",
+      on: { click: function () { state.simPlaying ? simPause() : simPlay(); } } }, [playIcon]);
+    var nextBtn = el("button", { class: "sim-tbtn", "aria-label": "step forward",
+      on: { click: function () { simSetStep(state.simStep + 1); } } }, [el("i", { class: "ph ph-caret-right" })]);
+    var endBtn = el("button", { class: "sim-tbtn", "aria-label": "go to end",
+      on: { click: function () { simSetStep(m.steps.length - 1); } } }, [el("i", { class: "ph ph-skip-forward" })]);
+    // a plain <input type=range> is left alone every repaint (see syncTransport) — replacing
+    // it mid-drag would drop the browser's pointer capture and break scrubbing after 1px.
+    var scrub = el("input", { type: "range", class: "sim-scrub", min: "0", max: String(m.steps.length - 1),
+      value: "0", "aria-label": "playback position",
+      on: { input: function (e) { simSetStep(parseInt(e.target.value, 10)); } } });
+    var counter = el("b", { class: "mono sim-counter", text: "1 / " + m.steps.length });
+    var speedVals = [1, 2, 4];
+    var speedBtns = speedVals.map(function (s) {
+      return el("button", { class: state.simSpeed === s ? "on" : "",
+        on: { click: function () { state.simSpeed = s; syncTransport(m); } } }, [s + "×"]);
+    });
+    var box = el("div", { class: "sim-transport" }, [
+      restartBtn, prevBtn, playBtn, nextBtn, endBtn, scrub, counter,
+      el("div", { class: "seg sim-speed" }, speedBtns),
+    ]);
+    return { box: box, restartBtn: restartBtn, prevBtn: prevBtn, nextBtn: nextBtn, endBtn: endBtn,
+      playIcon: playIcon, scrub: scrub, counter: counter, speedBtns: speedBtns, speedVals: speedVals };
+  }
+  function syncTransport(m) {
+    var t = m.transport, i = state.simStep, n = m.steps.length;
+    t.scrub.value = String(i);
+    t.counter.textContent = (i + 1) + " / " + n;
+    t.playIcon.setAttribute("class", "ph " + (state.simPlaying ? "ph-pause" : "ph-play"));
+    t.prevBtn.disabled = t.restartBtn.disabled = i === 0;
+    t.nextBtn.disabled = t.endBtn.disabled = i >= n - 1;
+    t.speedBtns.forEach(function (b, k) { b.className = state.simSpeed === t.speedVals[k] ? "on" : ""; });
+  }
+
+  function findParentEdgeKey(st) {
+    var idx = st.stack.indexOf(st.node);
+    return idx > 0 ? st.stack[idx - 1] + ">" + st.node : null;
+  }
+  function fireCallToken(m, st) {
+    var key = st.t === "call" && st.from != null ? st.from + ">" + st.node
+      : st.t === "return" ? findParentEdgeKey(st) : null;
+    var pathEl = key && m.flow.edgeEls[key];
+    if (!pathEl) return;
+    var g = comet(pathEl.getAttribute("d"), colorForNode(N[st.node]), 0.5, 0, true);
+    m.flow.svg.appendChild(g);
+    setTimeout(function () { if (g.parentNode) g.parentNode.removeChild(g); }, 650);
+  }
+
+  var simMount = null;   // the currently mounted scenario's live DOM refs — rebuilt by
+                          // simTab() on every scenario switch, mutated in place by every
+                          // step change so play/scrub never tears down (and never re-lays-out) the DOM.
+  function paintSimStep(i, animate) {
+    var m = simMount;
+    if (!m) return;
+    i = Math.max(0, Math.min(m.steps.length - 1, i));
+    state.simStep = i;
+    var st = m.steps[i], n = N[st.node];
+
+    m.layout.order.forEach(function (ni) {
+      var g = m.flow.nodeEls[ni];
+      if (!g) return;
+      var cls = "sim-node";
+      if (ni === st.node) cls += " active";
+      else if (st.stack.indexOf(ni) >= 0) cls += " onstack";
+      else if (stepReached(m.steps, i, ni)) cls += " done";
+      else cls += " pending";
+      g.setAttribute("class", cls);
+    });
+    Object.keys(m.flow.edgeEls).forEach(function (key) {
+      var to = +key.split(">")[1];
+      m.flow.edgeEls[key].setAttribute("class", "sim-edge" + (stepReached(m.steps, i, to) ? " lit" : ""));
+    });
+    if (animate && !reduceMotion) fireCallToken(m, st);
+
+    clear(m.stackBox);
+    m.stackBox.appendChild(el("div", { class: "lk", text: "CALL STACK" }));
+    m.stackBox.appendChild(stackPane(st.stack));
+
+    clear(m.sourceBox);
+    m.sourceBox.appendChild(sourcePane(n, st.line || (n.line ? n.line[0] : null)));
+
+    clear(m.narrBox);
+    m.narrBox.appendChild(narrationPane(st));
+
+    clear(m.stageBox);
+    var stageInner = stageFor(m.sc, m.steps, i);
+    m.stageBox.appendChild(stageInner);
+    var scroller = stageInner.querySelector(".sim-term-body");
+    if (scroller) scroller.scrollTop = scroller.scrollHeight;
+
+    syncTransport(m);
+    history.replaceState(null, "", "#/sim/" + encodeURIComponent(m.sc.id) + "/" + i);
+  }
+  function simSetStep(i) { if (simMount) paintSimStep(i, true); }
+  var simTimer = null;
+  function simPlay() {
+    if (!simMount || state.simPlaying) return;
+    state.simPlaying = true;
+    syncTransport(simMount);
+    simTick();
+  }
+  function simPause() {
+    state.simPlaying = false;
+    if (simTimer) { clearTimeout(simTimer); simTimer = null; }
+    if (simMount) syncTransport(simMount);
+  }
+  function simTick() {
+    if (!state.simPlaying || !simMount) return;
+    var steps = simMount.steps, i = state.simStep;
+    if (i >= steps.length - 1) { simPause(); return; }
+    var dur = Math.max(100, steps[i].dur || 500) / state.simSpeed;
+    simTimer = setTimeout(function () {
+      if (!state.simPlaying) return;
+      simSetStep(state.simStep + 1);
+      simTick();
+    }, dur);
+  }
+  document.addEventListener("keydown", function (e) {
+    if (state.tab !== "sim" || !simMount) return;
+    var tag = (e.target && e.target.tagName || "").toLowerCase();
+    if (tag === "input" || tag === "textarea") return;
+    if (e.key === " ") { e.preventDefault(); state.simPlaying ? simPause() : simPlay(); }
+    else if (e.key === "ArrowRight" || e.key === ".") { e.preventDefault(); simSetStep(state.simStep + 1); }
+    else if (e.key === "ArrowLeft" || e.key === ",") { e.preventDefault(); simSetStep(state.simStep - 1); }
+    else if (e.key === "Home") { e.preventDefault(); simSetStep(0); }
+    else if (e.key === "End") { e.preventDefault(); simSetStep(simMount.steps.length - 1); }
+  });
+
+  function simTab() {
+    var sc = simCurrent();
+    if (!sc)
+      return el("div", { class: "sim-empty" }, [
+        el("i", { class: "ph ph-play-circle" }),
+        el("p", { text: "No scenarios yet — open a busy symbol in Map ▸ Run trace and press " +
+          "“Simulate ▶”, write .codemap/scenarios.json, or run `codemap trace`." }),
+      ]);
+    var steps = scenarioSteps(sc);
+    var i = Math.max(0, Math.min(steps.length - 1, state.simStep));
+    state.simStep = i;
+    var layout = layoutSim(steps);
+    var flow = buildSimFlow(steps, layout);
+
+    var stageBox = el("div", { class: "sim-pane sim-stage" });
+    var flowBox = el("div", { class: "sim-pane sim-flowbox" }, [flow.svg]);
+    var stackBox = el("div", { class: "sim-pane sim-stackbox" });
+    var sourceBox = el("div", { class: "sim-pane sim-sourcebox" });
+    var narrBox = el("div", { class: "sim-narrbox" });
+    var transportBox = el("div", { class: "sim-transportbox" });
+
+    var notes = [];
+    if (sc.crashed) notes.push(el("div", { class: "sim-crash" }, [el("i", { class: "ph ph-warning" }), "the recorded run raised: " + sc.crashed]));
+    if (sc.truncated) notes.push(el("div", { class: "sim-note" }, ["trace truncated to the first " + steps.length + " steps"]));
+    if (sc.source === "derived")
+      notes.push(el("div", { class: "sim-note" },
+        ["⚡ simulated from the call graph — not a recorded run. Branches and loops are shown as possibilities, not choices."]));
+
+    simMount = { sc: sc, steps: steps, layout: layout, flow: flow,
+      stageBox: stageBox, stackBox: stackBox, sourceBox: sourceBox, narrBox: narrBox };
+    simMount.transport = buildTransport(simMount);
+    transportBox.appendChild(simMount.transport.box);
+
+    paintSimStep(i, false);
+
+    return el("div", { class: "sim" }, [
+      simRail(),
+      el("div", { class: "sim-body" }, notes.concat([
+        el("div", { class: "sim-grid" }, [stageBox, stackBox, flowBox, sourceBox]),
+        narrBox,
+        transportBox,
+      ])),
+    ]);
+  }
 
   // ---- learn tab -------------------------------------
   function orientationCourse() {
@@ -2334,6 +3005,21 @@
             el("p", { text: sc.callout.text }),
           ]),
         ]));
+      // "sim": "<scenario-id>" — a screen can point at a Simulate scenario
+      // instead of describing a call path in prose; this is a link-out card,
+      // not an embedded player (see references/interactive-elements.md #6).
+      if (sc.sim) {
+        var simRef = ensureScenario(sc.sim);
+        if (simRef)
+          s.appendChild(el("div", { class: "sim-inline",
+            on: { click: function () { go("sim", simRef.id + "/0"); } } }, [
+            el("i", { class: "ph ph-play-circle" }),
+            el("div", {}, [
+              el("div", { class: "sim-inline-title", text: simRef.title }),
+              el("div", { class: "sim-inline-sub", text: "Open in Simulate — watch it run, step by step" }),
+            ]),
+          ]));
+      }
       if (sc.nodes && sc.nodes.length) {
         var refs = el("div", { class: "steps" });
         sc.nodes.forEach(function (ni) {
@@ -2468,6 +3154,8 @@
       frag.appendChild(el("main", { class: "view" }, [railNode, stage(), inspNode, backdrop]));
     } else if (state.tab === "map")
       frag.appendChild(el("main", { class: "view" }, [mapTab()]));
+    else if (state.tab === "sim")
+      frag.appendChild(el("main", { class: "view" }, [simTab()]));
     else if (state.tab === "timeline")
       frag.appendChild(el("main", { class: "view" }, [timelineTab()]));
     else

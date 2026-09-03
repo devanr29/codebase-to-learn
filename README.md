@@ -44,6 +44,7 @@ codemap snapshot             # architecture view of the current (live) graph
 codemap explore              # render .codemap/explore.html — the browsable surface
 codemap explore --open       # …and open it
 codemap explore --emit-brief # analysis pack for the course-authoring skill
+codemap trace -- -m codemap explore   # record a real run for the Simulate tab
 codemap note "why I'm about to commit"   # record intent for the next commit
 codemap install-hook         # post-commit hook: scan + explain + explore, always exits 0
 codemap status                # index state — `graph:` shows what explore/snapshot are reading
@@ -61,7 +62,7 @@ Configuration is `.codemap/config.toml` (ignore patterns, languages,
 ### Explore
 
 `codemap explore` renders one self-contained `.codemap/explore.html` from the
-index — no server, no build step, opens with a double-click. Four tabs:
+index — no server, no build step, opens with a double-click. Five tabs:
 
 - **Graph** — the whole file/function structure as a neural-style code graph:
   source tree, module lobes wired by organic dendritic edges, a neuron view
@@ -80,9 +81,19 @@ index — no server, no build step, opens with a double-click. Four tabs:
   (`args.func(...)`, dynamic dispatch) rather than statically; **Mass** is a
   treemap where area is lines of code and fill is how often the file changes,
   hatched when every function in it is unreachable.
+- **Simulate** — a transport-controlled animation of one call-by-call run: the
+  user's world above (a terminal/browser/API/file stage) and the code's world
+  below (animated call flow, a live call stack, the source line executing),
+  with two narration lines per step — what the user perceives, what the code
+  is doing. Three lanes feed it, increasing in fidelity: derived (⚡, computed
+  from the call graph client-side — works on any repo, no authoring), authored
+  (✏, `.codemap/scenarios.json`, written by the course-authoring skill), and
+  recorded (⏺, `codemap trace -- <command>` — a real run, real branches, real
+  output, real timing). See `references/scenarios-schema.md`.
 - **Learn** — an authored walkthrough from `.codemap/learn.json` when present
-  (see the repo-root `SKILL.md`), else a generated Orientation. `learn.json` and
-  `explanations.json` are both optional and fall back silently.
+  (see the repo-root `SKILL.md`), else a generated Orientation. `learn.json`,
+  `explanations.json` and `scenarios.json` are all optional and fall back
+  silently.
 - **Timeline** — every commit with its stated intent, severity counts, headline
   change and blast radius, linking back into the graph.
 

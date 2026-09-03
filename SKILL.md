@@ -5,12 +5,14 @@ description: >-
   explore.html, teaching how the code works to a non-technical "vibe coder".
   Use when someone wants to "turn this codebase into a course", "explain this
   codebase interactively", "teach this code", "make a walkthrough / tutorial
-  from this project", "explain the functions", or asks to fill in the Learn tab
-  or the inspector explanations of the Codegraph Explorer. Produces
+  from this project", "explain the functions", "simulate what happens when I
+  run/click/call this", or asks to fill in the Learn tab, the Simulate tab, or
+  the inspector explanations of the Codegraph Explorer. Produces
   .codemap/learn.json (module narratives, code-to-English translations, quizzes,
-  glossary tooltips) and .codemap/explanations.json (a one-line plain-English
-  blurb per symbol, shown in the Graph inspector) — both baked into the page by
-  `codemap explore`.
+  glossary tooltips), .codemap/explanations.json (a one-line plain-English
+  blurb per symbol, shown in the Graph inspector), and optionally
+  .codemap/scenarios.json (narrated call-by-call walkthroughs for the Simulate
+  tab's animated player) — all baked into the page by `codemap explore`.
 ---
 
 # codebase-to-course
@@ -74,21 +76,40 @@ already did ("you clicked Analyze — here is the journey your data takes").
    "What this does" blurb in the Graph inspector. Do both files — the request
    was for both.
 
-6. **Bake and review.**
+6. **Optionally write `.codemap/scenarios.json`** (only when asked to simulate
+   or walk through a specific run, not by default) following
+   `references/scenarios-schema.md`. This narrates the Simulate tab's animated
+   player — the Graph/Learn tabs already cover *structure*; Simulate covers
+   *what happens over time* for one thing a person does with the software.
+   `codemap explore --emit-brief` also writes
+   `.codemap/briefs/scenarios-derived.json` — the same call-graph-derived steps
+   the tab falls back to on its own (Lane 1) — so authoring here means
+   narrating and trimming that, not reconstructing a call tree by hand. Link a
+   Learn screen to a scenario with `"sim": "<scenario-id>"` instead of
+   describing a call path in prose (see `references/interactive-elements.md`).
+   For real branch/loop/output fidelity instead of an educated guess, record
+   an actual run: `codemap trace --name "<title>" -- <command>` (Lane 3 —
+   never edit its output by hand).
+
+7. **Bake and review.**
    ```
    codemap explore --open
    ```
    Open the Learn tab: every technical term tooltipped, no quiz question
    answerable by scrolling up, each screen more visual than prose, node links
    jump to the right symbol. Then focus a hotspot symbol in the Graph tab and
-   confirm its inspector shows the explanation.
+   confirm its inspector shows the explanation. If you wrote scenarios, open
+   the Simulate tab and play each one through once.
 
 ## Non-negotiables
 
-- `.codemap/learn.json` and `.codemap/explanations.json` are the only files you
-  write. Never edit `explore.css` / `explore.js` / the renderer.
-- `explanations.json` keys must equal a `data.nodes[].key` verbatim (the briefs
-  print each one). No HTML in any string in either file.
+- `.codemap/learn.json`, `.codemap/explanations.json`, and optionally
+  `.codemap/scenarios.json` are the only files you write. Never edit
+  `explore.css` / `explore.js` / the renderer, and never hand-write a file
+  under `.codemap/traces/` — that directory is `codemap trace`'s output only.
+- `explanations.json` and `scenarios.json` keys must equal a `data.nodes[].key`
+  verbatim (the briefs print each one). No HTML in any string in any of these
+  files.
 - Use code snippets **exactly as-is** — choose naturally short ones (5–10 lines)
   rather than trimming.
 - Max 2–3 sentences per text block; every screen ≥50% visual.
