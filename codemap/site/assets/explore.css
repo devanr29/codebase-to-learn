@@ -877,24 +877,62 @@ button { font-family: inherit; }
 }
 .sim-crash { color: var(--sev-structural); border-color: var(--color-accent-700); }
 
-.sim-grid {
-  display: grid; gap: 12px; min-height: 0;
-  grid-template-columns: 1fr 260px;
-  grid-template-rows: minmax(160px, 1fr) minmax(200px, 1.2fr);
-  grid-template-areas: "stage stack" "flow source";
-  flex: 1;
-}
-.sim-pane {
-  border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md);
-  background: var(--color-surface); overflow: auto; min-height: 0;
-}
-.sim-stage { grid-area: stage; display: flex; }
-.sim-stackbox { grid-area: stack; padding: 10px 12px; }
-.sim-flowbox { grid-area: flow; background: radial-gradient(120% 90% at 35% 20%, #1b1e2e 0%, #141622 55%, #101220 100%); }
-.sim-flowbox svg { display: block; }
-.sim-sourcebox { grid-area: source; display: flex; flex-direction: column; }
+/* Every content section (Stage/Flow/Call stack/Source) is an independently
+   resizable, independently collapsible pane: two flex columns side by side
+   (stage+flow on the left, call stack+source on the right), each column its
+   own vertical flex stack with a drag handle between its two panes, plus one
+   more handle between the columns. Dragging sets an explicit px flex-basis on
+   just the pane being resized (see wireHSplitter/wireVSplitter); its column-
+   mate is always plain `flex:1`, so it fills whatever space that frees up —
+   collapsing one pane is then just "shrink it to header height", handled
+   entirely by the .collapsed rule below with no JS math. */
+.sim-panes { display: flex; flex: 1; min-height: 0; gap: 9px; }
+.sim-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; gap: 9px; }
+.sim-col-left { flex: 1 1 auto; min-width: 260px; }
+.sim-col-right { flex: 0 0 320px; min-width: 220px; max-width: 62%; }
 
-.sim-stackbox .lk { font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin-bottom: 8px; }
+.sim-vsplit, .sim-hsplit { flex: none; position: relative; z-index: 2; }
+.sim-vsplit { width: 9px; margin: 0 -4.5px; cursor: col-resize; }
+.sim-hsplit { height: 9px; margin: -4.5px 0; cursor: row-resize; }
+.sim-vsplit::after {
+  content: ""; position: absolute; left: 4px; top: 0; bottom: 0; width: 1px;
+  background: var(--color-neutral-800); transition: background .12s ease, width .12s ease;
+}
+.sim-hsplit::after {
+  content: ""; position: absolute; top: 4px; left: 0; right: 0; height: 1px;
+  background: var(--color-neutral-800); transition: background .12s ease, height .12s ease;
+}
+.sim-vsplit:hover::after, .sim-vsplit.dragging::after { background: var(--color-accent); width: 2px; left: 3.5px; }
+.sim-hsplit:hover::after, .sim-hsplit.dragging::after { background: var(--color-accent); height: 2px; top: 3.5px; }
+
+.sim-pane {
+  display: flex; flex-direction: column; min-height: 70px;
+  border: 1px solid var(--color-neutral-800); border-radius: var(--radius-md);
+  background: var(--color-surface); overflow: hidden;
+  flex: 1 1 50%;   /* even split until a splitter or .collapsed overrides it */
+}
+.sim-pane.collapsed { flex: 0 0 auto !important; min-height: 0; }
+.sim-pane.collapsed .sim-pane-body { display: none; }
+.sim-pane-hd {
+  flex: none; display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px; border-bottom: 1px solid var(--color-divider);
+}
+.sim-pane-title { flex: 1; font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); }
+.sim-pane-toggle {
+  width: 20px; height: 20px; flex: none; display: grid; place-items: center;
+  border: 1px solid var(--color-neutral-800); border-radius: 5px;
+  background: var(--color-surface-2); color: var(--color-neutral-500); cursor: pointer;
+}
+.sim-pane-toggle:hover { border-color: var(--color-accent); color: var(--color-accent-200); }
+.sim-pane-toggle i { font-size: 10.5px; }
+.sim-pane-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+
+.sim-stagebody { flex: 1; display: flex; min-height: 0; }
+.sim-flowbody { background: radial-gradient(120% 90% at 35% 20%, #1b1e2e 0%, #141622 55%, #101220 100%); }
+.sim-flowbody svg { display: block; }
+.sim-stackbody { padding: 10px 12px; }
+.sim-sourcebody { display: flex; flex-direction: column; }
+
 .sim-stacklist { display: flex; flex-direction: column-reverse; gap: 4px; }
 .sim-stack-empty { color: var(--color-neutral-700); font-size: 11px; font-style: italic; }
 .sim-frame { display: flex; align-items: center; gap: 7px; font: 400 11.5px var(--font-mono); color: var(--color-neutral-300); }
@@ -952,7 +990,10 @@ button { font-family: inherit; }
 .sim-tbtn.play { width: 32px; height: 32px; color: var(--color-accent-200); border-color: var(--color-accent-700); }
 .sim-scrub { flex: 1; accent-color: var(--color-accent); min-width: 60px; }
 .sim-counter { font: 500 11px var(--font-mono); color: var(--color-neutral-300); min-width: 58px; text-align: center; }
-.sim-speed button { min-width: 26px; text-align: center; font: 400 11px var(--font-mono); }
+.sim-speed { display: flex; align-items: center; gap: 6px; flex: none; }
+.sim-speed > i { color: var(--color-neutral-600); font-size: 13px; }
+.sim-speed-slider { width: 84px; accent-color: var(--color-accent); }
+.sim-speed-label { font: 500 11px var(--font-mono); color: var(--color-neutral-300); min-width: 30px; text-align: right; }
 
 .sim-term, .sim-browser, .sim-api, .sim-file {
   flex: 1; display: flex; flex-direction: column; min-height: 0; width: 100%;
@@ -1015,22 +1056,26 @@ button { font-family: inherit; }
 }
 @media (max-width: 1180px) {
   .sim-rail { width: 180px; }
-  .sim-grid { grid-template-columns: 1fr 220px; }
+  .sim-col-right { flex-basis: 260px; }
 }
-/* Below 900px there's no room for a 2-column grid — stack every pane full-width
-   and scroll the body; the transport bar and narration stay reachable at all times. */
+/* Below 900px there's no room for two side-by-side columns — stack every pane
+   full-width in a single column and scroll the body; the transport bar and
+   narration stay reachable at all times. A fixed height + `flex: none` per
+   pane (not the desktop `flex: 1 1 50%`) is deliberate: that flex basis only
+   resolves sanely against a column with a real height to divide, and on this
+   layout the column's own height is content-driven, not viewport-bound — the
+   same class of bug the "!important" rules below correctly guard against for
+   .collapsed already; this extends that fix to the whole stack. */
 @media (max-width: 900px) {
   .sim { flex-direction: column; }
   .sim-rail { width: auto; max-height: 130px; border-right: 0; border-bottom: 1px solid var(--color-divider); flex-direction: row; flex-wrap: wrap; }
   .sim-legend { display: none; }
-  .sim-grid { grid-template-columns: 1fr; grid-template-areas: "stage" "flow" "stack" "source"; grid-template-rows: 200px 220px 160px 220px; }
-  /* .sim-grid is `flex: 1` on desktop so it fills the remaining column height;
-     left alone here, its fixed 800px of row tracks would overflow that
-     flex-shrunk box while narration/transport (later flex siblings) render
-     at the box's edge — on top of the still-visible overflow. Let it take
-     its natural (rows-sum) height instead, so the page just scrolls. */
-  .sim-grid { flex: none; }
-  /* the full transport (5 icon buttons + scrub + counter + 3-way speed toggle)
+  .sim-panes { flex-direction: column; flex: none; }
+  .sim-col, .sim-col-left, .sim-col-right { flex: none !important; width: auto !important; max-width: none; }
+  .sim-vsplit { display: none; }   /* nothing left to resize horizontally once columns stack */
+  .sim-pane { flex: none !important; height: 220px; }
+  .sim-pane.collapsed { height: auto; }
+  /* the full transport (5 icon buttons + scrub + counter + speed slider)
      doesn't fit one row under ~420px — give the scrub its own row and let the
      rest wrap onto a second one instead of clipping past the viewport edge. */
   .sim-transport { flex-wrap: wrap; }

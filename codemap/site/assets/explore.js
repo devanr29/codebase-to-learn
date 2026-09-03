@@ -475,7 +475,9 @@
     simScenario: null,    // Simulate: current scenario id
     simStep: 0,           // Simulate: current step index into that scenario's normalized steps
     simPlaying: false,    // Simulate: transport is auto-advancing
-    simSpeed: 1,          // Simulate: playback speed multiplier (1 | 2 | 4)
+    simSpeed: 1,          // Simulate: playback speed multiplier — one of SIM_SPEEDS below
+    simCollapsed: { stage: false, flow: false, stack: false, source: false },  // Simulate: per-pane hide toggle
+    simLayout: { leftW: null, stageH: null, stackH: null },  // Simulate: px overrides once a splitter is dragged, else CSS default
   };
 
   // ---- routing ---------------------------------------------------
@@ -2533,13 +2535,39 @@
     };
   }
 
+  // one arrowhead marker per distinct folder hue in play, so a static edge
+  // (no animation, e.g. right after a scrub) still shows which way a call
+  // goes — `orient="auto-start-reverse"` points it along the path's own
+  // tangent, so it's correct regardless of which side of its caller a
+  // node's column ends up on (a symbol called from more than one depth can
+  // legitimately sit to the LEFT of a later caller — the arrow, not screen
+  // position, is what's authoritative).
+  function arrowMarkerId(hex) { return "sim-arrow-" + hex.replace("#", ""); }
+  function buildArrowMarker(id, hex) {
+    var m = el("marker", { id: id, viewBox: "0 0 10 10", refX: "8.4", refY: "5",
+      markerWidth: "6.5", markerHeight: "6.5", orient: "auto-start-reverse" });
+    m.appendChild(el("path", { d: "M 0 0 L 10 5 L 0 10 z", fill: hex }));
+    return m;
+  }
+  // our dendrite() paths are always one cubic segment, "M ax ay C c1x c1y
+  // c2x c2y bx by" — swapping the endpoint and reversing the control-point
+  // order retraces the identical visual curve backwards. Used so a RETURN's
+  // token travels the same edge back to the caller instead of re-animating
+  // forward along it (animateMotion always walks a path start->end).
+  var CUBIC_D_RE = /^M\s+([-\d.]+)\s+([-\d.]+)\s+C\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)\s+([-\d.]+)$/;
+  function reverseCubicD(d) {
+    var m = d.match(CUBIC_D_RE);
+    if (!m) return d;
+    return "M " + m[7] + " " + m[8] + " C " + m[5] + " " + m[6] + " " + m[3] + " " + m[4] + " " + m[1] + " " + m[2];
+  }
   function buildSimFlow(steps, layout) {
     var svg = el("svg", { class: "sim-flow", width: layout.W, height: layout.H,
       viewBox: "0 0 " + layout.W + " " + layout.H });
+    var defs = el("defs", {});
     var edgeLayer = el("g", { class: "sim-edges", fill: "none" });
     var nodeLayer = el("g", { class: "sim-nodes" });
-    svg.appendChild(edgeLayer); svg.appendChild(nodeLayer);
-    var edgeEls = {}, nodeEls = {}, seenEdge = {};
+    svg.appendChild(defs); svg.appendChild(edgeLayer); svg.appendChild(nodeLayer);
+    var edgeEls = {}, nodeEls = {}, seenEdge = {}, seenMarker = {};
     steps.forEach(function (st) {
       if (st.t !== "call" || st.from == null) return;
       var key = st.from + ">" + st.node;
@@ -2547,8 +2575,12 @@
       seenEdge[key] = true;
       var a = layout.pos[st.from], b = layout.pos[st.node];
       if (!a || !b) return;
+      var hue = colorForNode(N[st.node]);
+      var markerId = arrowMarkerId(hue);
+      if (!seenMarker[markerId]) { seenMarker[markerId] = true; defs.appendChild(buildArrowMarker(markerId, hue)); }
       var d = dendrite({ x: a.x + 78, y: a.y + 14 }, { x: b.x, y: b.y + 14 }, hashSeed(key), { bow: 0.26 });
-      var p = el("path", { class: "sim-edge", d: d.d, stroke: colorForNode(N[st.node]), "stroke-width": 1.4 });
+      var p = el("path", { class: "sim-edge", d: d.d, stroke: hue, "stroke-width": 1.4,
+        "marker-end": "url(#" + markerId + ")" });
       edgeLayer.appendChild(p);
       edgeEls[key] = p;
     });
@@ -2697,6 +2729,8 @@
     return box;
   }
 
+  var SIM_SPEEDS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4];
+  function fmtSpeed(v) { return v < 1 ? v.toFixed(2).replace(/0+$/, "").replace(/\.$/, "") : String(v); }
   function buildTransport(m) {
     var restartBtn = el("button", { class: "sim-tbtn", "aria-label": "restart",
       on: { click: function () { simSetStep(0); } } }, [el("i", { class: "ph ph-skip-back" })]);
@@ -2715,17 +2749,29 @@
       value: "0", "aria-label": "playback position",
       on: { input: function (e) { simSetStep(parseInt(e.target.value, 10)); } } });
     var counter = el("b", { class: "mono sim-counter", text: "1 / " + m.steps.length });
-    var speedVals = [1, 2, 4];
-    var speedBtns = speedVals.map(function (s) {
-      return el("button", { class: state.simSpeed === s ? "on" : "",
-        on: { click: function () { state.simSpeed = s; syncTransport(m); } } }, [s + "×"]);
-    });
+    // a draggable slider, not fixed stops — 1x still read as "fast" to
+    // watch a real trace unfold, so the range runs well under 1x too.
+    var si = SIM_SPEEDS.indexOf(state.simSpeed);
+    if (si < 0) { si = SIM_SPEEDS.indexOf(1); state.simSpeed = 1; }
+    var speedLabel = el("b", { class: "mono sim-speed-label", text: fmtSpeed(state.simSpeed) + "×" });
+    var speedSlider = el("input", { type: "range", class: "sim-speed-slider",
+      min: "0", max: String(SIM_SPEEDS.length - 1), step: "1", value: String(si),
+      "aria-label": "playback speed", "aria-valuetext": fmtSpeed(state.simSpeed) + "×",
+      on: { input: function (e) {
+        state.simSpeed = SIM_SPEEDS[parseInt(e.target.value, 10)];
+        speedLabel.textContent = fmtSpeed(state.simSpeed) + "×";
+        speedSlider.setAttribute("aria-valuetext", fmtSpeed(state.simSpeed) + "×");
+      } } });
+    var speedBox = el("div", { class: "sim-speed" }, [
+      el("i", { class: "ph ph-gauge", "aria-hidden": "true" }),
+      speedSlider,
+      speedLabel,
+    ]);
     var box = el("div", { class: "sim-transport" }, [
-      restartBtn, prevBtn, playBtn, nextBtn, endBtn, scrub, counter,
-      el("div", { class: "seg sim-speed" }, speedBtns),
+      restartBtn, prevBtn, playBtn, nextBtn, endBtn, scrub, counter, speedBox,
     ]);
     return { box: box, restartBtn: restartBtn, prevBtn: prevBtn, nextBtn: nextBtn, endBtn: endBtn,
-      playIcon: playIcon, scrub: scrub, counter: counter, speedBtns: speedBtns, speedVals: speedVals };
+      playIcon: playIcon, scrub: scrub, counter: counter };
   }
   function syncTransport(m) {
     var t = m.transport, i = state.simStep, n = m.steps.length;
@@ -2734,7 +2780,6 @@
     t.playIcon.setAttribute("class", "ph " + (state.simPlaying ? "ph-pause" : "ph-play"));
     t.prevBtn.disabled = t.restartBtn.disabled = i === 0;
     t.nextBtn.disabled = t.endBtn.disabled = i >= n - 1;
-    t.speedBtns.forEach(function (b, k) { b.className = state.simSpeed === t.speedVals[k] ? "on" : ""; });
   }
 
   function findParentEdgeKey(st) {
@@ -2742,13 +2787,98 @@
     return idx > 0 ? st.stack[idx - 1] + ">" + st.node : null;
   }
   function fireCallToken(m, st) {
+    var isReturn = st.t === "return";
     var key = st.t === "call" && st.from != null ? st.from + ">" + st.node
-      : st.t === "return" ? findParentEdgeKey(st) : null;
+      : isReturn ? findParentEdgeKey(st) : null;
     var pathEl = key && m.flow.edgeEls[key];
     if (!pathEl) return;
-    var g = comet(pathEl.getAttribute("d"), colorForNode(N[st.node]), 0.5, 0, true);
+    // the static edge's `d` always runs caller->callee (that's what its own
+    // arrowhead points along); a RETURN needs to travel it the other way,
+    // back to the caller — animateMotion has no "reverse" flag, so walk an
+    // explicitly reversed copy of the same curve instead of the original.
+    var d = pathEl.getAttribute("d");
+    if (isReturn) d = reverseCubicD(d);
+    var g = comet(d, colorForNode(N[st.node]), 0.5, 0, true);
     m.flow.svg.appendChild(g);
     setTimeout(function () { if (g.parentNode) g.parentNode.removeChild(g); }, 650);
+  }
+
+  // each of the 4 content panes gets a header (title + hide toggle) and sits in
+  // one of two flex columns; a drag handle between the two panes in a column
+  // resizes them (one pane's height, its sibling fills the rest), and one more
+  // between the columns resizes the whole left/right split — same pointer-
+  // capture technique as the legend's drag (wireLegendDrag), sized/clamped
+  // instead of positioned. Sizes and collapsed state live in state.sim* so
+  // they survive a scenario switch, matching how the legend's own position does.
+  var SIM_PANE_TITLE = { stage: "STAGE", flow: "FLOW", stack: "CALL STACK", source: "SOURCE" };
+  function simPaneToggle(key) {
+    var collapsed = state.simCollapsed[key];
+    return el("button", { class: "sim-pane-toggle",
+      "aria-label": (collapsed ? "Show " : "Hide ") + SIM_PANE_TITLE[key],
+      on: { click: function () { state.simCollapsed[key] = !state.simCollapsed[key]; applyPaneChrome(); } } },
+      [el("i", { class: "ph " + (collapsed ? "ph-caret-down" : "ph-caret-up") })]);
+  }
+  function simPaneWrap(key, bodyEl) {
+    var hd = el("div", { class: "sim-pane-hd" }, [
+      el("span", { class: "sim-pane-title", text: SIM_PANE_TITLE[key] }),
+      simPaneToggle(key),
+    ]);
+    var wrap = el("div", { class: "sim-pane sim-pane-" + key + (state.simCollapsed[key] ? " collapsed" : "") },
+      [hd, el("div", { class: "sim-pane-body" }, [bodyEl])]);
+    return { wrap: wrap, hd: hd };
+  }
+  function applyPaneChrome() {
+    var m = simMount;
+    if (!m || !m.paneWraps) return;
+    Object.keys(m.paneWraps).forEach(function (key) {
+      var pw = m.paneWraps[key], collapsed = state.simCollapsed[key];
+      pw.wrap.classList.toggle("collapsed", collapsed);
+      var btn = pw.hd.querySelector(".sim-pane-toggle"), icon = btn && btn.querySelector("i");
+      if (btn) btn.setAttribute("aria-label", (collapsed ? "Show " : "Hide ") + SIM_PANE_TITLE[key]);
+      if (icon) icon.setAttribute("class", "ph " + (collapsed ? "ph-caret-down" : "ph-caret-up"));
+    });
+  }
+  function wireVSplitter(grip, leftEl, rowEl) {
+    var drag = null;
+    grip.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      var lr = leftEl.getBoundingClientRect(), rr = rowEl.getBoundingClientRect();
+      drag = { x: e.clientX, startW: lr.width, rowW: rr.width };
+      grip.classList.add("dragging");
+      try { grip.setPointerCapture(e.pointerId); } catch (err) { /* drag still works while over the grip */ }
+      e.preventDefault();
+    });
+    grip.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      var w = Math.max(220, Math.min(drag.rowW - 220 - 9, drag.startW + (e.clientX - drag.x)));
+      leftEl.style.flex = "0 0 " + w + "px";
+      state.simLayout.leftW = w;
+    });
+    function end(e) { if (!drag) return; drag = null; grip.classList.remove("dragging");
+      try { grip.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ } }
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
+  }
+  function wireHSplitter(grip, topEl, colEl, stateKey) {
+    var drag = null;
+    grip.addEventListener("pointerdown", function (e) {
+      if (e.button != null && e.button !== 0) return;
+      var tr = topEl.getBoundingClientRect(), cr = colEl.getBoundingClientRect();
+      drag = { y: e.clientY, startH: tr.height, colH: cr.height };
+      grip.classList.add("dragging");
+      try { grip.setPointerCapture(e.pointerId); } catch (err) { /* drag still works while over the grip */ }
+      e.preventDefault();
+    });
+    grip.addEventListener("pointermove", function (e) {
+      if (!drag) return;
+      var h = Math.max(70, Math.min(drag.colH - 70 - 9, drag.startH + (e.clientY - drag.y)));
+      topEl.style.flex = "0 0 " + h + "px";
+      state.simLayout[stateKey] = h;
+    });
+    function end(e) { if (!drag) return; drag = null; grip.classList.remove("dragging");
+      try { grip.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ } }
+    grip.addEventListener("pointerup", end);
+    grip.addEventListener("pointercancel", end);
   }
 
   var simMount = null;   // the currently mounted scenario's live DOM refs — rebuilt by
@@ -2778,7 +2908,6 @@
     if (animate && !reduceMotion) fireCallToken(m, st);
 
     clear(m.stackBox);
-    m.stackBox.appendChild(el("div", { class: "lk", text: "CALL STACK" }));
     m.stackBox.appendChild(stackPane(st.stack));
 
     clear(m.sourceBox);
@@ -2845,12 +2974,34 @@
     var layout = layoutSim(steps);
     var flow = buildSimFlow(steps, layout);
 
-    var stageBox = el("div", { class: "sim-pane sim-stage" });
-    var flowBox = el("div", { class: "sim-pane sim-flowbox" }, [flow.svg]);
-    var stackBox = el("div", { class: "sim-pane sim-stackbox" });
-    var sourceBox = el("div", { class: "sim-pane sim-sourcebox" });
+    var stageBox = el("div", { class: "sim-stagebody" });
+    var flowBody = el("div", { class: "sim-flowbody" }, [flow.svg]);
+    var stackBox = el("div", { class: "sim-stackbody" });
+    var sourceBox = el("div", { class: "sim-sourcebody" });
     var narrBox = el("div", { class: "sim-narrbox" });
     var transportBox = el("div", { class: "sim-transportbox" });
+
+    var stagePane = simPaneWrap("stage", stageBox);
+    var flowPane = simPaneWrap("flow", flowBody);
+    var stackPane_ = simPaneWrap("stack", stackBox);
+    var sourcePane_ = simPaneWrap("source", sourceBox);
+
+    // reapply any sizes dragged earlier this session (mirrors wireLegendDrag
+    // reapplying state.legendPos on every rebuild)
+    var L = state.simLayout;
+    if (L.stageH != null) stagePane.wrap.style.flex = "0 0 " + L.stageH + "px";
+    if (L.stackH != null) stackPane_.wrap.style.flex = "0 0 " + L.stackH + "px";
+
+    var hSplitLeft = el("div", { class: "sim-hsplit", "aria-hidden": "true" });
+    var hSplitRight = el("div", { class: "sim-hsplit", "aria-hidden": "true" });
+    var leftCol = el("div", { class: "sim-col sim-col-left" }, [stagePane.wrap, hSplitLeft, flowPane.wrap]);
+    var rightCol = el("div", { class: "sim-col sim-col-right" }, [stackPane_.wrap, hSplitRight, sourcePane_.wrap]);
+    if (L.leftW != null) leftCol.style.flex = "0 0 " + L.leftW + "px";
+    var vSplit = el("div", { class: "sim-vsplit", "aria-hidden": "true" });
+    var panesRow = el("div", { class: "sim-panes" }, [leftCol, vSplit, rightCol]);
+    wireHSplitter(hSplitLeft, stagePane.wrap, leftCol, "stageH");
+    wireHSplitter(hSplitRight, stackPane_.wrap, rightCol, "stackH");
+    wireVSplitter(vSplit, leftCol, panesRow);
 
     var notes = [];
     if (sc.crashed) notes.push(el("div", { class: "sim-crash" }, [el("i", { class: "ph ph-warning" }), "the recorded run raised: " + sc.crashed]));
@@ -2860,7 +3011,8 @@
         ["⚡ simulated from the call graph — not a recorded run. Branches and loops are shown as possibilities, not choices."]));
 
     simMount = { sc: sc, steps: steps, layout: layout, flow: flow,
-      stageBox: stageBox, stackBox: stackBox, sourceBox: sourceBox, narrBox: narrBox };
+      stageBox: stageBox, stackBox: stackBox, sourceBox: sourceBox, narrBox: narrBox,
+      paneWraps: { stage: stagePane, flow: flowPane, stack: stackPane_, source: sourcePane_ } };
     simMount.transport = buildTransport(simMount);
     transportBox.appendChild(simMount.transport.box);
 
@@ -2868,11 +3020,7 @@
 
     return el("div", { class: "sim" }, [
       simRail(),
-      el("div", { class: "sim-body" }, notes.concat([
-        el("div", { class: "sim-grid" }, [stageBox, stackBox, flowBox, sourceBox]),
-        narrBox,
-        transportBox,
-      ])),
+      el("div", { class: "sim-body" }, notes.concat([panesRow, narrBox, transportBox])),
     ]);
   }
 
