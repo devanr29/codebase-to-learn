@@ -70,12 +70,24 @@ def build(
     explanations = _explain.load(cfg)  # {symbol key: {"what": ..., ...}} — may be {}
 
     # -- commits / staleness ------------------------------------------------
+    # `sha` is the graph's base commit for a diff — but when it's the
+    # worktree pseudo-commit, that base is never HEAD itself: it's whatever
+    # HEAD was the last time `codemap scan` ran (stored as its parent_sha by
+    # _index_worktree). Comparing worktree's OWN sha to head would always
+    # read "0 behind" and permanently hide the stale-banner, even though the
+    # graph can be many commits behind the real HEAD until rescanned.
     head = None
     behind = 0
     try:
         head = gitio.head(cfg.root)
-        if head and head != sha and sha != WORKTREE_SHA:
-            behind = len(gitio.rev_list(cfg.root, sha, head))
+        base = sha
+        if sha == WORKTREE_SHA:
+            row = conn.execute(
+                "SELECT parent_sha FROM commits WHERE sha = ?", (sha,)
+            ).fetchone()
+            base = row["parent_sha"] if row else None
+        if head and base and base != head:
+            behind = len(gitio.rev_list(cfg.root, base, head))
     except gitio.GitError:
         pass
 

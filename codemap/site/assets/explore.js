@@ -12,11 +12,40 @@
                    animate: 1, animateMotion: 1, defs: 1, pattern: 1, title: 1 };
 
   // ---- tiny DOM helper -------------------------------------------------
+  // tags that are already both focusable and operable from the keyboard by
+  // default — everything else that gets an `on.click` below needs help.
+  var NATIVE_INTERACTIVE = { button: 1, a: 1, input: 1, select: 1, textarea: 1 };
   function el(tag, attrs, kids) {
     var n = SVG_TAGS[tag]
       ? document.createElementNS(SVGNS, tag)
       : document.createElement(tag);
     attrs = attrs || {};
+    // The whole app is built from plain divs/spans/g's wired up with
+    // `on: { click: fn }` — none of that is reachable or operable from a
+    // keyboard by default. Rather than hand-add role/tabindex/keydown at
+    // every one of the ~30 call sites, give every click-handling element
+    // that isn't already natively interactive the same treatment here, once:
+    // a button role, a tab stop, and Enter/Space wired to the same handler.
+    // A caller that needs different semantics just passes its own role or
+    // tabindex and this step no-ops for it.
+    if (attrs.on && attrs.on.click && !NATIVE_INTERACTIVE[tag] &&
+        attrs.role == null && attrs.tabindex == null) {
+      var click = attrs.on.click;
+      var extraOn = {};
+      for (var ek in attrs.on) extraOn[ek] = attrs.on[ek];
+      extraOn.keydown = function (ev) {
+        if (ev.key === "Enter" || ev.key === " " || ev.key === "Spacebar") {
+          ev.preventDefault();
+          click(ev);
+        }
+      };
+      var extra = {};
+      for (var ak in attrs) extra[ak] = attrs[ak];
+      extra.role = "button";
+      extra.tabindex = "0";
+      extra.on = extraOn;
+      attrs = extra;
+    }
     for (var k in attrs) {
       if (attrs[k] == null) continue;
       if (k === "text") n.textContent = attrs[k];
@@ -31,6 +60,39 @@
     return n;
   }
   function clear(n) { while (n.firstChild) n.removeChild(n.firstChild); }
+
+  // navigator.clipboard needs a secure context — file:// (the normal way this
+  // page is opened) is NOT one in Chrome, so `navigator.clipboard` is simply
+  // undefined there. execCommand("copy") on an offscreen textarea still works
+  // on file://. Either way, flash `btn`'s own label so a click always has a
+  // visible outcome instead of silently doing nothing.
+  function copyText(text, btn) {
+    var label = btn.textContent;
+    function flash(ok) {
+      btn.textContent = ok ? "Copied" : "Copy failed";
+      setTimeout(function () { btn.textContent = label; }, 1200);
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () { flash(true); }, function () { flash(false); });
+      return;
+    }
+    var ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    var ok = false;
+    try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
+    document.body.removeChild(ta);
+    flash(ok);
+  }
+
+  // small uppercase kind badge (tree rows, caller/callee lists, entry points).
+  // A blind slice(0, 4) reads fine for "function"/"method" but turns "class"
+  // into "clas" — spell out the short ones instead of truncating them.
+  var KIND_LABEL = { function: "func", method: "meth", class: "class" };
+  function kindLabel(k) { return KIND_LABEL[k] || String(k || "").slice(0, 4); }
 
   // split "text with `code` spans" into an array of text nodes / <code> elements
   function codeify(text) {
@@ -143,6 +205,17 @@
     ext:   { r: 5,  fill: "#1f2130", stroke: "#595d6c", halo: 0,  hc: "rgba(0,0,0,0)" },
   };
 
+  // language string (codemap/languages/registry.py's LanguageSpec.name) -> a
+  // real Phosphor "file-*" icon; anything the indexer supports but Phosphor
+  // has no dedicated glyph for (go, java, php, ruby, …) falls back to the
+  // generic file-code glyph rather than a wrong specific one.
+  var LANG_ICON = {
+    python: "ph-file-py", javascript: "ph-file-js", typescript: "ph-file-ts",
+    tsx: "ph-file-ts", rust: "ph-file-rs", c: "ph-file-c", cpp: "ph-file-cpp",
+    csharp: "ph-file-c-sharp",
+  };
+  function fileIcon(lang) { return "ph " + (LANG_ICON[lang] || "ph-file-code"); }
+
   // ---- folder colour system ---------------------------------------------
   // Eight hues in a fixed, CVD-safe order (the data-viz "dark" categorical
   // ramp, validated against this canvas surface). Each folder is assigned one
@@ -153,6 +226,10 @@
                     "#d55181", "#008300", "#9085e9", "#e66767"];
   var GROUP_OTHER = "#8a8fa3";
   var IMPORT_EDGE = "#8a8fa3";
+  // sentinel key for the legend's single "other folders" row, which stands in
+  // for every long-tail folder folded into GROUP_OTHER's shared colour — see
+  // the folder-filter note above toggleFolder().
+  var OTHER_KEY = " other";
   function dirGroup(path) {
     var i = String(path == null ? "" : path).lastIndexOf("/");
     return i < 0 ? "(root)" : path.slice(0, i);
@@ -368,9 +445,13 @@
   // ---- app state ---------------------------------------------------
   var reduceMotion = window.matchMedia &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // touch has no hover and no reliable dblclick — a tap-then-wait-200ms
+  // "was that a double click" trick just reads as a laggy single tap, and
+  // the actual double tap needed to drill in often never registers at all.
+  var IS_TOUCH = navigator.maxTouchPoints > 0 || "ontouchstart" in window;
   var state = {
     tab: "graph",
-    grain: 2,
+    grain: 1,   // 0 Module, 1 File (default), 2 Function — see GRAINS below
     hops: 2,
     focus: null,
     fileScope: null,
@@ -386,16 +467,26 @@
     traceRoot: null,      // Map/trace: node index of the traced call root
     traceStep: null,      // Map/trace: BFS depth the step wave has reached (null = all)
     hideTests: false,     // Map/layers: drop tests/** and collapse empty bands
+    mobileRail: false,    // narrow viewport: source tree shown as an overlay, not a column
+    mobileInsp: false,    // narrow viewport: inspector shown as an overlay, not a column
   };
 
   // ---- routing ---------------------------------------------------
   function parseHash() {
     var h = (location.hash || "#/graph").replace(/^#/, "");
     var parts = h.split("/").filter(Boolean);
-    return { tab: parts[0] || "graph", arg: decodeURIComponent(parts.slice(1).join("/") || "") };
+    var raw = parts.slice(1).join("/") || "";
+    var arg;
+    try { arg = decodeURIComponent(raw); } catch (e) { arg = raw; }   // a hand-edited/copied hash can be malformed — never let it kill the route
+    return { tab: parts[0] || "graph", arg: arg };
   }
   function go(tab, arg) {
-    location.hash = "#/" + tab + (arg ? "/" + encodeURIComponent(arg) : "");
+    var next = "#/" + tab + (arg ? "/" + encodeURIComponent(arg) : "");
+    // location.hash = same value fires no hashchange, so re-clicking the
+    // already-open target (a symbol, the focused file's row, …) would
+    // otherwise silently do nothing — route directly instead.
+    if (location.hash === next) route();
+    else location.hash = next;
   }
   window.addEventListener("hashchange", route);
 
@@ -429,17 +520,27 @@
       ["learn", "ph ph-graduation-cap", "Learn"],
       ["timeline", "ph ph-git-commit", "Timeline"],
     ].map(function (t) {
+      var active = state.tab === t[0];
+      // the label collapses to icon-only under ~400px (see explore.css) —
+      // aria-label keeps the button's accessible name whether or not the
+      // text is actually painted.
       return el("button", {
-        class: "tab" + (state.tab === t[0] ? " active" : ""),
+        class: "tab" + (active ? " active" : ""), "aria-current": active ? "page" : null,
+        "aria-label": t[2],
         on: { click: function () { go(t[0]); } },
-      }, [el("i", { class: t[1] }), t[2]]);
+      }, [el("i", { class: t[1] }), el("span", { class: "tab-label", text: t[2] })]);
     });
-    return el("div", { class: "topbar" }, [
+    // <header>/<nav>/<h1> — the app was pure div soup with no landmarks and no
+    // heading at all, so a screen reader had nothing to jump to or announce.
+    // The h1 is visually hidden: the brand mark next to it already carries
+    // this visually, a second visible "codegraph" would just be noise.
+    return el("header", { class: "topbar" }, [
+      el("h1", { class: "sr-only", text: "Codegraph Explorer" }),
       el("div", { class: "brand" }, [
         el("i", { class: "ph ph-graph" }), el("span", { text: "codegraph" }),
         el("span", { class: "ver", text: (DATA.generator || "").replace("codemap ", "v") }),
       ]),
-      el("div", { class: "tabs" }, tabs),
+      el("nav", { class: "tabs", "aria-label": "Sections" }, tabs),
       el("div", { class: "spacer" }),
       stat("files", s.files), stat("symbols", s.symbols),
       stat("edges", s.edges), stat("cycles", s.cycles),
@@ -506,7 +607,7 @@
           else renderRail();
         } },
       }, [
-        el("i", { class: f.lang === "python" ? "ph ph-file-py" : "ph ph-file-ts" }),
+        el("i", { class: fileIcon(f.lang) }),
         el("span", { class: "tname", text: f.path.split("/").pop() }),
         el("span", { class: "tcount", text: f.symbols.length || "" }),
       ]));
@@ -520,7 +621,7 @@
           style: "padding-left:" + (6 + (depth + 1) * 11 + 6) + "px",
           on: { click: function (ev) { ev.stopPropagation(); go("graph", n.key); } },
         }, [
-          el("span", { class: "tkind", text: n.kind.slice(0, 4) }),
+          el("span", { class: "tkind", text: kindLabel(n.kind) }),
           el("span", { class: "tname", text: n.name }),
           el("span", { class: "tcount", text: n.fan_in || "" }),
         ]));
@@ -541,10 +642,18 @@
   }
   function rail() {
     var s = DATA.stats || {};
-    railEl = el("div", { class: "rail" }, [
-      el("div", { class: "rail-search", on: { click: openPalette } }, [
+    railEl = el("nav", { class: "rail", "aria-label": "Source tree" }, [
+      el("button", { class: "mobile-only mobile-close", "aria-label": "Close source tree",
+        on: { click: function () { state.mobileRail = false; render(); } } }, [el("i", { class: "ph ph-x" })]),
+      // a real (but readonly) <input> here looked like a text field a user
+      // could type into — it couldn't, typing and Enter both did nothing.
+      // A plain label makes the one actual control unambiguous: this row
+      // opens the palette (el() gives it a button role + tab stop below,
+      // since it carries an on.click), where the real typing happens.
+      el("div", { class: "rail-search", "aria-label": "Find symbol",
+        on: { click: openPalette } }, [
         el("i", { class: "ph ph-magnifying-glass" }),
-        el("input", { placeholder: "Find symbol…", readonly: "readonly" }),
+        el("span", { class: "rail-search-ph", text: "Find symbol…" }),
         el("kbd", { text: navigator.platform.indexOf("Mac") >= 0 ? "⌘K" : "Ctrl K" }),
       ]),
       el("div", { class: "tree" }),
@@ -580,24 +689,27 @@
       state.fileScope = f.fi;
       var key = fileTopSymbol(f);
       if (key) go("graph", key);
-      else { state.grain = 3; render(); }
+      else { state.grain = 2; render(); }   // no symbols to focus: fall back to Function grain
     };
   }
-  // A folder crumb "opens" that folder: drop any focus and isolate every colour
-  // group at or below the clicked path prefix, reusing the legend's folder wash
-  // (state.folders holds hex colours). An ancestor folder with no colour of its
-  // own still isolates, by sweeping up every coloured descendant.
+  // A folder crumb "opens" that folder: drop any focus and isolate every folder
+  // at or below the clicked path prefix. state.folders holds folder KEYS (not
+  // colours) — several unrelated long-tail folders can share GROUP_OTHER's one
+  // hex, so filtering by colour would light up every folder that happens to
+  // share that colour, anywhere in the repo, not just the ones under `prefix`.
+  // An ancestor folder with no colour of its own still isolates correctly, by
+  // sweeping up every descendant's key.
   function crumbFolder(prefix) {
     return function () {
       var hits = new Set();
       Object.keys(groupColor).forEach(function (k) {
-        if (k === prefix || k.indexOf(prefix + "/") === 0) hits.add(groupColor[k]);
+        if (k === prefix || k.indexOf(prefix + "/") === 0) hits.add(k);
       });
       state.folders = hits;
       state.focus = null;
       state.fileScope = null;
       state.pin = null;
-      if (state.grain < 2) state.grain = 2;
+      if (state.grain < 1) state.grain = 1;   // jump out of the Module cloud so files/symbols are visible
       go("graph");
     };
   }
@@ -619,12 +731,12 @@
       lobes.push({ x: mx, y: my, rx: centers[m.name].rx, ry: centers[m.name].ry, name: m.name });
     });
 
-    if (grain <= 1) {
+    if (grain === 0) {
       mods.forEach(function (m, mi) {
         var c = centers[m.name];
         placed.push({ i: "mod:" + m.name, x: c.x, y: c.y, style: NODE_STYLE.hot,
           label: m.name + "  (" + m.symbol_count + ")", kind: "mod", group: moduleColor(m.name),
-          act: function () { state.grain = 2; state.view = { x: 0, y: 0, k: 1 }; render(); } });
+          act: function () { state.grain = 1; state.view = { x: 0, y: 0, k: 1 }; render(); } });
       });
       var seen = {};
       (DATA.file_edges || []).forEach(function (fe) {
@@ -636,11 +748,11 @@
           sk: "mod:" + a, tk: "mod:" + b,
           grp: moduleColor(a), live: md >= 0, dep: md < 0 ? 0 : md, vol: 8 });
       });
-      return { placed: placed, links: links, lobes: lobes };
+      return { placed: placed, links: links, lobes: lobes, capped: false };
     }
 
     var perModule = {};
-    var items = grain === 2
+    var items = grain === 1
       ? FILES.map(function (f) {
           return { key: "file:" + f.path, mod: f.module, label: f.path.split("/").pop(),
             weight: f.symbols.reduce(function (a, si) { return a + N[si].fan_in; }, 0), ref: f, kind: "file" };
@@ -651,10 +763,10 @@
         });
     items.forEach(function (it) { (perModule[it.mod] || (perModule[it.mod] = [])).push(it); });
 
-    var pos = {};
+    var pos = {}, capped = false;
     Object.keys(perModule).forEach(function (mn) {
       var arr = perModule[mn].sort(function (a, b) { return b.weight - a.weight; });
-      if (grain === 3 && arr.length > 42) arr = arr.slice(0, 42);
+      if (grain === 2 && arr.length > 42) { arr = arr.slice(0, 42); capped = true; }
       var c = centers[mn] || { x: cx, y: cy, rx: 120, ry: 90 };
       arr.forEach(function (it, k) {
         var a = (k / Math.max(arr.length, 1)) * Math.PI * 2 + rnd(hashSeed(it.key)) * 0.9;
@@ -667,14 +779,15 @@
           : it.ref.entry.length ? NODE_STYLE.entry
           : dead ? NODE_STYLE.dead
           : it.ref.fan_in >= 6 ? NODE_STYLE.hot : NODE_STYLE.node;
+        var fk = it.kind === "file" ? dirGroup(it.ref.path) : dirGroup(it.ref.file);
         placed.push({ i: it.idx == null ? it.key : it.idx, x: x, y: y, style: style,
           label: it.label, kind: it.kind, dead: dead,
-          group: it.kind === "file" ? colorForPath(it.ref.path) : colorForNode(it.ref),
+          group: it.kind === "file" ? colorForPath(it.ref.path) : colorForNode(it.ref), fk: fk,
           act: it.kind === "file" ? fileAct(it.ref) : null });
       });
     });
 
-    if (grain === 2) {
+    if (grain === 1) {
       (DATA.file_edges || []).forEach(function (fe) {
         var a = pos["file:" + FILES[fe.s].path], b = pos["file:" + FILES[fe.t].path];
         if (!a || !b) return;
@@ -682,7 +795,7 @@
         links.push({ a: a, b: b, seed: fe.s * 131 + fe.t,
           hot: FILES[fe.s].module !== FILES[fe.t].module,
           sk: "file:" + FILES[fe.s].path, tk: "file:" + FILES[fe.t].path,
-          grp: colorForPath(FILES[fe.s].path),
+          grp: colorForPath(FILES[fe.s].path), fk: dirGroup(FILES[fe.s].path),
           live: fd >= 0, dep: fd < 0 ? 0 : fd,
           vol: (tf.symbols || []).reduce(function (s, si) { return s + N[si].fan_in; }, 0) });
       });
@@ -694,18 +807,18 @@
         if (e.tier === 1 && N[e.s].fan_in < 3 && N[e.t].fan_in < 3 && cap++ > 220) return;
         var sd = symDepth(e.s);
         links.push({ a: a, b: b, seed: e.s * 131 + e.t, hot: e.tier === 2,
-          s: e.s, t: e.t, sk: e.s, tk: e.t, grp: colorForNode(N[e.s]),
+          s: e.s, t: e.t, sk: e.s, tk: e.t, grp: colorForNode(N[e.s]), fk: dirGroup(N[e.s].file),
           live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[e.t].fan_in });
       });
     }
-    return { placed: placed, links: links, lobes: lobes };
+    return { placed: placed, links: links, lobes: lobes, capped: capped };
   }
 
   function layoutFocus() {
     var f = state.focus;
     var soma = { x: VBW / 2, y: VBH / 2 };
     var placed = [{ i: f, x: soma.x, y: soma.y, style: NODE_STYLE.focus, label: N[f].name,
-      kind: "focus", group: colorForNode(N[f]) }];
+      kind: "focus", group: colorForNode(N[f]), fk: dirGroup(N[f].file) }];
     var links = [];
     function ring(dist, side) {
       var byHop = {};
@@ -720,13 +833,14 @@
           var style = N[idx].entry.length ? NODE_STYLE.entry
             : N[idx].fan_in >= 6 ? NODE_STYLE.hot : NODE_STYLE.node;
           placed.push({ i: idx, x: x, y: y, style: style, label: N[idx].name,
-            kind: side === "in" ? "caller" : "callee", group: colorForNode(N[idx]) });
+            kind: side === "in" ? "caller" : "callee", group: colorForNode(N[idx]),
+            fk: dirGroup(N[idx].file) });
           var src = side === "in" ? idx : f, dst = side === "in" ? f : idx;
           var sd = symDepth(src);
           links.push({ a: side === "in" ? { x: x, y: y } : soma,
             b: side === "in" ? soma : { x: x, y: y },
             seed: hashSeed(N[idx].key), hot: h === 1, thin: side === "in",
-            s: src, t: dst, sk: src, tk: dst, grp: colorForNode(N[idx]),
+            s: src, t: dst, sk: src, tk: dst, grp: colorForNode(N[idx]), fk: dirGroup(N[idx].file),
             live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[dst].fan_in });
         });
       });
@@ -776,7 +890,7 @@
         var lx = lay.links[x], ly = lay.links[y];
         return (lx.dep - ly.dep) || (ly.vol - lx.vol);
       });
-      var unbudgeted = state.focus != null || state.grain <= 1;   // few links here
+      var unbudgeted = state.focus != null || state.grain === 0;   // few links here
       flowSet = new Set(liveIdx.slice(0, unbudgeted ? liveIdx.length : FLOW_BUDGET));
       cometSet = new Set(liveIdx.slice(0, unbudgeted ? liveIdx.length : COMET_BUDGET));
       flowN = flowSet.size;
@@ -813,12 +927,14 @@
         if (lk.vol >= 6) grp.appendChild(comet(d.d, col, dur, begin + dur / 2, true));
       }
 
-      edgeItems.push({ el: grp, grp: col,
+      edgeItems.push({ el: grp, grp: lk.fk || null,
         s: lk.sk == null ? -1 : lk.sk, t: lk.tk == null ? -1 : lk.tk });
       edgeG.appendChild(grp);
     });
     g.appendChild(edgeG);
     lastFlowN = flowN;
+    lastPlacedN = lay.placed.length;
+    lastPlacedCapped = !!lay.capped;
 
     // node size encodes received traffic: how many packets land on it per cycle
     // (a live in-edge counts 1, a high-volume one 2). Nodes traffic never reaches
@@ -858,7 +974,14 @@
         ? function () { go("graph", N[p.i].key); } : null);
       var pinnable = p.i != null && p.kind !== "focus" && p.kind !== "ext";
       wrap.style.cursor = (act || pinnable) ? "pointer" : "default";
-      if (pinnable) {
+      if (pinnable && IS_TOUCH) {
+        // no click/dblclick disambiguation on touch: one tap goes straight
+        // to the primary action, same as Enter from the keyboard below.
+        wrap.addEventListener("click", function (ev) {
+          ev.stopPropagation();
+          if (act) { state.pin = null; act(); } else togglePin(p.i);
+        });
+      } else if (pinnable) {
         // one click pins a spotlight on this node + its edges; a double click
         // drills in, the old single-click behaviour. 200ms lets dblclick win.
         var clickT = 0;
@@ -875,7 +998,24 @@
       } else if (act) {
         wrap.addEventListener("click", function (ev) { ev.stopPropagation(); act(); });
       }
-      nodeItems.push({ el: wrap, key: p.i, grp: p.group || null });
+      // the click/dblclick split above has no keyboard equivalent — a
+      // keyboard user gets straight to the primary action (drill in, same as
+      // a double click) on Enter/Space; hovering already pins nothing for a
+      // mouse user either, so nothing is lost.
+      if (act || pinnable) {
+        wrap.setAttribute("tabindex", "0");
+        wrap.setAttribute("role", "button");
+        wrap.setAttribute("aria-label", p.label);
+        wrap.addEventListener("keydown", function (ev) {
+          if (ev.key !== "Enter" && ev.key !== " " && ev.key !== "Spacebar") return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          if (act) { state.pin = null; act(); } else { togglePin(p.i); }
+        });
+        wrap.addEventListener("focus", function () { setHighlight(p.i); });
+        wrap.addEventListener("blur", function () { setHighlight(null); });
+      }
+      nodeItems.push({ el: wrap, key: p.i, grp: p.fk || null });
       wrap.addEventListener("mouseenter", function () { setHighlight(p.i); });
       wrap.addEventListener("mouseleave", function () { setHighlight(null); });
       nodeG.appendChild(wrap);
@@ -888,8 +1028,9 @@
   // The scene <g> is built once per structural change (grain, focus, hops,
   // showDead). Pan and zoom only rewrite its `transform` — no relayout, no DOM
   // churn — and hover only nudges opacity. That is what keeps the canvas smooth.
-  var canvasEl, svgEl, sceneG, edgeItems = [], nodeItems = [];
+  var canvasEl, svgEl, emptyEl, sceneG, edgeItems = [], nodeItems = [];
   var drag = null, panPend = null, panRaf = 0, settleT = 0, lastFlowN = 0, animPaused = false;
+  var lastPlacedN = 0, lastPlacedCapped = false;   // how many nodes the last layout actually placed
   var lastPanMoved = false;   // did the last mouseup end a real pan (vs a bare click)
 
   // Freeze every animation for the duration of a gesture. stroke-dashoffset is a
@@ -965,8 +1106,17 @@
         else if (it.t === h) near.add(it.s);
       });
     }
+    // it.grp here is a folder KEY (dirGroup path, or the OTHER_KEY sentinel for
+    // the legend's "other folders" row) — never a colour — so two folders that
+    // happen to share GROUP_OTHER's hex never light each other up. See the note
+    // above crumbFolder().
     var filtering = state.folders && state.folders.size > 0;
-    function fdim(grp) { return filtering && (!grp || !state.folders.has(grp)); }
+    function fdim(fk) {
+      if (!filtering) return false;
+      if (fk == null) return true;
+      if (state.folders.has(fk)) return false;
+      return !(state.folders.has(OTHER_KEY) && groupColor[fk] === GROUP_OTHER);
+    }
     edgeItems.forEach(function (it) {
       var o = 1;
       if (fdim(it.grp)) o = 0.05;
@@ -981,9 +1131,9 @@
       it.el.classList.toggle("pinned", state.pin != null && it.key === state.pin);
     });
   }
-  function toggleFolder(hex) {
-    if (state.folders.has(hex)) state.folders.delete(hex);
-    else state.folders.add(hex);
+  function toggleFolder(key) {
+    if (state.folders.has(key)) state.folders.delete(key);
+    else state.folders.add(key);
     applyHighlight();
     refreshLegend();
   }
@@ -1003,6 +1153,7 @@
     clear(svgEl);
     sceneG = renderGraphSVG();
     svgEl.appendChild(sceneG);
+    if (emptyEl) emptyEl.hidden = lastPlacedN > 0;
     applyView();
     applyHighlight();
   }
@@ -1087,18 +1238,29 @@
       syncCrumbNav();
     }, 0);
 
+    // "Package" used to be a separate 4th grain, but layoutOverview() rendered
+    // it identically to "Module" (both were `grain <= 1`) — a control that lied
+    // about having two distinct views. Three real grains now.
     var grainSeg = el("div", { class: "seg" },
-      ["Package", "Module", "File", "Function"].map(function (label, gi) {
+      ["Module", "File", "Function"].map(function (label, gi) {
         return el("button", { class: state.grain === gi ? "on" : "",
           on: { click: function () { state.grain = gi; state.view = { x: 0, y: 0, k: 1 }; render(); } } },
           [label]);
       }));
 
+    // hops slider + flow pill repaint the graph in-place (paintGraph(), not the
+    // full render()) so a drag/click stays cheap — but that means their own
+    // controls must be kept in sync by hand, not left for a rerender to fix.
+    var hopReadout = el("b", { class: "mono", text: String(state.hops) });
     var hop = el("div", { class: "hopwrap" }, [
       "hops",
       el("input", { type: "range", min: "1", max: "4", value: String(state.hops),
-        on: { input: function (e) { state.hops = +e.target.value; paintGraph(); updateCap(); } } }),
-      el("b", { class: "mono", text: String(state.hops) }),
+        on: { input: function (e) {
+          state.hops = +e.target.value;
+          hopReadout.textContent = String(state.hops);
+          paintGraph(); updateCap();
+        } } }),
+      hopReadout,
     ]);
 
     var deadPill = el("button", { class: "pill" + (state.showDead ? " on" : ""),
@@ -1111,19 +1273,38 @@
       } } },
       [el("i", { class: "ph ph-arrow-counter-clockwise" }), "Whole graph"]);
     var flowPill = el("button", { class: "pill" + (state.flow ? " on" : ""),
-      on: { click: function () { state.flow = !state.flow; paintGraph(); updateCap(); } } },
+      on: { click: function () {
+        state.flow = !state.flow;
+        flowPill.classList.toggle("on", state.flow);
+        paintGraph(); updateCap(); refreshLegend();
+      } } },
       [el("i", { class: "ph ph-broadcast" }), "Traffic"]);
 
+    // below 900px the rail and inspector become off-canvas overlays (see
+    // .rail/.insp in the stylesheet) instead of just vanishing — these two
+    // pills are their only entry point there, so they're the one thing in
+    // the bar that's hidden again above 900px, where rail/inspector are
+    // always-visible columns and need no toggle.
+    var filesPill = el("button", { class: "pill mobile-only",
+      on: { click: function () { state.mobileRail = true; render(); } } },
+      [el("i", { class: "ph ph-list" }), "Files"]);
+    var detailsPill = state.focus != null ? el("button", { class: "pill mobile-only",
+      on: { click: function () { state.mobileInsp = true; render(); } } },
+      [el("i", { class: "ph ph-info" }), "Details"]) : null;
+
     var bar = el("div", { class: "stage-bar" }, [
-      crumbWrap, grainSeg, state.focus != null ? hop : null,
+      filesPill, crumbWrap, grainSeg, state.focus != null ? hop : null,
       el("div", { class: "spacer" }),
-      flowPill,
+      detailsPill, flowPill,
       state.focus != null ? resetPill : deadPill,
     ]);
 
     canvasEl = el("div", { class: "canvas" });
     svgEl = el("svg", { viewBox: "0 0 " + VBW + " " + VBH, preserveAspectRatio: "xMidYMid meet" });
+    emptyEl = el("div", { class: "empty", role: "status",
+      text: "Nothing to show at this grain. Turn on Unreachable, or pick a different grain.", hidden: true });
     canvasEl.appendChild(svgEl);
+    canvasEl.appendChild(emptyEl);
     canvasEl.appendChild(legend());
     canvasEl.appendChild(zoombox());
     wireCanvas();
@@ -1133,10 +1314,18 @@
   function updateCap() {
     var cap = canvasEl && canvasEl.querySelector(".zoombox .cap");
     if (!cap) return;
-    var base = state.focus != null
-      ? "depth " + state.hops + " · neuron view"
-      : ["package", "module", "file", "function"][state.grain] + " grain · " +
-        DATA.stats.symbols + " nodes";
+    var base;
+    if (state.focus != null) {
+      base = "depth " + state.hops + " · neuron view";
+    } else {
+      // lastPlacedN is what layoutOverview() actually placed — NOT
+      // DATA.stats.symbols, which stays fixed at the repo's total symbol
+      // count no matter the grain (2 module lobes, or 45 files, or a
+      // per-module-capped set of functions all reported the same number).
+      base = ["module", "file", "function"][state.grain] + " grain · " +
+        lastPlacedN + " node" + (lastPlacedN === 1 ? "" : "s");
+      if (lastPlacedCapped) base += " (capped per module)";
+    }
     cap.textContent = state.flow && lastFlowN ? base + " · " + lastFlowN + " flows" : base;
   }
   function legend() {
@@ -1144,22 +1333,25 @@
     var sel = state.folders;
     // each folder row is a filter toggle — click one to isolate it, the rest of
     // the graph drops to a wash (not hidden). Empty selection = show everything.
-    function folderRow(hex, label) {
-      var on = sel.has(hex);
+    // `key` is a folder path (or OTHER_KEY for the catch-all row below) — the
+    // filter is matched on that key, never on `hex`, which the "other folders"
+    // row shares with every long-tail folder in the repo.
+    function folderRow(key, hex, label) {
+      var on = sel.has(key);
       return el("div", {
         class: "row folder" + (on ? " on" : "") + (sel.size && !on ? " off" : ""),
         title: "click to isolate this folder",
-        on: { click: function () { toggleFolder(hex); } },
+        on: { click: function () { toggleFolder(key); } },
       }, [
         el("span", { class: "sw dot", style: "background:" + hex }),
         el("span", { class: "gname", text: label }),
       ]);
     }
     groupOrder.forEach(function (k) {
-      box.appendChild(folderRow(groupColor[k], k === "(root)" ? "· repo root" : k));
+      box.appendChild(folderRow(k, groupColor[k], k === "(root)" ? "· repo root" : k));
     });
     if (Object.keys(groupColor).length > groupOrder.length)
-      box.appendChild(folderRow(GROUP_OTHER, "other folders"));
+      box.appendChild(folderRow(OTHER_KEY, GROUP_OTHER, "other folders"));
     if (sel.size)
       box.appendChild(el("div", { class: "row reset", on: { click: clearFolders } },
         [el("span", { class: "sw" }), "show all folders"]));
@@ -1192,16 +1384,18 @@
   function zoombox() {
     var box = el("div", { class: "zoombox" }, [
       el("div", { class: "btns" }, [
-        zbtn("ph ph-plus", function () { zoomAt(1.25); }),
-        zbtn("ph ph-minus", function () { zoomAt(1 / 1.25); }),
-        zbtn("ph ph-crosshair", function () { state.view = { x: 0, y: 0, k: 1 }; applyView(); }),
+        zbtn("ph ph-plus", "Zoom in", function () { zoomAt(1.25); }),
+        zbtn("ph ph-minus", "Zoom out", function () { zoomAt(1 / 1.25); }),
+        zbtn("ph ph-crosshair", "Reset view", function () { state.view = { x: 0, y: 0, k: 1 }; applyView(); }),
       ]),
       el("div", { class: "cap" }),
     ]);
     setTimeout(updateCap, 0);
     return box;
   }
-  function zbtn(icon, fn) { return el("button", { on: { click: fn } }, [el("i", { class: icon })]); }
+  function zbtn(icon, label, fn) {
+    return el("button", { "aria-label": label, on: { click: fn } }, [el("i", { class: icon })]);
+  }
   function wireCanvas() {
     canvasEl.addEventListener("mousedown", function (e) {
       if (e.target.closest(".gnode")) return;
@@ -1215,6 +1409,13 @@
       if (state.pin != null) { state.pin = null; applyHighlight(); }
     });
     canvasEl.addEventListener("wheel", function (e) {
+      // ctrlKey (or metaKey on some browsers/trackpads) on a wheel event is
+      // how a pinch gesture — including the OS/browser's own accessibility
+      // zoom — is reported. Capturing that unconditionally as "zoom the
+      // graph" would silently swallow a low-vision user's page-zoom gesture
+      // any time their pointer happened to be over the canvas; only a plain
+      // wheel/two-finger-pan is this widget's own zoom-the-graph gesture.
+      if (e.ctrlKey || e.metaKey) return;
       e.preventDefault();
       var p = vbPoint(e);
       zoomToward(p.x, p.y, e.deltaY < 0 ? 1.12 : 1 / 1.12);
@@ -1228,6 +1429,9 @@
     var head = el("div", { class: "insp-head" }, [
       el("i", { class: "ph-fill ph-circle k" }),
       el("span", { text: state.focus != null ? N[state.focus].file : "no selection" }),
+      el("div", { class: "spacer" }),
+      el("button", { class: "mobile-only mobile-close", "aria-label": "Close details",
+        on: { click: function () { state.mobileInsp = false; render(); } } }, [el("i", { class: "ph ph-x" })]),
     ]);
     var foot = el("div", { class: "insp-foot" });
 
@@ -1236,13 +1440,13 @@
         text: "Pick a symbol in the tree or the graph to inspect its callers, blast radius and source." }));
       var idleDeps = DATA.dependencies || [];
       if (idleDeps.length) body.appendChild(depPanel(idleDeps));
-      return el("div", { class: "insp" }, [head, body, foot]);
+      return el("aside", { class: "insp", "aria-label": "Symbol details" }, [head, body, foot]);
     }
     var n = N[state.focus];
     var reachIn = reachSet(state.focus, inAdj);
     var filesHit = new Set();
     reachIn.forEach(function (i) { filesHit.add(N[i].file); });
-    var totalFiles = DATA.stats.files || 1;
+    var totalFiles = (DATA.stats && DATA.stats.files) || 1;
 
     if (n.explain) {
       var exTerms = n.explain.terms || {};
@@ -1295,7 +1499,7 @@
     body.appendChild(listSection("DIRECT CALLERS", inAdj[state.focus]));
     body.appendChild(listSection("CALLS OUT TO", outAdj[state.focus]));
 
-    var fi = fileByPath[n.file].fi;
+    var fi = fileByPath[n.file] ? fileByPath[n.file].fi : null;
     var importers = (DATA.file_edges || []).filter(function (fe) { return fe.t === fi; })
       .map(function (fe) { return FILES[fe.s].path; });
     if (importers.length) {
@@ -1308,7 +1512,7 @@
       body.appendChild(isec);
     }
 
-    var fdeps = fileByPath[n.file].deps || [];
+    var fdeps = (fileByPath[n.file] || {}).deps || [];
     if (fdeps.length) {
       var dsec = el("div", { class: "section" }, [el("div", { class: "lbl", text: "FILE IMPORTS" })]);
       fdeps.forEach(function (d) { dsec.appendChild(depRow(d)); });
@@ -1328,9 +1532,10 @@
       ]));
 
     foot.appendChild(el("a", { class: "btn primary", href: editorUri(n), text: "Open in editor" }));
-    foot.appendChild(el("button", { class: "btn", text: "Copy key",
-      on: { click: function () { navigator.clipboard && navigator.clipboard.writeText(n.key); } } }));
-    return el("div", { class: "insp" }, [head, body, foot]);
+    var copyBtn = el("button", { class: "btn", text: "Copy key" });
+    copyBtn.addEventListener("click", function () { copyText(n.key, copyBtn); });
+    foot.appendChild(copyBtn);
+    return el("aside", { class: "insp", "aria-label": "Symbol details" }, [head, body, foot]);
   }
   function card(l, v) {
     return el("div", { class: "statcard" }, [
@@ -1415,9 +1620,9 @@
     }
     uniq.slice(0, 14).forEach(function (i) {
       var n = N[i];
-      sec.appendChild(el("div", { class: "rowitem",
+      sec.appendChild(el("div", { class: "rowitem is-link",
         on: { click: function () { go("graph", n.key); } } }, [
-        el("span", { class: "rk", text: n.kind.slice(0, 4) }),
+        el("span", { class: "rk", text: kindLabel(n.kind) }),
         el("span", { class: "rn", text: n.qual }),
         el("span", { class: "rc", text: n.file.split("/").pop() }),
       ]));
@@ -1450,7 +1655,10 @@
   function editorUri(n) {
     var root = (DATA.root || "").replace(/\\/g, "/");
     if (root && !/^\//.test(root)) root = "/" + root;
-    return "vscode://file" + root + "/" + n.file + ":" + n.line[0];
+    // encodeURI, not encodeURIComponent: it leaves "/" and the drive-letter
+    // ":" alone while still escaping spaces — real in a repo path like
+    // "…/My Project/…", which would otherwise truncate the vscode:// URI.
+    return encodeURI("vscode://file" + root + "/" + n.file + ":" + n.line[0]);
   }
 
   // ---- palette --------------------------------------------
@@ -1458,13 +1666,29 @@
   function openPalette() {
     if (paletteOpen) return;
     paletteOpen = true;
+    var restoreFocus = document.activeElement;
     var sel = 0, matches = N.slice(0, 60);
-    var input = el("input", { placeholder: "symbol name or file…", spellcheck: "false" });
+    var input = el("input", { placeholder: "symbol name or file…", spellcheck: "false",
+      "aria-label": "Find symbol", role: "combobox", "aria-expanded": "true" });
     var list = el("ul");
-    var back = el("div", { class: "palette-back",
+    var empty = el("li", { class: "palette-empty", text: "No matching symbols", hidden: true });
+    var back = el("div", { class: "palette-back", role: "dialog", "aria-modal": "true",
       on: { click: function (e) { if (e.target === back) closeP(); } } },
       [el("div", { class: "palette" }, [input, list])]);
-    function closeP() { paletteOpen = false; document.body.removeChild(back); }
+    // one focusable control (the input) — Escape and Tab are handled on
+    // `document` in the capture phase so they work no matter where focus
+    // actually is, and closing always gives focus back to whatever opened
+    // the palette (the ⌘K shortcut can fire from anywhere on the page).
+    function onDocKeydown(e) {
+      if (e.key === "Escape") { e.preventDefault(); closeP(); }
+      else if (e.key === "Tab") { e.preventDefault(); input.focus(); }
+    }
+    function closeP() {
+      paletteOpen = false;
+      document.removeEventListener("keydown", onDocKeydown, true);
+      document.body.removeChild(back);
+      if (restoreFocus && typeof restoreFocus.focus === "function") restoreFocus.focus();
+    }
     function refresh() {
       var q = input.value.toLowerCase().trim();
       matches = (q ? N.filter(function (n) {
@@ -1472,10 +1696,11 @@
       }) : N).slice(0, 60);
       sel = 0;
       clear(list);
+      if (!matches.length) { list.appendChild(empty); empty.hidden = false; return; }
       matches.forEach(function (n, i) {
         list.appendChild(el("li", { class: i === sel ? "on" : "",
           on: { click: function () { pick(n); } } }, [
-          el("span", { class: "rk", text: n.kind.slice(0, 4) }),
+          el("span", { class: "rk", text: kindLabel(n.kind) }),
           el("span", { text: n.qual }),
           el("span", { class: "pth", text: n.file }),
         ]));
@@ -1490,11 +1715,11 @@
     }
     input.addEventListener("input", refresh);
     input.addEventListener("keydown", function (e) {
-      if (e.key === "Escape") closeP();
-      else if (e.key === "ArrowDown") { sel = Math.min(sel + 1, matches.length - 1); mark(); }
-      else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); mark(); }
+      if (e.key === "ArrowDown") { e.preventDefault(); sel = Math.min(sel + 1, matches.length - 1); mark(); }
+      else if (e.key === "ArrowUp") { e.preventDefault(); sel = Math.max(sel - 1, 0); mark(); }
       else if (e.key === "Enter" && matches[sel]) pick(matches[sel]);
     });
+    document.addEventListener("keydown", onDocKeydown, true);
     document.body.appendChild(back);
     refresh();
     input.focus();
@@ -1512,7 +1737,11 @@
       [["s", c.counts.structural, "structural"], ["b", c.counts.behavioral, "behavioral"],
        ["c", c.counts.cosmetic, "cosmetic"]].forEach(function (p) {
         if (!p[1]) return;
-        bars.appendChild(el("span", { class: "tl-bar " + p[0], style: "width:" + (8 + p[1] * 3) + "px" }));
+        // clamp so one outsized commit can't push the bar past the 780px
+        // .tl-wrap column — the label text next to it already carries the
+        // exact count, the bar only needs to convey relative scale.
+        bars.appendChild(el("span", { class: "tl-bar " + p[0],
+          style: "width:" + Math.min(220, 8 + p[1] * 3) + "px" }));
         bars.appendChild(el("span", { text: p[1] + " " + p[2] }));
       });
       var kids = [
@@ -1540,6 +1769,9 @@
       ];
       wrap.appendChild(el("div", { class: "tl-item" + (touched ? " touch" : "") }, kids));
     });
+    if (!(DATA.timeline || []).length)
+      wrap.appendChild(el("div", { class: "tl-empty", role: "status",
+        text: "No non-cosmetic commits yet — the timeline fills in as the repo changes." }));
     return el("div", { class: "tl" }, [wrap]);
   }
 
@@ -1628,8 +1860,10 @@
   // ── 1. Layer cake ── "what shape is this system" ─────────────────────
   function layerCake() {
     var hide = state.hideTests;
+    // matches "tests/…" AND "pkg/tests/…" — a top-level-only check missed any
+    // nested tests dir, which stayed in the cake with "hide tests" turned on.
     var visible = FILES.filter(function (f) {
-      return !(hide && f.path.indexOf("tests/") === 0);
+      return !(hide && /(^|\/)tests\//.test(f.path));
     });
     var vis = {};
     visible.forEach(function (f) { vis[f.fi] = true; });
@@ -1960,6 +2194,12 @@
         "background-image:repeating-linear-gradient(45deg,var(--color-neutral-500) 0 1px,transparent 1px 4px)" }),
         "hatched = every function unreachable"),
     ]);
+    // area is proportional to LOC, so a 0-line file (a stub, an __init__.py,
+    // a barrel export) squarifies to zero area and just isn't drawn — say so
+    // rather than let it silently vanish with no trace anywhere in the view.
+    if (hiddenZero)
+      legend.appendChild(lgRow(el("span", { class: "sw", style: "border:0" }),
+        hiddenZero + " empty file" + (hiddenZero === 1 ? "" : "s") + " (0 loc) not shown"));
     return { content: svg, legend: legend };
   }
 
@@ -2120,7 +2360,8 @@
     var out = [], rest = String(text), m;
     while ((m = rest.match(re))) {
       if (m.index > 0) out.push(document.createTextNode(rest.slice(0, m.index)));
-      out.push(el("span", { class: "term", "data-def": glossary[m[1]] || "", text: m[1] }));
+      out.push(el("span", { class: "term", tabindex: "0", "data-def": glossary[m[1]] || "",
+        "aria-label": m[1] + ": " + (glossary[m[1]] || ""), text: m[1] }));
       rest = rest.slice(m.index + m[1].length);
     }
     if (rest) out.push(document.createTextNode(rest));
@@ -2132,6 +2373,14 @@
       var picked = null;
       var fb = el("div", { class: "qfb" });
       var block = el("div", { class: "qblock" }, [el("div", { class: "qtext", text: q.q })]);
+      function reset() {
+        picked = null;
+        Array.prototype.forEach.call(block.querySelectorAll(".qopt"), function (b) {
+          b.classList.remove("correct", "sel", "wrong");
+        });
+        clear(fb);
+        fb.className = "qfb";
+      }
       (q.options || []).forEach(function (opt, oi) {
         block.appendChild(el("button", { class: "qopt", on: { click: function () {
           if (picked != null) return;
@@ -2146,6 +2395,8 @@
           fb.className = "qfb show " + (ok ? "ok" : "no");
           fb.appendChild(el("b", { text: ok ? "Exactly. " : "Not quite. " }));
           fb.appendChild(document.createTextNode(ok ? (q.right || "") : (q.wrong || "")));
+          fb.appendChild(el("button", { class: "qretry", text: "Try again",
+            on: { click: reset } }));
         } } }, [el("span", { class: "dot" }), opt]));
       });
       block.appendChild(fb);
@@ -2162,36 +2413,65 @@
     var above = r.top - tip.offsetHeight - 10;
     tip.style.top = (above < 8 ? r.bottom + 10 : above) + "px";
   }
-  document.addEventListener("mouseover", function (e) {
-    var t = e.target.closest && e.target.closest(".term");
-    if (!t) return;
+  function showTip(t) {
     if (activeTip) activeTip.remove();
     var tip = el("div", { class: "term-tooltip", text: t.getAttribute("data-def") });
     document.body.appendChild(tip);
     positionTip(t, tip);
     requestAnimationFrame(function () { tip.classList.add("visible"); });
     activeTip = tip;
+  }
+  function hideTip() { if (activeTip) { activeTip.remove(); activeTip = null; } }
+  document.addEventListener("mouseover", function (e) {
+    var t = e.target.closest && e.target.closest(".term");
+    if (t) showTip(t);
   });
   document.addEventListener("mouseout", function (e) {
+    if (e.target.closest && e.target.closest(".term")) hideTip();
+  });
+  // Tab to a term to see its definition the same way hovering does — the
+  // tooltip was mouseover/mouseout-only before, unreachable without a mouse.
+  document.addEventListener("focusin", function (e) {
     var t = e.target.closest && e.target.closest(".term");
-    if (t && activeTip) { activeTip.remove(); activeTip = null; }
+    if (t) showTip(t);
+  });
+  document.addEventListener("focusout", function (e) {
+    if (e.target.closest && e.target.closest(".term")) hideTip();
   });
 
   // ---- render ------------------------------------------
   function render() {
     clear(APP);
+    // model.build() returns {empty:true} with none of the usual keys (no
+    // stats/nodes/files/…) when the DB has no index yet. The CLI already
+    // refuses to render this file in that case, but a hand-built or
+    // hand-edited payload can still reach the browser this way — show a real
+    // message instead of a blank canvas.
+    if (DATA.empty) {
+      APP.appendChild(el("div", { class: "empty-index" }, [
+        el("i", { class: "ph ph-database" }),
+        el("p", { text: "No index yet — run `codemap scan` first, then `codemap explore`." }),
+      ]));
+      return;
+    }
     var frag = document.createDocumentFragment();
     frag.appendChild(topbar());
     var banner = staleBanner();
     if (banner) frag.appendChild(banner);
-    if (state.tab === "graph")
-      frag.appendChild(el("div", { class: "view" }, [rail(), stage(), inspector()]));
-    else if (state.tab === "map")
-      frag.appendChild(el("div", { class: "view" }, [mapTab()]));
+    if (state.tab === "graph") {
+      var railNode = rail(), inspNode = inspector();
+      railNode.classList.toggle("open", state.mobileRail);
+      inspNode.classList.toggle("open", state.mobileInsp);
+      var mobileOpen = state.mobileRail || state.mobileInsp;
+      var backdrop = el("div", { class: "mobile-backdrop" + (mobileOpen ? " show" : ""),
+        on: { click: function () { state.mobileRail = false; state.mobileInsp = false; render(); } } });
+      frag.appendChild(el("main", { class: "view" }, [railNode, stage(), inspNode, backdrop]));
+    } else if (state.tab === "map")
+      frag.appendChild(el("main", { class: "view" }, [mapTab()]));
     else if (state.tab === "timeline")
-      frag.appendChild(el("div", { class: "view" }, [timelineTab()]));
+      frag.appendChild(el("main", { class: "view" }, [timelineTab()]));
     else
-      frag.appendChild(el("div", { class: "view" }, [learnTab()]));
+      frag.appendChild(el("main", { class: "view" }, [learnTab()]));
     APP.appendChild(frag);
     updateCap();
   }
