@@ -504,6 +504,8 @@
     if (state.simPlaying) simPause();   // a real navigation (incl. our own scenario-switch
                                          // `go()`) always means "stop the timer" — in-tab
                                          // step/scrub never calls route(), see simSetStep().
+    var prevTab = state.tab;            // read before route() below overwrites it — see
+                                         // updateGraphFocus()'s fast path at the bottom
     var r = parseHash();
     state.tab = ["graph", "learn", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "graph";
     if (state.tab === "graph") {
@@ -533,7 +535,12 @@
       state.simStep = hasStep ? parseInt(lastPart, 10) : 0;
       state.simPlaying = false;
     }
-    render();
+    // railEl/canvasEl/svgEl only exist once the graph tab has actually
+    // rendered at least once — false on first load and on every return trip
+    // from another tab, so those still get the full render().
+    if (state.tab === "graph" && prevTab === "graph" && railEl && canvasEl && svgEl)
+      updateGraphFocus();
+    else render();
   }
 
   // ---- topbar ---------------------------------------------------
@@ -840,12 +847,21 @@
     });
 
     if (grain === 1) {
+      // unlike grain 2 just below, this had no budget at all — a repo with a
+      // few thousand file_edges (dense same-module imports, not unusual)
+      // meant that many <path> elements (4 each, via dendrite()) built on
+      // every landing on/reset to this default view. Same style of cap:
+      // cross-module edges are the architecturally interesting ones (and
+      // typically the minority), so those stay uncapped; same-module edges
+      // — already visually grouped by their shared lobe — give way first.
+      var fcap = 0;
       (DATA.file_edges || []).forEach(function (fe) {
         var a = pos["file:" + FILES[fe.s].path], b = pos["file:" + FILES[fe.t].path];
         if (!a || !b) return;
+        var hot = FILES[fe.s].module !== FILES[fe.t].module;
+        if (!hot && fcap++ > 220) { capped = true; return; }
         var fd = fileFlow[fe.s], tf = FILES[fe.t];
-        links.push({ a: a, b: b, seed: fe.s * 131 + fe.t,
-          hot: FILES[fe.s].module !== FILES[fe.t].module,
+        links.push({ a: a, b: b, seed: fe.s * 131 + fe.t, hot: hot,
           sk: "file:" + FILES[fe.s].path, tk: "file:" + FILES[fe.t].path,
           grp: colorForPath(FILES[fe.s].path), fk: dirGroup(FILES[fe.s].path),
           live: fd >= 0, dep: fd < 0 ? 0 : fd,
@@ -866,17 +882,31 @@
     return { placed: placed, links: links, lobes: lobes, capped: capped };
   }
 
+  var RING_HOP_BUDGET = 60;   // see layoutFocus() — caps each hop-ring, not the whole graph
   function layoutFocus() {
     var f = state.focus;
     var soma = { x: VBW / 2, y: VBH / 2 };
     var placed = [{ i: f, x: soma.x, y: soma.y, style: NODE_STYLE.focus, label: N[f].name,
       kind: "focus", group: colorForNode(N[f]), fk: dirGroup(N[f].file) }];
     var links = [];
+    var capped = false;
     function ring(dist, side) {
       var byHop = {};
       Array.from(dist.entries()).forEach(function (p) { (byHop[p[1]] = byHop[p[1]] || []).push(p[0]); });
       Object.keys(byHop).forEach(function (hk) {
         var h = +hk, group = byHop[hk];
+        // a hop's frontier is unbounded BFS breadth — a widely-used helper
+        // (a logger, a base class method) can have hundreds to thousands of
+        // callers/callees at hop 1-2 on a large repo, which used to mean
+        // that many full <g><circle><text> nodes (each with 4-6 listeners)
+        // built on one click. Show the most load-bearing ones (same ranking
+        // the overview's per-module cap already uses: highest fan-in first)
+        // and note the rest via updateCap(), the same way the overview does.
+        if (group.length > RING_HOP_BUDGET) {
+          group = group.slice().sort(function (a, b) { return N[b].fan_in - N[a].fan_in; })
+            .slice(0, RING_HOP_BUDGET);
+          capped = true;
+        }
         group.forEach(function (idx, k) {
           var t = group.length === 1 ? 0.5 : k / (group.length - 1);
           var ang = (side === "in" ? Math.PI : 0) + (t - 0.5) * 1.7;
@@ -913,7 +943,7 @@
           live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: 0 });
       });
     }
-    return { placed: placed, links: links, lobes: [] };
+    return { placed: placed, links: links, lobes: [], capped: capped };
   }
 
   function renderGraphSVG() {
@@ -1234,7 +1264,10 @@
     }, 120);
   });
 
-  function stage() {
+  // Everything the stage bar shows (crumb, hop slider, dead/reset/details
+  // pills) is a pure function of state.focus/state.grain/state.flow/etc, so
+  // it can be rebuilt on its own and swapped in — see updateGraphFocus().
+  function stageBar() {
     var n = state.focus != null ? N[state.focus] : null;
     var crumb = el("div", { class: "crumb" });
     if (n) {
@@ -1343,13 +1376,15 @@
       on: { click: function () { state.mobileInsp = true; render(); } } },
       [el("i", { class: "ph ph-info" }), "Details"]) : null;
 
-    var bar = el("div", { class: "stage-bar" }, [
+    return el("div", { class: "stage-bar" }, [
       filesPill, crumbWrap, grainSeg, state.focus != null ? hop : null,
       el("div", { class: "spacer" }),
       detailsPill, flowPill,
       state.focus != null ? resetPill : deadPill,
     ]);
-
+  }
+  function stage() {
+    var bar = stageBar();
     canvasEl = el("div", { class: "canvas" });
     svgEl = el("svg", { viewBox: "0 0 " + VBW + " " + VBH, preserveAspectRatio: "xMidYMid meet" });
     emptyEl = el("div", { class: "empty", role: "status",
@@ -1368,6 +1403,7 @@
     var base;
     if (state.focus != null) {
       base = "depth " + state.hops + " · neuron view";
+      if (lastPlacedCapped) base += " (capped per hop, highest fan-in first)";
     } else {
       // lastPlacedN is what layoutOverview() actually placed — NOT
       // DATA.stats.symbols, which stays fixed at the repo's total symbol
@@ -1375,7 +1411,7 @@
       // per-module-capped set of functions all reported the same number).
       base = ["module", "file", "function"][state.grain] + " grain · " +
         lastPlacedN + " node" + (lastPlacedN === 1 ? "" : "s");
-      if (lastPlacedCapped) base += " (capped per module)";
+      if (lastPlacedCapped) base += " (capped)";
     }
     cap.textContent = state.flow && lastFlowN ? base + " · " + lastFlowN + " flows" : base;
   }
@@ -3337,6 +3373,34 @@
   LIB_ENTRIES.forEach(function (e) { if (!LIB_BY_SLUG[e.slug]) LIB_BY_SLUG[e.slug] = e; });
   function libDescribed(e) { return !!(LIB_AUTHORED[e.name] || libBlurb(e.name)); }
 
+  // filter text for the Learn nav — module-level like simRailFilter, so
+  // typing survives renderLearnNavList() repainting just the list below it
+  var learnNavFilter = "";
+  var learnNavListEl;
+  function renderLearnNavList(cur) {
+    if (!learnNavListEl) return;
+    clear(learnNavListEl);
+    var q = learnNavFilter.trim().toLowerCase();
+    var any = false;
+    LIB_SECTIONS.forEach(function (sec) {
+      var items = LIB_ENTRIES.filter(function (e) { return e.section === sec.key; });
+      if (q) items = items.filter(function (e) {
+        return (e.name + " " + e.kind).toLowerCase().indexOf(q) >= 0;
+      });
+      if (!items.length) return;
+      any = true;
+      learnNavListEl.appendChild(el("div", { class: "lib-navsec", text: sec.label + " · " + items.length }));
+      items.forEach(function (e) {
+        learnNavListEl.appendChild(el("div", { class: "mlink" + (e.slug === cur.slug ? " active" : ""),
+          title: libDescribed(e) ? null : "no description yet",
+          on: { click: function () { go("learn", e.slug); } } },
+          [libDescribed(e) ? null : el("span", { class: "lib-dot", text: "○ " }), e.name]));
+      });
+    });
+    if (!any)
+      learnNavListEl.appendChild(el("div", { class: "sim-rail-empty",
+        text: "No library matches “" + learnNavFilter + "”." }));
+  }
   function learnTab() {
     if (!LIB_ENTRIES.length)
       return el("div", { class: "learn", style: "display:flex" }, [
@@ -3346,18 +3410,16 @@
         ])])]);
     var cur = LIB_BY_SLUG[state.module] || LIB_ENTRIES[0];
     state.module = cur.slug;
-    var nav = el("div", { class: "learn-nav" }, [el("div", { class: "lk", text: "LIBRARIES" })]);
-    LIB_SECTIONS.forEach(function (sec) {
-      var items = LIB_ENTRIES.filter(function (e) { return e.section === sec.key; });
-      if (!items.length) return;
-      nav.appendChild(el("div", { class: "lib-navsec", text: sec.label + " · " + items.length }));
-      items.forEach(function (e) {
-        nav.appendChild(el("div", { class: "mlink" + (e.slug === cur.slug ? " active" : ""),
-          title: libDescribed(e) ? null : "no description yet",
-          on: { click: function () { go("learn", e.slug); } } },
-          [libDescribed(e) ? null : el("span", { class: "lib-dot", text: "○ " }), e.name]));
-      });
-    });
+    var nav = el("div", { class: "learn-nav" }, [el("div", { class: "lk", text: "LIBRARIES · " + LIB_ENTRIES.length })]);
+    // matches the Simulate rail's own threshold for when a flat list is long
+    // enough that scanning it beats typing a filter — same idiom, same number.
+    if (LIB_ENTRIES.length > 12)
+      nav.appendChild(el("input", { class: "sim-rail-search", type: "search",
+        placeholder: "Filter " + LIB_ENTRIES.length + " libraries…", value: learnNavFilter,
+        on: { input: function (e) { learnNavFilter = e.target.value; renderLearnNavList(cur); } } }));
+    learnNavListEl = el("div", { class: "learn-nav-list" });
+    nav.appendChild(learnNavListEl);
+    renderLearnNavList(cur);
     return el("div", { class: "learn", style: "display:flex" }, [nav,
       el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" }, [renderLibEntry(cur)])])]);
   }
@@ -3534,6 +3596,32 @@
       frag.appendChild(el("main", { class: "view" }, [learnTab()]));
     APP.appendChild(frag);
     updateCap();
+  }
+
+  // Cheap path for "still on the Graph tab, just picked a different symbol
+  // (or went back to the whole graph)" — by a wide margin the single most
+  // frequent navigation in this app (every node click, rail row, caller/
+  // callee row and palette pick all funnel through go("graph", key) into
+  // route()). render() tears down and rebuilds *everything* — topbar, the
+  // rail's search box and footer, the whole stage bar, the canvas (incl.
+  // re-wiring its pan/zoom listeners) and the inspector — for a change that
+  // only ever affects three things: the canvas contents, the rail's
+  // selected-row highlight, and the inspector panel. Repaint just those.
+  // route() only takes this branch once the graph tab has actually rendered
+  // at least once (railEl/canvasEl/svgEl all get set by rail()/stage()), so
+  // the very first load, and any return trip from another tab, still gets
+  // the full render().
+  function updateGraphFocus() {
+    var stageEl = canvasEl.closest(".stage");
+    var oldBar = stageEl && stageEl.querySelector(".stage-bar");
+    if (oldBar) oldBar.replaceWith(stageBar());
+    paintGraph();
+    updateCap();
+    renderRail();
+    var freshInsp = inspector();
+    freshInsp.classList.toggle("open", state.mobileInsp);
+    var oldInsp = document.querySelector(".insp");
+    if (oldInsp) oldInsp.replaceWith(freshInsp);
   }
 
   route();

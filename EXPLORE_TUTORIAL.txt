@@ -218,7 +218,8 @@ every top-level module of the repo, and for each one shows:
 
 LEFT RAIL groups the entries: Third-party, Standard library, This repo's
 modules. A hollow circle next to a name means nobody has written a description
-for it yet.
+for it yet. Past 12 entries a filter box appears above the list -- it matches
+on name and kind (e.g. "internal" finds this repo's own modules).
 
 Out of the box the "In general" line comes from a small built-in table of
 well-known libraries (React, Flask, networkx, pandas, the stdlib, ...), and
