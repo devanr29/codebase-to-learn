@@ -509,8 +509,8 @@
       if (r.arg && keyToI[r.arg] != null) { state.focus = keyToI[r.arg]; state.fileScope = null; }
       else if (!r.arg) state.focus = null;
     } else if (state.tab === "learn") {
-      state.module = r.arg ||
-        (DATA.learn && DATA.learn.modules[0] && DATA.learn.modules[0].id) || "orientation";
+      // #/learn/<lib-or-module-slug>; falls back to the first reference entry
+      state.module = r.arg || (LIB_ENTRIES[0] && LIB_ENTRIES[0].slug) || "";
     } else if (state.tab === "map") {
       var seg = r.arg.split("/");
       if (["layers", "trace", "mass"].indexOf(seg[0]) >= 0) state.mapView = seg[0];
@@ -3137,164 +3137,236 @@
     ]);
   }
 
-  // ---- learn tab -------------------------------------
-  function orientationCourse() {
-    var mods = (DATA.modules || []).map(function (m) {
-      return { title: m.name, count: m.symbol_count, files: m.files.length };
-    });
-    var hot = N.slice().sort(function (a, b) {
-      return (b.fan_in + b.churn * 2) - (a.fan_in + a.churn * 2);
-    }).slice(0, 8);
-    var sections = [
-      { heading: "Where execution enters", kind: "entries", items: DATA.entry_points || [] },
-      { heading: "The modules", kind: "modules", items: mods },
-      { heading: "Read these first", kind: "hot", items: hot },
-    ];
-    if ((DATA.dependencies || []).length)
-      sections.push({ heading: "The outside world", kind: "deps", items: DATA.dependencies });
-    return { title: "Orientation", sections: sections };
+  // ---- learn tab: library / module reference -----------------------
+  // For every external package the code imports — and every top-level module of
+  // the repo itself — what it does *in general* plus how *this* codebase uses
+  // it. The bundled table below covers the common ecosystem; anything it misses
+  // (and every repo module) is filled by .codemap/libraries.json, authored by
+  // the codebase-to-course skill. DATA.learn is still emitted but no longer
+  // rendered here.
+  var LIB_BLURB = {
+    // — python standard library —
+    os: "Operating-system bridge — file paths, environment variables, processes.",
+    sys: "Interpreter internals — argv, stdin/stdout, the import path, exit codes.",
+    re: "Regular expressions — match, search and substitute text by pattern.",
+    json: "Read and write JSON text to and from Python dicts and lists.",
+    pathlib: "Object-oriented file paths — join, glob, read and write files.",
+    subprocess: "Run external commands as child processes and capture their output.",
+    datetime: "Dates, times, durations and timezone-aware timestamps.",
+    collections: "Extra container types — Counter, defaultdict, deque, namedtuple.",
+    itertools: "Lazy iterator building blocks — chain, groupby, product, combinations.",
+    functools: "Tools for functions — caching (lru_cache), partial, reduce, wraps.",
+    typing: "Type hints — Optional, Union, generics; no runtime effect on its own.",
+    dataclasses: "Generate __init__/__repr__/__eq__ for plain data-holding classes.",
+    enum: "Named constant sets — Enum, IntEnum, auto().",
+    abc: "Abstract base classes — declare interfaces subclasses must implement.",
+    asyncio: "Async/await event loop for concurrent I/O without threads.",
+    sqlite3: "Built-in client for SQLite, a serverless file-based SQL database.",
+    logging: "Structured application logging with levels, handlers and formatters.",
+    argparse: "Parse command-line arguments into a typed namespace, with --help.",
+    hashlib: "Cryptographic hashes — sha256, md5, blake2 — of bytes.",
+    tomllib: "Parse TOML config files (read-only; Python 3.11+).",
+    io: "In-memory streams — StringIO, BytesIO — and the base stream classes.",
+    csv: "Read and write comma-separated-value tables.",
+    math: "Floating-point math — sqrt, floor, trig, constants.",
+    random: "Pseudo-random numbers, choices, shuffles and samples.",
+    time: "Clock access, sleeping, and Unix-timestamp arithmetic.",
+    contextlib: "Helpers for `with` blocks — contextmanager, suppress, ExitStack.",
+    tempfile: "Create temporary files and directories that clean themselves up.",
+    shutil: "High-level file operations — copy, move, rmtree, disk usage.",
+    glob: "Expand shell-style wildcard patterns into lists of paths.",
+    warnings: "Emit and filter non-fatal warnings.",
+    traceback: "Format and print exception stack traces.",
+    inspect: "Read live objects — signatures, source, the call stack.",
+    importlib: "Import modules by name at runtime; reload them.",
+    threading: "Run code on OS threads; locks, events, thread-local storage.",
+    multiprocessing: "Run code in separate processes to use multiple CPU cores.",
+    uuid: "Generate universally-unique identifiers (UUID1/UUID4).",
+    base64: "Encode and decode binary data as ASCII text.",
+    copy: "Shallow and deep copies of arbitrary objects.",
+    textwrap: "Wrap, fill, indent and dedent blocks of text.",
+    urllib: "URL parsing and basic HTTP requests from the standard library.",
+    http: "Standard-library HTTP client and server primitives.",
+    socket: "Low-level TCP/UDP network sockets.",
+    unittest: "The standard-library test framework — TestCase, assertions, mocks.",
+    // — third-party: python —
+    networkx: "Graphs as data — build nodes and edges, then run algorithms (paths, cycles, centrality).",
+    tree_sitter: "Incremental parser that turns source code into a concrete syntax tree.",
+    pathspec: "Match paths against .gitignore-style pattern lists.",
+    anthropic: "Official client for Anthropic's Claude API.",
+    openai: "Official client for OpenAI's API.",
+    pytest: "The de-facto Python test framework — plain asserts, fixtures, parametrize.",
+    requests: "Synchronous HTTP client — get/post with a friendly API.",
+    httpx: "HTTP client with sync and async APIs and HTTP/2.",
+    aiohttp: "Async HTTP client and server built on asyncio.",
+    flask: "Minimal WSGI web framework — routes as decorated functions.",
+    django: "Batteries-included web framework — ORM, admin, auth, templating.",
+    fastapi: "Async web framework that derives validation and docs from type hints.",
+    starlette: "The lightweight ASGI toolkit FastAPI is built on.",
+    pydantic: "Data validation and settings from Python type annotations.",
+    sqlalchemy: "SQL toolkit and ORM — model tables as classes, build queries in Python.",
+    alembic: "Schema migrations for SQLAlchemy.",
+    pandas: "DataFrames — labelled tabular data with fast filtering, grouping, joins.",
+    numpy: "N-dimensional numeric arrays and vectorized math.",
+    scipy: "Scientific computing on top of NumPy — optimize, stats, signal, linalg.",
+    click: "Build command-line interfaces from decorated functions.",
+    rich: "Render colored text, tables, progress bars and tracebacks in the terminal.",
+    typer: "Build CLIs from type hints, powered by Click.",
+    jinja2: "Text templating — HTML and more — with a sandboxed expression language.",
+    boto3: "AWS SDK for Python.",
+    redis: "Client for Redis, an in-memory key-value data store.",
+    celery: "Distributed task queue — run background jobs across workers.",
+    uvicorn: "ASGI web server used to run FastAPI/Starlette apps.",
+    gunicorn: "Production WSGI server that manages worker processes.",
+    // — third-party: javascript / frontend —
+    react: "Build UIs from composable components; re-render from state.",
+    "react-dom": "Render React component trees into the browser DOM.",
+    vue: "Progressive UI framework — reactive state, single-file components.",
+    svelte: "UI compiler — components compile to small vanilla-JS DOM updates.",
+    next: "React meta-framework — file-based routing, server rendering, API routes.",
+    express: "Minimal Node.js HTTP framework — middleware and routes.",
+    axios: "Promise-based HTTP client for the browser and Node.",
+    lodash: "Utility belt — data manipulation helpers for arrays, objects, functions.",
+    zod: "TypeScript-first schema validation with inferred types.",
+    tailwindcss: "Utility-first CSS — compose designs from small class names.",
+    vite: "Fast dev server and build tool for web apps.",
+    jest: "JavaScript test framework — describe/it, mocks, snapshots.",
+    vitest: "Vite-native test runner with a Jest-compatible API.",
+    d3: "Low-level data-visualization toolkit — bind data to SVG/DOM.",
+    three: "3D graphics in the browser via WebGL.",
+  };
+  function libBlurb(name) {
+    var k = String(name).toLowerCase();
+    return LIB_BLURB[k] || LIB_BLURB[k.replace(/-/g, "_")] || LIB_BLURB[k.replace(/_/g, "-")] || null;
   }
+  function libSlug(name) {
+    return String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
+  }
+  var LIB_AUTHORED = (DATA.libraries && DATA.libraries.items) || {};
+  var LIB_SECTIONS = [
+    { key: "third_party", label: "Third-party" },
+    { key: "stdlib", label: "Standard library" },
+    { key: "module", label: "This repo's modules" },
+  ];
+  var LIB_ENTRIES = [];
+  (DATA.dependencies || []).forEach(function (d) {
+    if (d.kind !== "third_party" && d.kind !== "stdlib") return;
+    LIB_ENTRIES.push({ name: d.name, section: d.kind, kind: depKindLabel(d.kind),
+      slug: libSlug(d.name), scope: "external",
+      importers: d.importers || [], count: d.count || (d.importers || []).length });
+  });
+  (DATA.modules || []).forEach(function (m) {
+    LIB_ENTRIES.push({ name: m.name, section: "module", kind: "internal module",
+      slug: libSlug(m.name), scope: "internal",
+      files: (m.files || []).length, symbols: m.symbol_count || 0 });
+  });
+  var LIB_BY_SLUG = {};
+  LIB_ENTRIES.forEach(function (e) { if (!LIB_BY_SLUG[e.slug]) LIB_BY_SLUG[e.slug] = e; });
+  function libDescribed(e) { return !!(LIB_AUTHORED[e.name] || libBlurb(e.name)); }
+
   function learnTab() {
-    var course = DATA.learn;
-    var navItems = [], content;
-    if (course && course.modules && course.modules.length) {
-      course.modules.forEach(function (m, i) { navItems.push({ id: m.id, n: i + 1, title: m.title }); });
-      if (!course.modules.some(function (m) { return m.id === state.module; }))
-        state.module = course.modules[0].id;
-      var mod = course.modules.filter(function (m) { return m.id === state.module; })[0];
-      content = renderModule(mod, course.modules.indexOf(mod) + 1);
-    } else {
-      navItems.push({ id: "orientation", n: "·", title: "Orientation" });
-      content = renderOrientation(orientationCourse());
-    }
-    var nav = el("div", { class: "learn-nav" },
-      [el("div", { class: "lk", text: "MODULES" })].concat(navItems.map(function (it) {
-        return el("div", { class: "mlink" + (state.module === it.id ? " active" : ""),
-          on: { click: function () { go("learn", it.id); } } },
-          [el("span", { class: "n", text: it.n }), it.title]);
-      })));
+    if (!LIB_ENTRIES.length)
+      return el("div", { class: "learn", style: "display:flex" }, [
+        el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" }, [
+          el("div", { class: "module-title", text: "Nothing to describe" }),
+          el("p", { class: "module-sub", text: "This graph imports no external packages and has no modules." }),
+        ])])]);
+    var cur = LIB_BY_SLUG[state.module] || LIB_ENTRIES[0];
+    state.module = cur.slug;
+    var nav = el("div", { class: "learn-nav" }, [el("div", { class: "lk", text: "LIBRARIES" })]);
+    LIB_SECTIONS.forEach(function (sec) {
+      var items = LIB_ENTRIES.filter(function (e) { return e.section === sec.key; });
+      if (!items.length) return;
+      nav.appendChild(el("div", { class: "lib-navsec", text: sec.label + " · " + items.length }));
+      items.forEach(function (e) {
+        nav.appendChild(el("div", { class: "mlink" + (e.slug === cur.slug ? " active" : ""),
+          title: libDescribed(e) ? null : "no description yet",
+          on: { click: function () { go("learn", e.slug); } } },
+          [libDescribed(e) ? null : el("span", { class: "lib-dot", text: "○ " }), e.name]));
+      });
+    });
     return el("div", { class: "learn", style: "display:flex" }, [nav,
-      el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" }, [content])])]);
+      el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" }, [renderLibEntry(cur)])])]);
   }
-  function renderOrientation(o) {
-    var wrap = el("div", {}, [
-      el("div", { class: "module-num", text: "00" }),
-      el("div", { class: "module-title", text: "Orientation" }),
-      el("div", { class: "module-sub",
-        text: "Generated from the graph. Run the codebase-to-course skill for a full walkthrough with quizzes." }),
-    ]);
-    o.sections.forEach(function (sec) {
-      var s = el("div", { class: "screen" }, [el("h3", { text: sec.heading })]);
-      if (sec.kind === "entries") {
-        if (!sec.items.length) s.appendChild(el("p", { text: "No entry points detected." }));
-        var steps = el("div", { class: "steps" });
-        sec.items.forEach(function (e, i) {
-          steps.appendChild(el("div", { class: "step" }, [
-            el("div", { class: "sn", text: i + 1 }),
-            el("div", {}, [
-              el("p", {}, [el("b", { text: "[" + e.kind + "] " }), e.detail]),
-              e.node != null ? el("span", { class: "sf", text: N[e.node].qual,
-                on: { click: function () { go("graph", N[e.node].key); } } }) : null,
-            ]),
-          ]));
-        });
-        s.appendChild(steps);
-      } else if (sec.kind === "modules") {
-        var pc = el("div", { class: "pcards" });
-        sec.items.forEach(function (m) {
-          pc.appendChild(el("div", { class: "pcard" }, [
-            el("div", { class: "pt", text: m.title }),
-            el("p", { text: m.files + " file" + (m.files === 1 ? "" : "s") + " · " + m.count + " symbols" }),
-          ]));
-        });
-        s.appendChild(pc);
-      } else if (sec.kind === "deps") {
-        var dg = el("div", { class: "pcards" });
-        sec.items.forEach(function (d) {
-          dg.appendChild(el("div", { class: "pcard" }, [
-            el("div", { class: "pt", text: d.name }),
-            el("p", { text: depKindLabel(d.kind) + " · imported by " + d.count +
-              " file" + (d.count === 1 ? "" : "s") }),
-          ]));
-        });
-        s.appendChild(dg);
-      } else {
-        var steps2 = el("div", { class: "steps" });
-        sec.items.forEach(function (n, i) {
-          steps2.appendChild(el("div", { class: "step" }, [
-            el("div", { class: "sn", text: i + 1 }),
-            el("div", {}, [
-              el("p", {}, [el("span", { class: "sf", text: n.qual }),
-                " — " + n.fan_in + " callers, " + n.churn + " non-cosmetic changes"]),
-              el("span", { class: "sf", text: n.file,
-                on: { click: function () { go("graph", n.key); } } }),
-            ]),
-          ]));
-        });
-        s.appendChild(steps2);
-      }
-      wrap.appendChild(s);
-    });
-    return wrap;
+  function libImportingFiles(e) {
+    if (e.scope === "internal") {
+      var mod = (DATA.modules || []).filter(function (m) { return m.name === e.name; })[0];
+      return (mod ? mod.files : []).map(function (fi) { return FILES[fi] && FILES[fi].path; }).filter(Boolean);
+    }
+    return e.importers || [];
   }
-  function renderModule(mod, num) {
-    var glossary = mod.glossary || {};
-    var wrap = el("div", {}, [
-      el("div", { class: "module-num", text: String(num).padStart(2, "0") }),
-      el("div", { class: "module-title", text: mod.title }),
-      mod.summary ? el("div", { class: "module-sub", text: mod.summary }) : null,
-      mod.metaphor ? el("div", { class: "metaphor", text: mod.metaphor }) : null,
-    ]);
-    (mod.screens || []).forEach(function (sc) {
-      var s = el("div", { class: "screen" });
-      if (sc.heading) s.appendChild(el("h3", { text: sc.heading }));
-      if (sc.body) s.appendChild(el("p", {}, termNodes(sc.body, glossary)));
-      if (sc.translation)
-        s.appendChild(el("div", { class: "xlate" }, [
-          el("div", { class: "code" }, [
-            el("div", { class: "lbl", text: "CODE" }),
-            el("pre", { text: sc.translation.code }),
-          ]),
-          el("div", { class: "en" }, [el("div", { class: "lbl", text: "PLAIN ENGLISH" })].concat(
-            (sc.translation.lines || []).map(function (l) { return el("p", { text: l }); }))),
-        ]));
-      if (sc.callout)
-        s.appendChild(el("div", { class: "callout accent" }, [
-          el("i", { class: "ph ph-lightbulb" }),
-          el("div", {}, [
-            sc.callout.title ? el("div", { class: "ct", text: sc.callout.title }) : null,
-            el("p", { text: sc.callout.text }),
-          ]),
-        ]));
-      // "sim": "<scenario-id>" — a screen can point at a Simulate scenario
-      // instead of describing a call path in prose; this is a link-out card,
-      // not an embedded player (see references/interactive-elements.md #6).
-      if (sc.sim) {
-        var simRef = ensureScenario(sc.sim);
-        if (simRef)
-          s.appendChild(el("div", { class: "sim-inline",
-            on: { click: function () { go("sim", simRef.id + "/0"); } } }, [
-            el("i", { class: "ph ph-play-circle" }),
-            el("div", {}, [
-              el("div", { class: "sim-inline-title", text: simRef.title }),
-              el("div", { class: "sim-inline-sub", text: "Open in Simulate — watch it run, step by step" }),
-            ]),
-          ]));
-      }
-      if (sc.nodes && sc.nodes.length) {
-        var refs = el("div", { class: "steps" });
-        sc.nodes.forEach(function (ni) {
-          if (N[ni]) refs.appendChild(el("div", { class: "step" }, [
-            el("div", { class: "sn", text: "→" }),
-            el("div", {}, [el("span", { class: "sf", text: N[ni].qual + "  (" + N[ni].file + ")",
-              on: { click: function () { go("graph", N[ni].key); } } })]),
-          ]));
-        });
-        s.appendChild(refs);
-      }
-      wrap.appendChild(s);
+  function libDerivedSee(e) {
+    if (e.scope === "internal") {
+      var eps = (DATA.entry_points || []).filter(function (ep) {
+        return ep.node != null && N[ep.node].module === e.name;
+      }).map(function (ep) { return N[ep.node].key; });
+      if (eps.length) return eps.slice(0, 6);
+    }
+    var paths = {};
+    libImportingFiles(e).forEach(function (p) { paths[p] = 1; });
+    return N.filter(function (n) { return paths[n.file]; })
+      .sort(function (a, b) { return (b.fan_out - a.fan_out) || (b.fan_in - a.fan_in); })
+      .slice(0, 6).map(function (n) { return n.key; });
+  }
+  function libFileLinks(prefix, files) {
+    var p = el("p", {}, [document.createTextNode(prefix)]);
+    files.slice(0, 12).forEach(function (path, i) {
+      if (i) p.appendChild(document.createTextNode(", "));
+      p.appendChild(el("span", { class: "sf", on: { click: (function (pp) { return function () {
+        var f = fileByPath[pp];
+        if (f && f.symbols && f.symbols.length) go("graph", N[f.symbols[0]].key);
+      }; })(path) }, text: path }));
     });
-    if (mod.quiz && mod.quiz.length) wrap.appendChild(renderQuiz(mod.quiz));
+    if (files.length > 12) p.appendChild(document.createTextNode(" +" + (files.length - 12) + " more"));
+    return p;
+  }
+  function renderLibEntry(e) {
+    var authored = LIB_AUTHORED[e.name] || {};
+    var general = authored.general || libBlurb(e.name);
+    var wrap = el("div", {}, [
+      el("div", { class: "module-num", text: e.scope === "internal" ? "repo" : e.section === "stdlib" ? "std" : "pkg" }),
+      el("div", { class: "module-title", text: e.name }),
+      el("div", { class: "module-sub", text: e.scope === "internal"
+        ? "internal module · " + e.files + " file" + (e.files === 1 ? "" : "s") + " · " + e.symbols + " symbols"
+        : e.kind + " · imported by " + e.count + " file" + (e.count === 1 ? "" : "s") }),
+    ]);
+
+    var g = el("div", { class: "screen" }, [el("h3", { text: "In general" })]);
+    g.appendChild(general
+      ? el("p", { text: general })
+      : el("p", { class: "lib-missing", text: "No description bundled for “" + e.name +
+          "”. Add a `general` line to .codemap/libraries.json." }));
+    wrap.appendChild(g);
+
+    var h = el("div", { class: "screen" }, [el("h3", { text: "In this codebase" })]);
+    if (authored.here) {
+      h.appendChild(el("p", { text: authored.here }));
+    } else {
+      var files = libImportingFiles(e);
+      if (files.length)
+        h.appendChild(libFileLinks(e.scope === "internal" ? "Files: " : "Imported by ", files));
+      else
+        h.appendChild(el("p", { class: "lib-missing", text: "No import sites recorded in the graph." }));
+      h.appendChild(el("p", { class: "lib-hint", text: e.scope === "internal"
+        ? "Add a `here` line to .codemap/libraries.json describing what this module is responsible for."
+        : "Add a `here` line to .codemap/libraries.json describing the job this package does here." }));
+    }
+    wrap.appendChild(h);
+
+    var seeKeys = ((authored.see && authored.see.length) ? authored.see : libDerivedSee(e))
+      .filter(function (k) { return keyToI[k] != null; });
+    if (seeKeys.length) {
+      var steps = el("div", { class: "steps" });
+      seeKeys.forEach(function (k) {
+        var n = N[keyToI[k]];
+        steps.appendChild(el("div", { class: "step" }, [
+          el("div", { class: "sn", text: "→" }),
+          el("div", {}, [el("span", { class: "sf", text: n.qual + "  (" + n.file + ")",
+            on: { click: function () { go("graph", n.key); } } })]),
+        ]));
+      });
+      wrap.appendChild(el("div", { class: "screen" }, [el("h3", { text: "See in the graph" }), steps]));
+    }
     return wrap;
   }
   // split body text on glossary terms, returning an array of text nodes / .term spans
@@ -3314,44 +3386,6 @@
     if (rest) out.push(document.createTextNode(rest));
     return out;
   }
-  function renderQuiz(qs) {
-    var box = el("div", { class: "quiz" }, [el("div", { class: "qh", text: "CHECK YOURSELF" })]);
-    qs.forEach(function (q) {
-      var picked = null;
-      var fb = el("div", { class: "qfb" });
-      var block = el("div", { class: "qblock" }, [el("div", { class: "qtext", text: q.q })]);
-      function reset() {
-        picked = null;
-        Array.prototype.forEach.call(block.querySelectorAll(".qopt"), function (b) {
-          b.classList.remove("correct", "sel", "wrong");
-        });
-        clear(fb);
-        fb.className = "qfb";
-      }
-      (q.options || []).forEach(function (opt, oi) {
-        block.appendChild(el("button", { class: "qopt", on: { click: function () {
-          if (picked != null) return;
-          picked = oi;
-          Array.prototype.forEach.call(block.querySelectorAll(".qopt"), function (b, bi) {
-            if (bi === q.answer) b.classList.add("correct");
-            if (bi === oi) b.classList.add("sel");
-            if (bi === oi && oi !== q.answer) b.classList.add("wrong");
-          });
-          var ok = oi === q.answer;
-          clear(fb);
-          fb.className = "qfb show " + (ok ? "ok" : "no");
-          fb.appendChild(el("b", { text: ok ? "Exactly. " : "Not quite. " }));
-          fb.appendChild(document.createTextNode(ok ? (q.right || "") : (q.wrong || "")));
-          fb.appendChild(el("button", { class: "qretry", text: "Try again",
-            on: { click: reset } }));
-        } } }, [el("span", { class: "dot" }), opt]));
-      });
-      block.appendChild(fb);
-      box.appendChild(block);
-    });
-    return box;
-  }
-
   // ---- glossary tooltip (fixed to body so overflow:hidden can't clip it) --
   var activeTip = null;
   function positionTip(term, tip) {

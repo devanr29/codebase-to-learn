@@ -1,10 +1,11 @@
-"""Load and validate ``.codemap/learn.json`` — the authored course content.
+"""Load and validate ``.codemap/learn.json`` — legacy authored course content.
 
-Written by the ``codebase-to-course`` skill (see repo-root ``SKILL.md``), never
-by codemap itself. Absent or malformed content is not an error: the Learn tab
-falls back to a deterministic Orientation built from the graph alone.
+**Vestigial.** The Learn tab now renders ``.codemap/libraries.json`` (a library
+/ module reference — see ``libraries.py``); ``explore.js`` no longer reads
+``DATA.learn``. This loader and the ``DATA.learn`` payload key are kept only so
+an old ``learn.json`` on disk is still parsed without error. Nothing renders it.
 
-Shape (see ``references/learn-schema.md``):
+Historic shape:
 
     {
       "title": "…",
