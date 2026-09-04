@@ -73,16 +73,17 @@ Renders a small link-out card ("Open in Simulate — watch it run, step by
 step") instead of an embedded player — clicking it jumps to the **Simulate**
 tab, a transport-controlled animation of one call-by-call run: the user's
 world above (a terminal/browser/API/file stage) and the code's world below
-(an animated call-flow graph, a live call stack, the source line executing),
-with two narration lines per step — 👤 what the user perceives, ⚙ what the
-code is doing.
+(an animated call-flow graph, a scrollable trace log you can click back
+through, the source line executing), with two narration lines per step — 👤
+what the user perceives, ⚙ what the code is doing. The Simulate rail lists the
+whole `scenarios.json` curriculum, grouped by `group` and in workflow `order`.
 
 Use this instead of the old "describe a call path in prose" advice: point a
-screen at a real scenario rather than narrating a trace by hand. Every
-scenario also works with **no authoring at all** — Simulate always offers a
-derived scenario (⚡, computed from the call graph) for any busy symbol, so
-`sim` is for when you want real narration or a `codemap trace`-recorded (⏺)
-run linked from the lesson, not a requirement for the tab to have content.
+screen at a real scenario rather than narrating a trace by hand. `sim` can
+name any curriculum entry — including a `root`-only one whose steps the
+renderer derives; you don't need to hand-author `steps` for a scenario just to
+link it. With no `scenarios.json` at all, Simulate still offers a derived
+scenario (⚡, computed from the call graph) for any busy symbol.
 
 ## What is intentionally NOT here
 

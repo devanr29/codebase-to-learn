@@ -10,9 +10,10 @@ description: >-
   the inspector explanations of the Codegraph Explorer. Produces
   .codemap/learn.json (module narratives, code-to-English translations, quizzes,
   glossary tooltips), .codemap/explanations.json (a one-line plain-English
-  blurb per symbol, shown in the Graph inspector), and optionally
-  .codemap/scenarios.json (narrated call-by-call walkthroughs for the Simulate
-  tab's animated player) — all baked into the page by `codemap explore`.
+  blurb per symbol, shown in the Graph inspector), and .codemap/scenarios.json
+  (the Simulate tab's scenario curriculum — every workflow of the app as an
+  ordered, grouped entry, steps derived or hand-narrated) — all baked into the
+  page by `codemap explore`.
 ---
 
 # codebase-to-course
@@ -76,19 +77,26 @@ already did ("you clicked Analyze — here is the journey your data takes").
    "What this does" blurb in the Graph inspector. Do both files — the request
    was for both.
 
-6. **Optionally write `.codemap/scenarios.json`** (only when asked to simulate
-   or walk through a specific run, not by default) following
-   `references/scenarios-schema.md`. This narrates the Simulate tab's animated
-   player — the Graph/Learn tabs already cover *structure*; Simulate covers
-   *what happens over time* for one thing a person does with the software.
-   `codemap explore --emit-brief` also writes
-   `.codemap/briefs/scenarios-derived.json` — the same call-graph-derived steps
-   the tab falls back to on its own (Lane 1) — so authoring here means
-   narrating and trimming that, not reconstructing a call tree by hand. Link a
-   Learn screen to a scenario with `"sim": "<scenario-id>"` instead of
-   describing a call path in prose (see `references/interactive-elements.md`).
-   For real branch/loop/output fidelity instead of an educated guess, record
-   an actual run: `codemap trace --name "<title>" -- <command>` (Lane 3 —
+6. **Write `.codemap/scenarios.json`** — the Simulate tab's scenario
+   *curriculum*, following `references/scenarios-schema.md`. The Graph/Learn
+   tabs cover *structure*; Simulate covers *what happens over time* as the app
+   runs. Do this whenever you write the course, not just on request.
+
+   **Index first, cheaply.** The `## Scenario index` in
+   `.codemap/briefs/00-overview.md` already lists every entry point with a
+   suggested `group` and `order`. In **one pass**, turn it into an ordered,
+   grouped list — each entry an `id` + `title` + `root` (the `key:` shown) +
+   `group` + `order` + one-line `summary`, **no `steps`** — sorted by how the
+   app really runs (startup → an inbound request → background jobs → when it
+   breaks). Reorder freely; the suggestions are a starting point. Ship them
+   *all*: 40 routes → 40 scenarios. The renderer derives every call tree, so a
+   `root`-only entry is a few bytes and still plays.
+
+   **Hero steps only.** Hand-author `steps` for just the 3–6 scenarios a Learn
+   screen links via `"sim": "<scenario-id>"` — narrate and trim the real tree
+   in `.codemap/briefs/scenarios-derived.json` (it has one per likely hero),
+   never reconstruct a call tree by hand. For real branch/loop/output fidelity
+   record an actual run: `codemap trace --name "<title>" -- <command>` (Lane 3,
    never edit its output by hand).
 
 7. **Bake and review.**
@@ -98,12 +106,14 @@ already did ("you clicked Analyze — here is the journey your data takes").
    Open the Learn tab: every technical term tooltipped, no quiz question
    answerable by scrolling up, each screen more visual than prose, node links
    jump to the right symbol. Then focus a hotspot symbol in the Graph tab and
-   confirm its inspector shows the explanation. If you wrote scenarios, open
-   the Simulate tab and play each one through once.
+   confirm its inspector shows the explanation. Open the Simulate tab: the rail
+   groups your scenarios in workflow order — spot-check that the grouping and
+   order read right, then play each hero scenario (the ones with authored
+   `steps`) through once.
 
 ## Non-negotiables
 
-- `.codemap/learn.json`, `.codemap/explanations.json`, and optionally
+- `.codemap/learn.json`, `.codemap/explanations.json`, and
   `.codemap/scenarios.json` are the only files you write. Never edit
   `explore.css` / `explore.js` / the renderer, and never hand-write a file
   under `.codemap/traces/` — that directory is `codemap trace`'s output only.

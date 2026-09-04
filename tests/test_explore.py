@@ -197,3 +197,32 @@ def test_emit_brief_writes_overview_and_per_module(fixture_impact_repo, tmp_path
     assert any(n.startswith("01-") for n in names)
     body = (cfg2.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
     assert "Entry points" in body and "build_report" in body
+
+
+def test_emit_brief_scenario_index_orders_entry_points_by_workflow(fixture_impact_repo, tmp_path):
+    """The impact fixture has an `@app.get("/report")` route and a `__main__`
+    entry. `scenarios-derived.json` should carry every entry point as a
+    candidate with a suggested group/order, `main` (Startup) before the route,
+    and hero step trees for the first few. The overview lists the same index."""
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    data = model.build(conn, cfg)
+    cfg2 = config.load(fixture_impact_repo.path)
+    cfg2.codemap_dir.mkdir(exist_ok=True)
+    brief.emit(conn, cfg2, data)
+
+    sd = json.loads((cfg2.codemap_dir / "briefs" / "scenarios-derived.json").read_text(encoding="utf-8"))
+    scen = sd["scenarios"]
+    assert scen, "fixture has entry points -> candidates expected"
+    for s in scen:
+        assert {"root_key", "root_qual", "kind", "suggested_group", "suggested_order"} <= set(s)
+    groups = [s["suggested_group"] for s in scen]
+    assert "Startup" in groups and "A request comes in" in groups
+    # ordered ascending by suggested_order; startup fires before an inbound call
+    assert [s["suggested_order"] for s in scen] == sorted(s["suggested_order"] for s in scen)
+    startup_i = groups.index("Startup")
+    request_i = groups.index("A request comes in")
+    assert startup_i < request_i
+    assert any("steps" in s for s in scen)  # hero trees present
+
+    body = (cfg2.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
+    assert "Scenario index" in body and "order 10" in body

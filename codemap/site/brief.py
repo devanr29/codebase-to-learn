@@ -54,43 +54,100 @@ def _derive_scenario_steps(
     return steps
 
 
-def _emit_scenarios_derived(briefs_dir, data: dict, written: list[str]) -> None:
-    """``.codemap/briefs/scenarios-derived.json`` — the same call-graph-derived
-    steps Simulate's Lane 1 computes on its own, pre-extracted so the
-    course-authoring skill narrates/trims a real call tree instead of
-    reconstructing one by hand (SKILL.md step 6, references/scenarios-schema.md)."""
+# entry-point kind -> (Simulate-rail group, base order). The skill orders the
+# rail ascending by `order`, so startup fires before an inbound request fires
+# before a background job. `main`/`docker` cover process start; `route`/
+# `controller` an inbound call; `task` a queue handler; `script` a one-shot tool.
+_SCENARIO_GROUP = {
+    "main": ("Startup", 10),
+    "docker": ("Startup", 10),
+    "route": ("A request comes in", 20),
+    "controller": ("A request comes in", 20),
+    "task": ("Background jobs", 40),
+    "script": ("Scripts & tools", 50),
+}
+_SCENARIO_GROUP_DEFAULT = ("Other entry points", 60)
+_HERO_STEP_BUDGET = 8   # emit real derived step trees for the first N candidates only
+
+
+def _scenario_candidates(data: dict) -> list[dict]:
+    """Every detected entry point as a candidate Simulate scenario, ordered the
+    way the app actually runs (startup -> inbound -> background -> tools), with a
+    suggested `group`/`order` the skill can keep or adjust. Nothing is capped —
+    a repo with 100 routes yields 100 candidates."""
+    nodes = data["nodes"]
+    seen: set[int] = set()
+    by_kind: dict[str, list[dict]] = {}
+    for ep in data["entry_points"]:
+        i = ep.get("node")
+        if i is None or i in seen:
+            continue
+        seen.add(i)
+        by_kind.setdefault(ep["kind"], []).append(
+            {"i": i, "key": nodes[i]["key"], "qual": nodes[i]["qual"],
+             "file": nodes[i]["file"], "kind": ep["kind"], "detail": ep["detail"],
+             "fan_in": nodes[i]["fan_in"]}
+        )
+
+    out: list[dict] = []
+    for kind, items in by_kind.items():
+        group, base = _SCENARIO_GROUP.get(kind, _SCENARIO_GROUP_DEFAULT)
+        items.sort(key=lambda c: (-c["fan_in"], c["detail"], c["qual"]))
+        for rank, c in enumerate(items):
+            c["group"], c["order"] = group, base + rank
+            out.append(c)
+    out.sort(key=lambda c: (c["order"], c["qual"]))
+    return out
+
+
+def _emit_scenarios_derived(briefs_dir, data: dict, written: list[str]) -> list[dict]:
+    """``.codemap/briefs/scenarios-derived.json`` — every detected entry point as
+    a candidate scenario (key, qual, entry kind/detail, fan-in, suggested
+    group/order), plus a real call-graph-derived step tree for the first
+    ``_HERO_STEP_BUDGET`` of them so the skill narrates/trims a real tree for the
+    likely hero scenarios instead of reconstructing one by hand (SKILL.md step 6,
+    references/scenarios-schema.md). Returns the candidate list for the overview."""
     import json as _json
 
     nodes = data["nodes"]
     out_calls: dict[int, list[tuple[int, int]]] = {}
-    fan_in = [0] * len(nodes)
     for e in data["edges"]:
         out_calls.setdefault(e["s"], []).append((e["t"], e.get("line") or 0))
-        fan_in[e["t"]] += 1
     for lst in out_calls.values():
         lst.sort(key=lambda p: p[1])
 
-    roots = list(dict.fromkeys(ep["node"] for ep in data["entry_points"] if ep["node"] is not None))
-    if len(roots) < 5:
+    candidates = _scenario_candidates(data)
+    if not candidates:
+        # no entry point detected at all — fall back to the busiest few symbols so
+        # the skill still has a real tree to narrate (old behaviour)
         ranked = sorted(
             range(len(nodes)),
-            key=lambda i: -(fan_in[i] + nodes[i]["churn"] * 2 + len(out_calls.get(i, ()))),
-        )
-        for i in ranked:
-            if i not in roots:
-                roots.append(i)
-            if len(roots) >= 5:
-                break
+            key=lambda i: -(nodes[i]["fan_in"] + nodes[i]["churn"] * 2 + len(out_calls.get(i, ()))),
+        )[:5]
+        candidates = [
+            {"i": i, "key": nodes[i]["key"], "qual": nodes[i]["qual"], "file": nodes[i]["file"],
+             "kind": "hotspot", "detail": "", "fan_in": nodes[i]["fan_in"],
+             "group": "Derived", "order": 60 + r}
+            for r, i in enumerate(ranked)
+        ]
 
     scenarios = []
-    for i in roots[:5]:
-        steps = _derive_scenario_steps(nodes, out_calls, i)
-        if len(steps) >= 2:
-            scenarios.append({"root_key": nodes[i]["key"], "root_qual": nodes[i]["qual"], "steps": steps})
+    for rank, c in enumerate(candidates):
+        entry = {
+            "root_key": c["key"], "root_qual": c["qual"], "file": c["file"],
+            "kind": c["kind"], "detail": c["detail"], "fan_in": c["fan_in"],
+            "suggested_group": c["group"], "suggested_order": c["order"],
+        }
+        if rank < _HERO_STEP_BUDGET:
+            steps = _derive_scenario_steps(nodes, out_calls, c["i"])
+            if len(steps) >= 2:
+                entry["steps"] = steps
+        scenarios.append(entry)
 
     path = briefs_dir / "scenarios-derived.json"
     path.write_text(_json.dumps({"scenarios": scenarios}, indent=2), encoding="utf-8")
     written.append(str(path))
+    return candidates
 
 
 def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
@@ -102,6 +159,10 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     file_by_fi = {f["fi"]: f for f in files}
     modules = data["modules"]
     written: list[str] = []
+
+    # scenario candidates first — the overview lists them, the JSON carries the
+    # hero step trees
+    scenario_candidates = _emit_scenarios_derived(briefs_dir, data, written)
 
     # ---- 00-overview -------------------------------------------------
     ov = ["# Codebase analysis pack", ""]
@@ -126,6 +187,29 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     for n in hot:
         ov.append(f"- `{n['qual']}` ({n['file']}) — {n['fan_in']} callers, {n['churn']} changes")
     ov.append("")
+    ov.append("## Scenario index (candidates for `scenarios.json`)")
+    if scenario_candidates:
+        ov.append("Every entry point below is a candidate Simulate scenario. Ship "
+                  "them **all** as an ordered, grouped index (`id` + `title` + "
+                  "`root` + `group` + `order` + `summary`, no `steps`); the "
+                  "renderer derives each call tree. Hand-author `steps` only for "
+                  "the few a Learn screen links via `\"sim\"`. `scenarios-derived.json` "
+                  "has real step trees for the first "
+                  f"{_HERO_STEP_BUDGET}. Suggested `group`/`order` are a starting "
+                  "point — reorder to match how the app really runs.")
+        ov.append("")
+        last_group = None
+        for c in scenario_candidates:
+            if c["group"] != last_group:
+                ov.append(f"- **{c['group']}**")
+                last_group = c["group"]
+            det = f" — {c['detail']}" if c["detail"] else ""
+            ov.append(f"  - `order {c['order']}` [{c['kind']}]{det} -> `{c['qual']}`  "
+                      f"(`key:` `{c['key']}`, {c['fan_in']} callers)")
+    else:
+        ov.append("- no entry points detected — see `scenarios-derived.json` for "
+                  "the busiest-symbol fallback the Simulate tab uses on its own.")
+    ov.append("")
     ov.append("## What to produce")
     ov.append("1. `.codemap/learn.json` — the Learn-tab course. Follow "
               "`references/learn-schema.md`; design 4–6 modules per `SKILL.md`; "
@@ -136,19 +220,20 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
               "`references/explanations-schema.md`. Key every entry by the symbol "
               "`key:` printed in the per-module briefs. Cover at least every "
               "snippet in those briefs (hotspots + entry points).")
-    ov.append("3. (only if asked to simulate/walk through a run) "
-              "`.codemap/scenarios.json` — narrated steps for the Simulate tab. "
-              "Follow `references/scenarios-schema.md`. `scenarios-derived.json` "
-              "in this directory already has a real call tree per likely entry "
-              "point (node key, call/return/note, in call-site order) — narrate "
-              "and trim that rather than reconstructing one by hand. For real "
-              "branch/output fidelity, record an actual run instead: "
+    ov.append("3. `.codemap/scenarios.json` — the Simulate tab's scenario "
+              "curriculum. Follow `references/scenarios-schema.md`. Turn the "
+              "**Scenario index** above into one ordered, grouped list: every "
+              "entry an `id` + `title` + `root` (the `key:` shown) + `group` + "
+              "`order` + one-line `summary`, sorted by how the app really runs. "
+              "Omit `steps` — the renderer derives them. Hand-author `steps` only "
+              "for the 3–6 hero scenarios a Learn screen links via `\"sim\"`, "
+              "narrating/trimming `scenarios-derived.json` rather than rebuilding "
+              "a tree. For real branch/output fidelity record an actual run: "
               "`codemap trace --name \"<title>\" -- <command>`.")
     ov.append("")
     ov.append("All three files are optional and fall back silently — but you were "
               "asked for what you were asked for.")
     _write(briefs_dir / "00-overview.md", ov, written)
-    _emit_scenarios_derived(briefs_dir, data, written)
 
     # ---- one brief per module ------------------------------------
     mod_edges: dict[str, set[str]] = {m["name"]: set() for m in modules}
