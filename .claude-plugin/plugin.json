@@ -1,0 +1,13 @@
+{
+  "name": "codemap",
+  "description": "Skills for the codemap CLI: author the Learn/Graph/Simulate content that codemap explore bakes into explore.html, plus slash commands that wrap the scan/explore/explain workflow.",
+  "author": {
+    "name": "Devan Ramadhana",
+    "email": "devanr2911@gmail.com"
+  },
+  "homepage": "https://github.com/OWNER/codemap",
+  "repository": "https://github.com/OWNER/codemap",
+  "license": "MIT",
+  "skills": "./skills",
+  "commands": "./commands"
+}

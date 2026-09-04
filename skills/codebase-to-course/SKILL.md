@@ -21,6 +21,12 @@ Writes three JSON files under `.codemap/` that the deterministic `codemap
 explore` renderer bakes into `explore.html`. It never generates a standalone
 site and never edits the renderer.
 
+**Prerequisite:** the `codemap` CLI must be on `PATH` — this skill only
+authors content, it doesn't index or render anything itself. If `codemap
+--version` fails, install it first (`pipx install git+https://github.com/OWNER/codemap`
+— see `docs/install.md` in the codemap repo, or tell the user to run that
+before continuing).
+
 | File | Tab it fills | What it is |
 |---|---|---|
 | `libraries.json` | **Learn** | every imported package + every repo module: what it does in general, and its job here |

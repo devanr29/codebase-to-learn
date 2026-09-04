@@ -1,8 +1,10 @@
 # codemap — Change Explainer for AI-Assisted Codebases
 
 **Spec version:** 2.0 (supersedes 1.0 — architecture changed, do not follow v1)
-**Status:** Not started
-**Audience:** Claude Code (implementation agent)
+**Status:** Implemented through M18 (see §8 Milestones) — this document is a
+design record, not a task list; treat it as historical context for *why* the
+code is shaped the way it is, not a to-do.
+**Audience:** contributors, and Claude Code when extending the implementation
 
 ---
 
@@ -97,34 +99,56 @@ single current state.
 
 ## 6. Project layout
 
+Repo root ships two separately installable things — see `README.md`'s "Two
+pieces" section. The Python package is what actually gets built into the
+wheel (`pyproject.toml`'s `force-include`); everything else is packaging,
+docs, or the Claude Code plugin sitting alongside it.
+
 ```
-codemap/
+codemap/                     # THE TOOL — the installable Python package
   __init__.py
-  cli.py                # scan, explain, catchup, reviewed, note, install-hook, status
+  cli.py                # scan, explain, catchup, reviewed, note, install-hook, status, explore, trace
   config.py             # .codemap/config.toml
   db.py                 # connection, migrations, SCHEMA_VERSION
   schema.sql
   discovery.py          # M1 — file walking, language detection
+  gitio.py              # git plumbing (commit walking, diffs)
+  entrypoints.py         # route/CLI/task/entry-point detection for the graph + Simulate
   languages/
     registry.py         # extension -> grammar + queries + optional T2 resolver
     queries/<lang>/tags.scm
-    python.py           # T2 resolver
-    typescript.py       # T2 resolver
+    (per-language T2 resolvers live in registry.py's registrations)
   parsing.py            # M1 — tree-sitter -> symbols, refs, imports
   normalize.py          # M4 — comment/whitespace-stripped body hashing
   indexer.py            # M2/M3 — incremental index, per-commit snapshots
+  resolve.py            # caller/callee resolution across tiers
   semdiff.py            # M4 — change detection and classification
   impact.py             # M5 — callers, entry-point reachability
   intent.py             # M6 — intent capture and fallback chain
   report.py             # M7 — deterministic markdown entries
   narrate.py            # M8 — optional LLM stage (isolated)
+  digest.py             # catchup digest across multiple change entries
+  retention.py          # change-entry retention/pruning
+  tracer.py             # M18 — `codemap trace`, records a real run for Simulate
   hooks/post-commit
+  site/                 # M10-M18 — the `explore` renderer (see §12)
+    model.py, render.py, brief.py, explain.py, libraries.py, scenarios.py, simulate.py
+    assets/             # explore.html shell, CSS, JS, vendored icon font
+
 tests/
   fixtures/build_repo.py   # constructs a real git repo with scripted commits
-  test_parsing.py
-  test_semdiff.py
-  test_impact.py
-  test_incremental.py
+  test_parsing.py, test_semdiff.py, test_impact.py, test_incremental.py, …
+
+skills/                     # THE SKILLS — Claude Code plugin content
+  codebase-to-course/
+    SKILL.md
+    references/*.md         # schema + authoring-rule docs the skill reads
+commands/                   # /codemap:explore, /codemap:course, /codemap:review
+.claude-plugin/
+  plugin.json, marketplace.json
+
+docs/                       # spec.md (this file), install.md, cli.md,
+                             #   explore-guide.md, skills.md, images/
 ```
 
 ---
@@ -342,7 +366,7 @@ the primary way to *read* the repository. Three tabs sharing one hash router:
 - **Learn** — a library / module reference: every imported package (third-party
   + stdlib) and every top-level repo module, with what it does in general and
   its job in this codebase. Prose comes from `.codemap/libraries.json` (authored
-  by the repo-root `SKILL.md` skill) over a bundled table of common-library
+  by the `codebase-to-course` skill) over a bundled table of common-library
   one-liners; the import graph supplies the fallback (importers, call sites).
   `libraries.json` and `explanations.json` are optional and fall back silently.
 - **Timeline** — newest-first commits with intent source, severity counts, the
@@ -366,7 +390,9 @@ Milestones:
 - **M13** — `site/brief.py` (`--emit-brief`), `site/learn.py`, the Orientation
   fallback, and the ported interactive components (translation blocks, quizzes,
   glossary tooltips, call-path replay, trace exercise).
-- **M14** — repo-root `SKILL.md` + `references/*`, hook auto-rebuild
+- **M14** — the `codebase-to-course` skill (`SKILL.md` + `references/*`,
+  originally at the repo root, moved into `skills/codebase-to-course/` when the
+  repo was packaged as a Claude Code plugin), hook auto-rebuild
   (`codemap explore --quiet --if-enabled`, gated by
   `[explore] rebuild_on_commit`), these spec/README amendments.
 

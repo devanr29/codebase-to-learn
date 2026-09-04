@@ -8,12 +8,41 @@ version = "0.1.0"
 description = "Change explainer for AI-assisted codebases — a git-triggered semantic diff over a symbol-level graph"
 readme = "README.md"
 requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Devan Ramadhana", email = "devanr2911@gmail.com" },
+]
+keywords = ["git", "code-graph", "semantic-diff", "tree-sitter", "code-review", "claude-code"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Version Control :: Git",
+]
 dependencies = [
     "tree-sitter>=0.23",
     "tree-sitter-language-pack>=0.7",
     "pathspec>=0.12",
     "networkx>=3.0",
 ]
+
+# NOTE: distribution name kept as "codemap" — install is GitHub-only for now
+# (see docs/install.md), so there's no PyPI namespace to collide with. If this
+# is ever published to PyPI, check first: "codemap" is a common enough name
+# that it may already be taken, in which case rename the distribution (e.g.
+# "codemap-explorer") while keeping the `codemap` console command below.
+
+[project.urls]
+Homepage = "https://github.com/OWNER/codemap"
+Repository = "https://github.com/OWNER/codemap"
+Issues = "https://github.com/OWNER/codemap/issues"
+Documentation = "https://github.com/OWNER/codemap/tree/main/docs"
 
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]

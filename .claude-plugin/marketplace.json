@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "codemap",
+  "description": "codemap's own Claude Code plugin: the codebase-to-course skill and /codemap:* commands.",
+  "owner": {
+    "name": "Devan Ramadhana",
+    "url": "https://github.com/OWNER"
+  },
+  "plugins": [
+    {
+      "name": "codemap",
+      "source": "./",
+      "description": "Author the Learn/Graph/Simulate content for codemap's explore.html, and drive the scan/explore/explain workflow from slash commands.",
+      "license": "MIT",
+      "keywords": ["codemap", "code-graph", "documentation", "onboarding", "vibe-coding"]
+    }
+  ]
+}

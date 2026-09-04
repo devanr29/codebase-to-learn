@@ -1,4 +1,4 @@
--- codemap SQLite schema. See CODEMAP_SPEC.md section 7.
+-- codemap SQLite schema. See docs/spec.md section 7.
 -- SCHEMA_VERSION is tracked in codemap/db.py and mirrored into meta(schema_version).
 -- Every table that varies over time is keyed by commit_sha.
 

@@ -1,7 +1,8 @@
 """Load and validate ``.codemap/explanations.json`` — per-symbol plain-English
 blurbs shown in the Graph tab's inspector.
 
-Written by the ``codebase-to-course`` skill (see repo-root ``SKILL.md``), never
+Written by the ``codebase-to-course`` skill (see
+``skills/codebase-to-course/SKILL.md``), never
 by codemap itself. Absent or malformed content is **not** an error: the
 inspector simply shows no blurb. Companion to ``learn.py`` (the Learn-tab
 course); both fall back silently.

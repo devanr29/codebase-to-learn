@@ -29,7 +29,7 @@ HARD_EXCLUDES = (
 )
 
 _TEMPLATE = """\
-# codemap configuration. See CODEMAP_SPEC.md.
+# codemap configuration. See https://github.com/OWNER/codemap/tree/main/docs/spec.md.
 
 # Extra ignore patterns (gitignore syntax), applied on top of .gitignore and the
 # built-in hard excludes (.git, .venv, node_modules, vendor, dist, build, target, ...).
@@ -53,7 +53,8 @@ model = "claude-sonnet-5"
 [explore]
 # The self-contained explore.html surface (M10-M14). The renderer is
 # deterministic and never calls an LLM; teaching content, when present, is
-# authored separately into .codemap/learn.json.
+# authored separately into .codemap/libraries.json, explanations.json and
+# scenarios.json (see the codebase-to-course skill).
 rebuild_on_commit = true
 max_symbols = 1500
 max_snippet_lines = 40

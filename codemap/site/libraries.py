@@ -3,7 +3,7 @@ Learn tab, which is a **library / module reference**: for every external package
 the code imports (and every top-level module of the repo itself) it shows what
 that thing does in general and how *this* codebase uses it.
 
-Written by the ``codebase-to-course`` skill (repo-root ``SKILL.md``), never by
+Written by the ``codebase-to-course`` skill (``skills/codebase-to-course/SKILL.md``), never by
 codemap itself. Absent or malformed content is not an error: the Learn tab falls
 back to a deterministic reference built from the import graph plus a small
 bundled table of well-known-library one-liners in ``explore.js``. This loader

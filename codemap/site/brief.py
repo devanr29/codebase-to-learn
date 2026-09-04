@@ -1,5 +1,6 @@
 """``codemap explore --emit-brief`` — a deterministic analysis pack for the
-course-authoring skill (repo-root ``SKILL.md``).
+course-authoring skill (``codebase-to-course``, shipped as a Claude Code
+plugin skill at ``skills/codebase-to-course/SKILL.md``).
 
 The skill reads these briefs and writes ``.codemap/libraries.json``,
 ``.codemap/explanations.json`` and ``.codemap/scenarios.json``; it never has to
