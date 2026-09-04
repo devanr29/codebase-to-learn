@@ -4,14 +4,14 @@
 
 `codemap explore` turns the symbol graph in .codemap/index.db into ONE
 self-contained file, .codemap/explore.html, that you open in a browser. No
-server, no build step. Four tabs: Graph, Map, Learn, Timeline.
+server, no build step. Five tabs: Graph, Map, Simulate, Learn, Timeline.
 
 All commands below assume you are in the repo root. This project ships a virtual
 environment at .venv, so the Python is:
 
     .venv/Scripts/python -m codemap <command>
 
-If you have installed codemap globally (see section 11) you can drop the prefix
+If you have installed codemap globally (see section 12) you can drop the prefix
 and just type:  codemap <command>
 
 
@@ -50,9 +50,10 @@ someone, commit it in another repo -- it needs nothing else to work.
 Useful flags:
     --out <path>       write somewhere other than .codemap/explore.html
     --quiet            no summary line
-    --max-symbols N    cap graph nodes (default from config; see section 9)
+    --max-symbols N    cap graph nodes (default from config; see section 10)
     --json             print the raw graph model as JSON and write nothing
-    --emit-brief       write the analysis pack for the Learn course (section 7)
+    --emit-brief       write the analysis pack the codebase-to-course skill uses
+                       to author the Simulate and Learn tabs (sections 6 and 8)
 
 
 -------------------------------------------------------------------------------
@@ -142,7 +143,50 @@ MASS -- a treemap of the whole repo.
 
 
 -------------------------------------------------------------------------------
- 6. The Timeline tab
+ 6. The Simulate tab  (what happens when it runs, step by step)
+-------------------------------------------------------------------------------
+
+The Graph and Map tabs are about STRUCTURE. Simulate is about TIME: it replays
+one run of the code as an animation you drive with a transport bar (play /
+pause / step / scrub / speed).
+
+LEFT RAIL -- the scenario curriculum.
+    Scenarios are grouped into sections ("Startup", "A request comes in",
+    "Talking to the database", "When it breaks", ...) and ordered the way the
+    app actually runs. Only the section you are in (and the first one) is
+    expanded; click a section header to open another, or use the filter box
+    when there are many. Each row has a lane icon:
+        lightning  = derived -- computed from the call graph, not a real run.
+                     Shown only when nobody has authored scenarios.json.
+        pencil     = authored -- written into .codemap/scenarios.json by the
+                     codebase-to-course skill (section 8). Most entries just
+                     name a starting function; the page derives the call tree.
+        record dot = recorded -- a real run captured with `codemap trace`
+                     (real branches taken, real loop counts, real output).
+
+MAIN AREA -- four resizable, collapsible panes plus a narration line:
+    STAGE      the user's world -- a fake terminal / browser / API / file that
+               fills in as output is produced.
+    FLOW       the call graph for this run; the active function lights up, a
+               token flies along each call edge as it happens.
+    TRACE LOG  every step of the run as a scrollable list. The current step is
+               highlighted; steps you have not reached yet are dimmed. CLICK
+               ANY ROW to jump straight to that point -- forward or back. A
+               breadcrumb line at the top (f() > g() > h()) is the live call
+               stack.
+    SOURCE     the source of the running function, with the executing line
+               highlighted.
+    Under the panes, two lines per step: a person icon = what the user sees,
+    a gear icon = what the code is doing.
+
+TO GET AUTHORED SCENARIOS: same as the Learn tab -- run `--emit-brief`, invoke
+the codebase-to-course skill, re-render (section 8). With no authoring at all,
+Simulate still works: it offers a derived scenario for the busiest few
+functions. See references/scenarios-schema.md for the file format.
+
+
+-------------------------------------------------------------------------------
+ 7. The Timeline tab
 -------------------------------------------------------------------------------
 
 Newest commit first. Each card shows:
@@ -156,38 +200,50 @@ Graph tab.
 
 
 -------------------------------------------------------------------------------
- 7. The Learn tab  (guided course)
+ 8. The Learn tab  (library & module reference)
 -------------------------------------------------------------------------------
 
-Out of the box the Learn tab shows a generated ORIENTATION: entry points, the
-module map, and the highest-traffic symbols to read first.
+The Learn tab explains the code's DEPENDENCIES, not the code itself. It lists
+every package the project imports (third-party and Python standard library) and
+every top-level module of the repo, and for each one shows:
 
-To get a full guided course (module narratives, plain-English code
-translations, quizzes, glossary tooltips):
+    IN GENERAL       what that library / module is, for someone who has never
+                     heard of it (one or two plain sentences).
+    IN THIS CODEBASE  the job it actually does here -- which files import it,
+                     which functions use it.
+    SEE IN THE GRAPH  a few clickable call sites that jump into the Graph tab.
+
+LEFT RAIL groups the entries: Third-party, Standard library, This repo's
+modules. A hollow circle next to a name means nobody has written a description
+for it yet.
+
+Out of the box the "In general" line comes from a small built-in table of
+well-known libraries (React, Flask, networkx, pandas, the stdlib, ...), and
+"In this codebase" is derived from the import graph. To fill the gaps -- the
+repo's own modules, niche packages, and a hand-written "In this codebase" line:
 
     a) Emit the analysis pack:
 
            .venv/Scripts/python -m codemap explore --emit-brief
 
-       This writes .codemap/briefs/  --  00-overview.md plus one file per
-       module, each with pre-extracted code snippets.
+       00-overview.md now has a "Dependency reference" section listing every
+       entry to describe, and a libraries-derived.json to annotate.
 
     b) In Claude Code, invoke the skill:  /codebase-to-course
-       (or just ask: "turn this codebase into a course"). It reads the briefs
-       and references/, then writes .codemap/learn.json.
+       (or ask: "explain this codebase"). It reads the briefs and references/,
+       then writes .codemap/libraries.json (plus explanations.json for the
+       Graph inspector and scenarios.json for the Simulate tab).
 
     c) Re-render:
 
            .venv/Scripts/python -m codemap explore --open
 
-       The Learn tab now shows the authored modules instead of the Orientation.
-
-If learn.json is ever malformed, the tab silently falls back to the Orientation
--- nothing breaks. If your course "isn't showing up", validate the JSON first.
+If libraries.json is malformed the tab silently falls back to the built-in
+blurbs + import graph -- nothing breaks. See references/libraries-schema.md.
 
 
 -------------------------------------------------------------------------------
- 8. Keep it fresh automatically  (optional)
+ 9. Keep it fresh automatically  (optional)
 -------------------------------------------------------------------------------
 
     .venv/Scripts/python -m codemap install-hook
@@ -205,7 +261,7 @@ Manual `codemap explore` still works when this is false.
 
 
 -------------------------------------------------------------------------------
- 9. Config knobs  (.codemap/config.toml)
+ 10. Config knobs  (.codemap/config.toml)
 -------------------------------------------------------------------------------
 
     [explore]
@@ -217,7 +273,7 @@ Manual `codemap explore` still works when this is false.
 
 
 -------------------------------------------------------------------------------
- 10. Run against a different repository
+ 11. Run against a different repository
 -------------------------------------------------------------------------------
 
 --path works on every subcommand:
@@ -228,7 +284,7 @@ Manual `codemap explore` still works when this is false.
 
 
 -------------------------------------------------------------------------------
- 11. Running without the ".venv/Scripts/python -m" prefix
+ 12. Running without the ".venv/Scripts/python -m" prefix
 -------------------------------------------------------------------------------
 
 OPTION A -- install codemap as its own command (recommended):
@@ -252,7 +308,7 @@ OPTION C -- call the venv's console script directly:
 
 
 -------------------------------------------------------------------------------
- 12. Troubleshooting
+ 13. Troubleshooting
 -------------------------------------------------------------------------------
 
 Yellow "Built from ... HEAD is now ..." banner

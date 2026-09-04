@@ -43,7 +43,7 @@ codemap reviewed HEAD        # advance the reviewed marker
 codemap snapshot             # architecture view of the current (live) graph
 codemap explore              # render .codemap/explore.html — the browsable surface
 codemap explore --open       # …and open it
-codemap explore --emit-brief # analysis pack for the course-authoring skill
+codemap explore --emit-brief # analysis pack for the codebase-to-course skill (Learn + Simulate content)
 codemap trace -- -m codemap explore   # record a real run for the Simulate tab
 codemap note "why I'm about to commit"   # record intent for the next commit
 codemap install-hook         # post-commit hook: scan + explain + explore, always exits 0
@@ -83,17 +83,26 @@ index — no server, no build step, opens with a double-click. Five tabs:
   hatched when every function in it is unreachable.
 - **Simulate** — a transport-controlled animation of one call-by-call run: the
   user's world above (a terminal/browser/API/file stage) and the code's world
-  below (animated call flow, a live call stack, the source line executing),
-  with two narration lines per step — what the user perceives, what the code
-  is doing. Three lanes feed it, increasing in fidelity: derived (⚡, computed
-  from the call graph client-side — works on any repo, no authoring), authored
-  (✏, `.codemap/scenarios.json`, written by the course-authoring skill), and
-  recorded (⏺, `codemap trace -- <command>` — a real run, real branches, real
-  output, real timing). See `references/scenarios-schema.md`.
-- **Learn** — an authored walkthrough from `.codemap/learn.json` when present
-  (see the repo-root `SKILL.md`), else a generated Orientation. `learn.json`,
-  `explanations.json` and `scenarios.json` are all optional and fall back
-  silently.
+  below (animated call flow, a **trace log** you can scroll and click any past
+  step to jump to, the source line executing), with two narration lines per
+  step — what the user perceives, what the code is doing. The left rail is a
+  **curriculum**: `.codemap/scenarios.json` entries grouped by `group` and
+  ordered by `order`, so they read the way the app runs (startup → an inbound
+  request → background jobs → when it breaks). Three lanes feed it, increasing
+  in fidelity: derived (⚡, computed from the call graph client-side — fills the
+  rail only when nothing is authored), authored (✏, `scenarios.json`, written by
+  the `codebase-to-course` skill; most entries carry just a `root` and the
+  renderer derives the call tree), and recorded (⏺, `codemap trace -- <command>`
+  — a real run, real branches, real output, real timing). See
+  `references/scenarios-schema.md`.
+- **Learn** — a **library / module reference**: every imported package
+  (third-party + standard library) and every top-level repo module, each with
+  *what it does in general*, *its job in this codebase*, and clickable call
+  sites into the Graph tab. Prose comes from `.codemap/libraries.json` (authored
+  by the repo-root `SKILL.md` skill) layered over a bundled table of
+  common-library one-liners; the import graph supplies the fallback. See
+  `references/libraries-schema.md`. `libraries.json`, `explanations.json` and
+  `scenarios.json` are all optional and fall back silently.
 - **Timeline** — every commit with its stated intent, severity counts, headline
   change and blast radius, linking back into the graph.
 
