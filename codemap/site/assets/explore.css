@@ -846,23 +846,49 @@ button { font-family: inherit; }
 /* ── simulate tab ─────────────────────────────────────────────── */
 .sim { flex: 1; min-width: 0; display: flex; min-height: 0; }
 .sim-rail {
-  width: 220px; flex: none; overflow-y: auto;
+  width: 220px; flex: none; overflow: hidden;
   border-right: 1px solid var(--color-divider);
   padding: 12px 10px; display: flex; flex-direction: column; gap: 3px;
 }
 .sim-rail .lk { font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin: 2px 6px 6px; }
+.sim-rail-search {
+  margin: 0 4px 8px; padding: 5px 8px; font-size: 11px; font-family: inherit;
+  background: var(--color-surface-2); color: var(--color-neutral-200);
+  border: 1px solid var(--color-neutral-800); border-radius: 5px;
+}
+.sim-rail-search:focus { outline: none; border-color: var(--color-accent); }
+.sim-rail-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.sim-rail-group {
+  display: flex; align-items: center; gap: 6px; cursor: pointer;
+  padding: 6px 6px; margin-top: 5px;
+  font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase;
+  color: var(--color-neutral-500);
+}
+.sim-rail-group:first-child { margin-top: 0; }
+.sim-rail-group:hover { color: var(--color-neutral-300); }
+.sim-rail-group i { font-size: 9px; flex: none; }
+.sim-rail-group-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-rail-group-n { color: var(--color-neutral-700); }
+.sim-rail-more {
+  font-size: 10.5px; color: var(--color-neutral-500); cursor: pointer; padding: 4px 8px 4px 24px;
+}
+.sim-rail-more:hover { color: var(--color-accent-200); }
+.sim-rail-empty { font-size: 11px; font-style: italic; color: var(--color-neutral-700); padding: 8px 6px; }
 .sim-scenario {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 8px; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px 8px 6px 22px; border-radius: 6px; cursor: pointer;
   color: var(--color-neutral-300); font-size: 12px;
 }
-.sim-scenario i { color: var(--color-neutral-600); flex: none; }
+.sim-scenario i { color: var(--color-neutral-600); flex: none; margin-top: 2px; }
 .sim-scenario:hover { background: var(--color-neutral-900); }
 .sim-scenario.active { background: var(--color-accent-900); color: var(--color-accent-100); }
 .sim-scenario.active i { color: var(--color-accent-400); }
+.sim-scenario-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px; }
 .sim-scenario-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-scenario-sub { font-size: 10px; color: var(--color-neutral-600); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sim-scenario.active .sim-scenario-sub { color: var(--color-accent-300); }
 .sim-legend {
-  margin-top: auto; padding-top: 10px; border-top: 1px solid var(--color-divider);
+  flex: none; margin-top: 8px; padding-top: 10px; border-top: 1px solid var(--color-divider);
   display: flex; flex-direction: column; gap: 6px; font-size: 10.5px; color: var(--color-neutral-600);
 }
 .sim-legend .row { display: flex; align-items: flex-start; gap: 6px; line-height: 1.4; }
@@ -930,15 +956,34 @@ button { font-family: inherit; }
 .sim-stagebody { flex: 1; display: flex; min-height: 0; }
 .sim-flowbody { background: radial-gradient(120% 90% at 35% 20%, #1b1e2e 0%, #141622 55%, #101220 100%); }
 .sim-flowbody svg { display: block; }
-.sim-stackbody { padding: 10px 12px; }
+.sim-logbody { padding: 0; }
 .sim-sourcebody { display: flex; flex-direction: column; }
 
-.sim-stacklist { display: flex; flex-direction: column-reverse; gap: 4px; }
-.sim-stack-empty { color: var(--color-neutral-700); font-size: 11px; font-style: italic; }
-.sim-frame { display: flex; align-items: center; gap: 7px; font: 400 11.5px var(--font-mono); color: var(--color-neutral-300); }
-.sim-frame-dot { width: 8px; height: 8px; border-radius: 2px; flex: none; }
-.sim-frame-name { color: var(--color-neutral-100); }
-.sim-frame-file { color: var(--color-neutral-600); font-size: 10px; }
+/* trace log — full run as clickable history; `.cur` marks the step you're on,
+   rows after it are dimmed until execution reaches them (single-class toggle,
+   the `~` rule does the rest). */
+.sim-loglist { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sim-log-crumb {
+  flex: none; padding: 6px 10px; border-bottom: 1px solid var(--color-divider);
+  font: 400 10.5px/1.4 var(--font-mono); color: var(--color-neutral-500);
+  white-space: nowrap; overflow-x: auto;
+}
+.sim-log-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 5px 0; }
+.sim-log-row {
+  display: flex; align-items: baseline; gap: 7px; cursor: pointer;
+  padding: 2px 10px 2px 0; font: 400 11px var(--font-mono); color: var(--color-neutral-400);
+}
+.sim-log-row:hover { background: var(--color-neutral-900); }
+.sim-log-row.cur { background: var(--color-accent-900); color: var(--color-accent-100); }
+.sim-log-row.cur ~ .sim-log-row { opacity: 0.4; }
+.sim-log-row.cur ~ .sim-log-row:hover { opacity: 0.75; }
+.sim-log-i { flex: none; min-width: 24px; text-align: right; color: var(--color-neutral-700); font-size: 9.5px; }
+.sim-log-glyph { flex: none; color: var(--color-neutral-600); }
+.sim-log-row.t-emit .sim-log-glyph { color: var(--color-accent-400); }
+.sim-log-name { flex: none; color: var(--color-neutral-200); }
+.sim-log-row.cur .sim-log-name { color: var(--color-accent-100); }
+.sim-log-code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-neutral-500); }
+.sim-log-out { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--color-accent-300); }
 
 .sim-source-hd {
   flex: none; display: flex; align-items: center; gap: 7px;
@@ -1068,7 +1113,8 @@ button { font-family: inherit; }
    .collapsed already; this extends that fix to the whole stack. */
 @media (max-width: 900px) {
   .sim { flex-direction: column; }
-  .sim-rail { width: auto; max-height: 130px; border-right: 0; border-bottom: 1px solid var(--color-divider); flex-direction: row; flex-wrap: wrap; }
+  .sim-rail { width: auto; max-height: 160px; border-right: 0; border-bottom: 1px solid var(--color-divider); overflow: auto; }
+  .sim-rail-list { overflow: visible; }
   .sim-legend { display: none; }
   .sim-panes { flex-direction: column; flex: none; }
   .sim-col, .sim-col-left, .sim-col-right { flex: none !important; width: auto !important; max-width: none; }

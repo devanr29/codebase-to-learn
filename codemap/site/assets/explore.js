@@ -476,8 +476,8 @@
     simStep: 0,           // Simulate: current step index into that scenario's normalized steps
     simPlaying: false,    // Simulate: transport is auto-advancing
     simSpeed: 1,          // Simulate: playback speed multiplier — one of SIM_SPEEDS below
-    simCollapsed: { stage: false, flow: false, stack: false, source: false },  // Simulate: per-pane hide toggle
-    simLayout: { leftW: null, stageH: null, stackH: null },  // Simulate: px overrides once a splitter is dragged, else CSS default
+    simCollapsed: { stage: false, flow: false, log: false, source: false },  // Simulate: per-pane hide toggle
+    simLayout: { leftW: null, stageH: null, logH: null },  // Simulate: px overrides once a splitter is dragged, else CSS default
   };
 
   // ---- routing ---------------------------------------------------
@@ -2441,8 +2441,18 @@
     return derivedCache[id];
   }
   var SIM_SCENARIOS = [];
-  (DATA.sim && DATA.sim.scenarios || []).forEach(function (s) { s._raw = s.steps; SIM_SCENARIOS.push(s); });
-  traceRoots.slice(0, 6).forEach(function (r) { SIM_SCENARIOS.push(derivedScenario(r.i)); });
+  var SIM_AUTHORED = (DATA.sim && DATA.sim.scenarios || []);
+  SIM_AUTHORED.forEach(function (s) {
+    // `steps: []` from simulate.py is a root-only curriculum entry — leave _raw
+    // null so scenarioSteps() derives the tree from `root` client-side.
+    s._raw = (s.steps && s.steps.length) ? s.steps : null;
+    SIM_SCENARIOS.push(s);
+  });
+  // Lane 1 (⚡ derived) fills the rail only when the skill authored nothing.
+  // With a curriculum present the rail *is* the curriculum; derive:<key> stays
+  // reachable on demand via ensureScenario (deep links, Map ▸ "Simulate ▶").
+  if (!SIM_AUTHORED.length)
+    traceRoots.slice(0, 6).forEach(function (r) { SIM_SCENARIOS.push(derivedScenario(r.i)); });
   var simById = {};
   SIM_SCENARIOS.forEach(function (s) { simById[s.id] = s; });
   function ensureScenario(id) {
@@ -2456,6 +2466,30 @@
       }
     }
     return null;
+  }
+
+  // ── rail grouping: a curriculum, ordered by how the app runs ──────────
+  // `group` is the section header, `order` the workflow position (ascending);
+  // with neither, fall back to BFS depth from the entry seeds so even an
+  // un-authored repo reads roughly in call order.
+  var SIM_GROUP_CAP = 8;                 // rows shown per group before "+N more"
+  var simGroupOpen = {};                 // group name -> explicit open/closed
+  var simGroupExpand = {};               // group name -> "+N more" opened
+  var simRailFilter = "";
+  function simGroupOf(sc) {
+    return sc.group || (sc.source === "derived" ? "Auto-derived" : "Scenarios");
+  }
+  function simOrderOf(sc) {
+    if (typeof sc.order === "number") return sc.order;
+    var d = sc.root != null && flowDepth[sc.root] != null && flowDepth[sc.root] >= 0 ? flowDepth[sc.root] : 500;
+    return 1000 + d;
+  }
+  function simSorted() {
+    return SIM_SCENARIOS.slice().sort(function (a, b) {
+      return simOrderOf(a) - simOrderOf(b) ||
+        simGroupOf(a).localeCompare(simGroupOf(b)) ||
+        (a.title || "").localeCompare(b.title || "");
+    });
   }
 
   // A recorded (Lane 3) step carries no narration and no explicit `from` —
@@ -2598,18 +2632,46 @@
     return { svg: svg, nodeEls: nodeEls, edgeEls: edgeEls };
   }
 
-  function stackPane(stack) {
-    var box = el("div", { class: "sim-stacklist" });
-    if (!stack.length) { box.appendChild(el("div", { class: "sim-stack-empty", text: "— empty —" })); return box; }
-    stack.forEach(function (ni, depth) {
-      var n = N[ni];
-      box.appendChild(el("div", { class: "sim-frame", style: "padding-left:" + (depth * 14) + "px" }, [
-        el("span", { class: "sim-frame-dot", style: "background:" + colorForNode(n) }),
-        el("span", { class: "sim-frame-name", text: n.name }),
-        el("span", { class: "sim-frame-file", text: n.file.split("/").pop() }),
-      ]));
+  // Trace log — replaces the old call-stack snapshot. Every step 0..end is a
+  // row, built once at mount; paintTraceLog() only moves the `.cur` marker and
+  // scrolls it into view, so the whole run stays scrollable and every past row
+  // stays clickable to jump back to. The breadcrumb strip up top keeps the
+  // live call-stack readout the snapshot pane used to give.
+  var SIM_LOG_GLYPH = { call: "→", return: "←", emit: "»", note: "·", branch: "◇" };
+  function traceLogCrumb(stack) {
+    if (!stack || !stack.length) return "· idle ·";
+    return stack.map(function (ni) { return N[ni].name; }).join("  ›  ");
+  }
+  function buildTraceLog(m) {
+    var crumb = el("div", { class: "sim-log-crumb",
+      text: traceLogCrumb(m.steps[0] && m.steps[0].stack) });
+    var scroll = el("div", { class: "sim-log-scroll" });
+    m.logRows = m.steps.map(function (st, k) {
+      var n = N[st.node];
+      var isOut = st.t === "emit" && st.emit;
+      var row = el("div", { class: "sim-log-row t-" + st.t,
+        style: "padding-left:" + (8 + Math.max(0, (st.depth || 1) - 1) * 12) + "px",
+        on: { click: function () { simSetStep(k); } } }, [
+        el("span", { class: "sim-log-i", text: String(k) }),
+        el("span", { class: "sim-log-glyph", text: SIM_LOG_GLYPH[st.t] || "·" }),
+        el("span", { class: "sim-log-name", text: n.name }),
+        el("span", { class: isOut ? "sim-log-out" : "sim-log-code",
+          text: isOut ? st.emit.text : (st.code || "") }),
+      ]);
+      scroll.appendChild(row);
+      return row;
     });
-    return box;
+    m.logCrumb = crumb;
+    m.curLogRow = null;
+    return el("div", { class: "sim-loglist" }, [crumb, scroll]);
+  }
+  function paintTraceLog(m, i) {
+    if (!m.logRows) return;
+    if (m.curLogRow) m.curLogRow.classList.remove("cur");
+    var row = m.logRows[i];
+    if (row) { row.classList.add("cur"); row.scrollIntoView({ block: "nearest" }); }
+    m.curLogRow = row || null;
+    m.logCrumb.textContent = traceLogCrumb(m.steps[i] && m.steps[i].stack);
   }
 
   function sourcePane(n, activeLine) {
@@ -2711,16 +2773,67 @@
   }
 
   var SIM_LANE_ICON = { derived: "ph-lightning", authored: "ph-pencil-simple", recorded: "ph-record" };
-  function simRail() {
-    var box = el("div", { class: "sim-rail" }, [el("div", { class: "lk", text: "SCENARIOS" })]);
-    SIM_SCENARIOS.forEach(function (sc) {
-      var active = state.simScenario === sc.id;
-      box.appendChild(el("div", { class: "sim-scenario" + (active ? " active" : ""),
-        on: { click: function () { go("sim", sc.id + "/0"); } } }, [
-        el("i", { class: "ph " + (SIM_LANE_ICON[sc.source] || "ph-lightning") }),
-        el("span", { class: "sim-scenario-title", text: sc.title }),
-      ]));
+  var simRailListEl = null;   // the scrolling middle of the rail — rebuilt in place
+                              // on filter / group toggle so the search field keeps focus
+  function simRailRow(sc) {
+    var active = state.simScenario === sc.id;
+    var text = [el("span", { class: "sim-scenario-title", text: sc.title })];
+    if (sc.summary) text.push(el("span", { class: "sim-scenario-sub", text: sc.summary }));
+    return el("div", { class: "sim-scenario" + (active ? " active" : ""),
+      on: { click: function () { go("sim", sc.id + "/0"); } } }, [
+      el("i", { class: "ph " + (SIM_LANE_ICON[sc.source] || "ph-lightning") }),
+      el("span", { class: "sim-scenario-text" }, text),
+    ]);
+  }
+  function renderSimRailList() {
+    if (!simRailListEl) return;
+    clear(simRailListEl);
+    var q = simRailFilter.trim().toLowerCase();
+    var groups = [], byName = {};
+    simSorted().forEach(function (sc) {
+      var g = simGroupOf(sc);
+      if (!byName[g]) { byName[g] = { name: g, items: [] }; groups.push(byName[g]); }
+      byName[g].items.push(sc);
     });
+    var any = false;
+    groups.forEach(function (grp, gi) {
+      var items = q ? grp.items.filter(function (sc) {
+        return (sc.title + " " + (sc.summary || "") + " " + grp.name).toLowerCase().indexOf(q) >= 0;
+      }) : grp.items;
+      if (!items.length) return;
+      any = true;
+      var activeHere = items.some(function (sc) { return sc.id === state.simScenario; });
+      var open = q ? true
+        : (simGroupOpen[grp.name] != null ? simGroupOpen[grp.name] : (activeHere || gi === 0));
+      simRailListEl.appendChild(el("div", { class: "sim-rail-group" + (open ? " open" : ""),
+        on: { click: function () { simGroupOpen[grp.name] = !open; renderSimRailList(); } } }, [
+        el("i", { class: "ph " + (open ? "ph-caret-down" : "ph-caret-right") }),
+        el("span", { class: "sim-rail-group-name", text: grp.name }),
+        el("span", { class: "sim-rail-group-n", text: String(items.length) }),
+      ]));
+      if (!open) return;
+      var cap = (q || simGroupExpand[grp.name]) ? items.length : Math.min(items.length, SIM_GROUP_CAP);
+      items.slice(0, cap).forEach(function (sc) { simRailListEl.appendChild(simRailRow(sc)); });
+      if (cap < items.length)
+        simRailListEl.appendChild(el("div", { class: "sim-rail-more",
+          on: { click: function () { simGroupExpand[grp.name] = true; renderSimRailList(); } } },
+          ["+ " + (items.length - cap) + " more"]));
+    });
+    if (!any)
+      simRailListEl.appendChild(el("div", { class: "sim-rail-empty",
+        text: q ? "No scenario matches “" + simRailFilter + "”." : "No scenarios." }));
+  }
+  function simRail() {
+    var total = SIM_SCENARIOS.length;
+    var box = el("div", { class: "sim-rail" },
+      [el("div", { class: "lk", text: "SCENARIOS · " + total })]);
+    if (total > 12)
+      box.appendChild(el("input", { class: "sim-rail-search", type: "search",
+        placeholder: "Filter " + total + " scenarios…", value: simRailFilter,
+        on: { input: function (e) { simRailFilter = e.target.value; renderSimRailList(); } } }));
+    simRailListEl = el("div", { class: "sim-rail-list" });
+    box.appendChild(simRailListEl);
+    renderSimRailList();
     box.appendChild(el("div", { class: "sim-legend" }, [
       el("div", { class: "row" }, [el("i", { class: "ph ph-lightning" }), "derived — computed from the call graph, not a real run"]),
       el("div", { class: "row" }, [el("i", { class: "ph ph-pencil-simple" }), "authored — written for this course"]),
@@ -2810,7 +2923,7 @@
   // capture technique as the legend's drag (wireLegendDrag), sized/clamped
   // instead of positioned. Sizes and collapsed state live in state.sim* so
   // they survive a scenario switch, matching how the legend's own position does.
-  var SIM_PANE_TITLE = { stage: "STAGE", flow: "FLOW", stack: "CALL STACK", source: "SOURCE" };
+  var SIM_PANE_TITLE = { stage: "STAGE", flow: "FLOW", log: "TRACE LOG", source: "SOURCE" };
   function simPaneToggle(key) {
     var collapsed = state.simCollapsed[key];
     return el("button", { class: "sim-pane-toggle",
@@ -2907,8 +3020,7 @@
     });
     if (animate && !reduceMotion) fireCallToken(m, st);
 
-    clear(m.stackBox);
-    m.stackBox.appendChild(stackPane(st.stack));
+    paintTraceLog(m, i);
 
     clear(m.sourceBox);
     m.sourceBox.appendChild(sourcePane(n, st.line || (n.line ? n.line[0] : null)));
@@ -2976,31 +3088,31 @@
 
     var stageBox = el("div", { class: "sim-stagebody" });
     var flowBody = el("div", { class: "sim-flowbody" }, [flow.svg]);
-    var stackBox = el("div", { class: "sim-stackbody" });
+    var logBox = el("div", { class: "sim-logbody" });
     var sourceBox = el("div", { class: "sim-sourcebody" });
     var narrBox = el("div", { class: "sim-narrbox" });
     var transportBox = el("div", { class: "sim-transportbox" });
 
     var stagePane = simPaneWrap("stage", stageBox);
     var flowPane = simPaneWrap("flow", flowBody);
-    var stackPane_ = simPaneWrap("stack", stackBox);
+    var logPane_ = simPaneWrap("log", logBox);
     var sourcePane_ = simPaneWrap("source", sourceBox);
 
     // reapply any sizes dragged earlier this session (mirrors wireLegendDrag
     // reapplying state.legendPos on every rebuild)
     var L = state.simLayout;
     if (L.stageH != null) stagePane.wrap.style.flex = "0 0 " + L.stageH + "px";
-    if (L.stackH != null) stackPane_.wrap.style.flex = "0 0 " + L.stackH + "px";
+    if (L.logH != null) logPane_.wrap.style.flex = "0 0 " + L.logH + "px";
 
     var hSplitLeft = el("div", { class: "sim-hsplit", "aria-hidden": "true" });
     var hSplitRight = el("div", { class: "sim-hsplit", "aria-hidden": "true" });
     var leftCol = el("div", { class: "sim-col sim-col-left" }, [stagePane.wrap, hSplitLeft, flowPane.wrap]);
-    var rightCol = el("div", { class: "sim-col sim-col-right" }, [stackPane_.wrap, hSplitRight, sourcePane_.wrap]);
+    var rightCol = el("div", { class: "sim-col sim-col-right" }, [logPane_.wrap, hSplitRight, sourcePane_.wrap]);
     if (L.leftW != null) leftCol.style.flex = "0 0 " + L.leftW + "px";
     var vSplit = el("div", { class: "sim-vsplit", "aria-hidden": "true" });
     var panesRow = el("div", { class: "sim-panes" }, [leftCol, vSplit, rightCol]);
     wireHSplitter(hSplitLeft, stagePane.wrap, leftCol, "stageH");
-    wireHSplitter(hSplitRight, stackPane_.wrap, rightCol, "stackH");
+    wireHSplitter(hSplitRight, logPane_.wrap, rightCol, "logH");
     wireVSplitter(vSplit, leftCol, panesRow);
 
     var notes = [];
@@ -3011,8 +3123,9 @@
         ["⚡ simulated from the call graph — not a recorded run. Branches and loops are shown as possibilities, not choices."]));
 
     simMount = { sc: sc, steps: steps, layout: layout, flow: flow,
-      stageBox: stageBox, stackBox: stackBox, sourceBox: sourceBox, narrBox: narrBox,
-      paneWraps: { stage: stagePane, flow: flowPane, stack: stackPane_, source: sourcePane_ } };
+      stageBox: stageBox, logBox: logBox, sourceBox: sourceBox, narrBox: narrBox,
+      paneWraps: { stage: stagePane, flow: flowPane, log: logPane_, source: sourcePane_ } };
+    logBox.appendChild(buildTraceLog(simMount));   // built once; paintTraceLog re-marks the current row
     simMount.transport = buildTransport(simMount);
     transportBox.appendChild(simMount.transport.box);
 
