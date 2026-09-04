@@ -70,6 +70,58 @@ def test_scenarios_json_absent_malformed_then_valid(fixture_impact_repo, tmp_pat
         sf.unlink(missing_ok=True)
 
 
+def test_scenarios_load_accepts_root_only_curriculum_entry(fixture_impact_repo, tmp_path):
+    """A scenario with a `root` and no `steps` is kept — explore.js derives its
+    steps client-side. Curriculum metadata (group / order / summary) rides along;
+    an entry with neither steps nor root is still dropped."""
+    cfg = config.load(fixture_impact_repo.path)
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    sf = cfg.codemap_dir / "scenarios.json"
+    sf.write_text(json.dumps({"scenarios": [
+        {"id": "startup", "title": "The app boots", "root": "a::b",
+         "group": "Startup", "order": 1, "summary": "what loads first"},
+        {"id": "nada", "title": "No root, no steps"},                 # dropped
+        {"id": "empty", "title": "Empty steps, no root", "steps": []},  # dropped
+    ]}), encoding="utf-8")
+    try:
+        loaded = scenarios.load(cfg)
+    finally:
+        sf.unlink(missing_ok=True)
+    assert [s["id"] for s in loaded] == ["startup"]
+    s = loaded[0]
+    assert s["root"] == "a::b"
+    assert s["steps"] == []
+    assert s["group"] == "Startup" and s["order"] == 1
+    assert s["summary"] == "what loads first"
+
+
+def test_simulate_build_keeps_root_only_scenario_for_client_derivation(fixture_impact_repo, tmp_path):
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    data = model.build(conn, cfg)
+    conn.close()
+    real_key = data["nodes"][0]["key"]
+    real_i = data["nodes"][0]["i"]
+
+    sf = cfg.codemap_dir / "scenarios.json"
+    sf.write_text(json.dumps({"scenarios": [
+        {"id": "derive-me", "title": "Derived from root", "root": real_key,
+         "group": "Core", "order": 3, "summary": "the main path"},
+        {"id": "root-broken", "title": "Root does not resolve", "root": "no/such::key"},
+    ]}), encoding="utf-8")
+    try:
+        out = simulate.build(cfg, {n["key"]: n["i"] for n in data["nodes"]})
+    finally:
+        sf.unlink(missing_ok=True)
+
+    ids = [s["id"] for s in out["scenarios"]]
+    assert ids == ["derive-me"]                    # root-broken: nothing to derive from
+    sc = out["scenarios"][0]
+    assert sc["root"] == real_i
+    assert sc["steps"] == []                       # no steps -> explore.js deriveSteps(root)
+    assert sc["group"] == "Core" and sc["order"] == 3 and sc["summary"] == "the main path"
+
+
 def test_simulate_build_resolves_keys_and_drops_unresolvable(fixture_impact_repo, tmp_path):
     cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
     cfg.codemap_dir.mkdir(exist_ok=True)

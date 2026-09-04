@@ -25,8 +25,13 @@ def build(cfg: Config, key_to_i: dict[str, int]) -> dict:
     """``{"scenarios": [...]}`` with every ``node``/``root``/``from`` symbol
     key resolved to a graph node index. A scenario referencing a key that
     doesn't resolve to a *currently kept* node (pruned by the ``max_symbols``
-    budget, renamed, deleted) drops just that step; a scenario left with
-    fewer than 2 steps is dropped entirely rather than shown broken."""
+    budget, renamed, deleted) drops just that step.
+
+    A scenario is kept when it has >=2 resolvable steps, **or** it is a
+    curriculum entry carrying a resolvable ``root`` and no hand-authored steps
+    (``explore.js``'s Lane-1 ``deriveSteps`` fills the call tree in from that
+    root at render time). A scenario that *did* author steps but resolved to
+    fewer than 2 is dropped rather than shown broken."""
     raw = _scenarios.load(cfg) + _tracer.load_all(cfg)
     out: list[dict] = []
     for sc in raw:
@@ -37,6 +42,7 @@ def build(cfg: Config, key_to_i: dict[str, int]) -> dict:
 
 
 def _resolve_scenario(sc: dict, key_to_i: dict[str, int]) -> dict | None:
+    authored_steps = bool(sc.get("steps"))
     steps = []
     for st in sc.get("steps", ()):
         i = key_to_i.get(st.get("node") if isinstance(st, dict) else None)
@@ -48,15 +54,26 @@ def _resolve_scenario(sc: dict, key_to_i: dict[str, int]) -> dict | None:
             fi = key_to_i.get(rs["from"])
             rs["from"] = fi if fi is not None else None
         steps.append(rs)
+
+    root_key = sc.get("root")
+    root_i = key_to_i.get(root_key) if isinstance(root_key, str) else None
+
     if len(steps) < 2:
-        return None
+        # too few resolvable steps: keep only as a root-only derive entry, and
+        # only when the caller never authored steps in the first place
+        if authored_steps or root_i is None:
+            return None
+        steps = []
+
     out = {
         "id": sc["id"], "title": sc["title"], "trigger": sc.get("trigger") or {"surface": "terminal", "text": ""},
         "source": sc.get("source", "authored"), "steps": steps,
     }
-    root_key = sc.get("root")
-    if isinstance(root_key, str) and root_key in key_to_i:
-        out["root"] = key_to_i[root_key]
+    if root_i is not None:
+        out["root"] = root_i
+    for k in ("group", "order", "summary"):
+        if k in sc:
+            out[k] = sc[k]
     if sc.get("truncated"):
         out["truncated"] = True
     if sc.get("crashed"):

@@ -18,10 +18,13 @@ Shape (see ``references/scenarios-schema.md``):
           "title": "Running `codemap explore`",
           "trigger": {"surface": "terminal", "text": "codemap explore"},
           "root": "codemap/cli.py::cmd_explore",   # a data.nodes[].key
-          "steps": [
-            {"node": "codemap/cli.py::cmd_explore", "t": "call",
-             "user": "Nothing on screen yet.", "code": "cmd_explore starts."}
-          ]
+          "group": "A request comes in",           # Simulate-rail section header
+          "order": 20,                              # position in the app's workflow
+          "summary": "what you'll learn watching this",
+          "steps": [                               # OPTIONAL — omit to let
+            {"node": "codemap/cli.py::cmd_explore", "t": "call",   # explore.js
+             "user": "Nothing on screen yet.", "code": "cmd_explore starts."}  # derive
+          ]                                         # the steps from `root`
         }
       ]
     }
@@ -29,6 +32,12 @@ Shape (see ``references/scenarios-schema.md``):
 ``root``/``node`` reference symbol *keys*; ``explore.js`` resolves them to
 graph node indices at render time (so this file never has to know the
 node-index numbering `model.build()` assigns).
+
+A scenario needs *either* a non-empty ``steps`` list *or* a ``root`` — a
+"curriculum" entry can carry just ``root`` (+ ``group``/``order``/``summary``)
+and let the renderer's Lane-1 ``deriveSteps`` fill in the call tree. This keeps
+the skill's authoring cost flat: one pass to write the ordered, grouped index,
+hand-authored ``steps`` only for the few hero scenarios a Learn screen links to.
 """
 
 from __future__ import annotations
@@ -65,10 +74,14 @@ def load(cfg: Config) -> list[dict]:
         if not isinstance(sid, str) or not sid.strip() or not isinstance(title, str) or not title.strip():
             continue
         steps = sc.get("steps")
-        if not isinstance(steps, list) or not steps:
-            continue
-        clean_steps = [s for s in (_clean_step(st) for st in steps) if s is not None]
-        if not clean_steps:
+        clean_steps = (
+            [s for s in (_clean_step(st) for st in steps) if s is not None]
+            if isinstance(steps, list) else []
+        )
+        root = sc.get("root")
+        has_root = isinstance(root, str) and bool(root.strip())
+        # keepable with usable steps OR a root the renderer can derive from
+        if not clean_steps and not has_root:
             continue
         trigger = sc.get("trigger") if isinstance(sc.get("trigger"), dict) else {}
         surface = trigger.get("surface")
@@ -82,9 +95,21 @@ def load(cfg: Config) -> list[dict]:
             "steps": clean_steps,
             "source": "authored",
         }
-        root = sc.get("root")
-        if isinstance(root, str) and root.strip():
+        if has_root:
             entry["root"] = root.strip()
+        # curriculum metadata — the Simulate rail groups by `group` and orders
+        # ascending by `order`; `summary` is the one-line "what you'll learn"
+        group = sc.get("group")
+        if isinstance(group, str) and group.strip():
+            entry["group"] = group.strip()
+        order = sc.get("order")
+        if isinstance(order, bool):
+            order = None  # bool is an int subclass — never a position
+        if isinstance(order, (int, float)):
+            entry["order"] = int(order)
+        summary = sc.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            entry["summary"] = summary.strip()
         out.append(entry)
     return out
 
