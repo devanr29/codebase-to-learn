@@ -1,68 +1,40 @@
 # Content philosophy
 
-Read this before writing any module. Condensed from the upstream
-`codebase-to-course` skill, retargeted at `learn.json`.
+Read this before writing `libraries.json`, `explanations.json` or the `summary`
+lines in `scenarios.json`. Every reader is a **vibe coder** — no CS background,
+here to acquire the vocabulary and judgement to steer AI tools.
 
-## Show, don't tell — aggressively visual
+## Write for someone who's never heard of it
 
-- **Max 2–3 sentences per `body`.** A fourth sentence means you should have used
-  a visual (a `translation` block, a `callout`, or a `nodes` link list).
-- Every screen at least 50% visual weight.
-- 3+ related items → don't list them in prose; make them separate screens or a
-  `nodes` list.
-- Explaining code → a `translation` block, never a paragraph *about* the code.
+- A `general` line explains the *package*, not this repo: "Graphs as data —
+  build nodes and edges, then run algorithms." Someone should be able to read it
+  with zero context and know whether it matters to them.
+- A `here` / `what` line is the opposite: ruthlessly specific to this codebase.
+  Name the real modules and functions. If the sentence would read the same for
+  any project using that library, it's not a `here` line.
 
-## Code-to-English translations
+## Two or three sentences, then stop
 
-The single most valuable teaching tool. Left = real code, right = one plain
-line per 1–2 code lines, conversational, explaining the *why* not the *what*.
+- `general`, `here`, `what`: 2–3 plain sentences each. A fourth sentence means
+  you're explaining two things — split them or cut one.
+- No jargon without an inline gloss. "A **flag** is an option on a command."
+  Everyday dev jargon counts: REPL, CLI, entry point, PATH, namespace, WSGI,
+  ORM, ASGI, decorator. Every acronym on first use. **The vocabulary is the
+  learning.** (Don't gloss terms the reader owns from their own domain.)
 
-- **Never modify the code.** No trimming, no simplifying, no "cleaning up". The
-  learner must be able to open the real file and see the same lines. Instead,
-  *choose* a naturally short, punchy 5–10 line snippet from the brief.
-- Keep lines short — the panel wraps, and horizontal scrolling kills it.
+## Anchor in what they did
 
-## One concept per screen
+Prefer "you ran `codemap explore` — this is the package that parses your files"
+over "tree-sitter is an incremental parsing library." Tie the abstract thing to
+an action they've taken with the software.
 
-If you need more room, add a screen. Never cram two ideas together.
+## Never touch the code
 
-## Metaphors first, then reality
+`see` keys and the symbols you cite must be real. Don't invent a call site, a
+function name, or a file path — the reader will open the file and check.
 
-Open with a metaphor, then "in this codebase, that looks like…". The metaphor
-must feel *inevitable* for the concept, not decorative.
+## Cover everything, rank nothing
 
-- **Never reuse a metaphor across modules.**
-- **Never use the restaurant / kitchen metaphor.** It's overused.
-- Good ones: a library card catalog (an index), a bouncer checking IDs (auth),
-  an air-traffic controller (an event loop), a postal system (message passing),
-  a nightclub at capacity (rate limiting).
-
-## Learn by tracing
-
-Anchor each module in something the learner already experienced by *using* the
-software. "You know that button you click? Here's where the data goes after."
-
-## Glossary — no term left behind
-
-If there's a 1% chance a non-technical person doesn't know a word, add a
-`glossary` entry. Tooltip: software names, everyday dev jargon (REPL, JSON,
-flag, CLI, entry point, PATH, namespace), programming concepts (function,
-class, module, dictionary), and every acronym on first use.
-
-Each definition should teach the term well enough to *use it in an AI prompt*:
-"A **flag** is an option on a command. You'd tell the AI: 'add a flag for
-verbose output.'" **The vocabulary is the learning.**
-
-Don't tooltip terms the learner already owns from their own domain (e.g. ML
-terms for someone who does ML).
-
-## Quizzes test application, not memory
-
-Ranked best to worst: (1) "what would you do?" scenarios, (2) debugging
-scenarios, (3) architecture-decision questions, (4) tracing exercises.
-
-**Never quiz:** definitions, which-file-does-X, syntax, or anything answerable
-by scrolling up. That tests scrolling, not understanding.
-
-Tone: encouraging on wrong answers; the `wrong` text must teach something new,
-not scold. No scores, no "you got 3/5".
+The Dependency reference and the Scenario index are the scope. Don't hand-pick
+"the interesting five" — a newcomer doesn't know which five those are yet. A
+one-line `general` for a boring dependency still saves them a web search.

@@ -1,9 +1,9 @@
 # `.codemap/explanations.json` schema
 
 `codemap/site/explain.py` loads and validates this file. It is the **inspector**
-companion to `learn.json`: where `learn.json` builds the guided Learn tab,
-`explanations.json` attaches a one-line plain-English blurb to individual symbols
-in the **Graph** tab's right-hand inspector.
+companion to `libraries.json`: where `libraries.json` fills the Learn tab's
+library / module reference, `explanations.json` attaches a one-line plain-English
+blurb to individual symbols in the **Graph** tab's right-hand inspector.
 
 A missing or malformed file is **not an error** — the inspector just shows no
 blurb for that symbol. Invalid JSON, `symbols` not an object, or an entry with no

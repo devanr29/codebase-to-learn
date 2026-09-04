@@ -339,10 +339,12 @@ the primary way to *read* the repository. Three tabs sharing one hash router:
   inspector (fan-in/out, blast radius, entry path, source excerpt, the file's
   third-party / built-in / internal imports, and a "what this does" blurb from
   `.codemap/explanations.json` when present).
-- **Learn** — renders `.codemap/learn.json` when present (authored by the
-  repo-root `SKILL.md` skill), else a deterministic Orientation built from the
-  graph alone. Both `learn.json` and `explanations.json` are optional and fall
-  back silently.
+- **Learn** — a library / module reference: every imported package (third-party
+  + stdlib) and every top-level repo module, with what it does in general and
+  its job in this codebase. Prose comes from `.codemap/libraries.json` (authored
+  by the repo-root `SKILL.md` skill) over a bundled table of common-library
+  one-liners; the import graph supplies the fallback (importers, call sites).
+  `libraries.json` and `explanations.json` are optional and fall back silently.
 - **Timeline** — newest-first commits with intent source, severity counts, the
   `report._pick_headline` change, its impact line, and a read-this-first jump
   into the Graph tab.
