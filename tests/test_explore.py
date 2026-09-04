@@ -239,6 +239,29 @@ def test_emit_brief_writes_overview_and_per_module(fixture_impact_repo, tmp_path
     assert "Entry points" in body and "build_report" in body
 
 
+def test_emit_brief_dependency_reference(fixture_impact_repo, tmp_path):
+    """--emit-brief lists every import dependency + repo module as a
+    libraries.json candidate, and writes libraries-derived.json with importers
+    and call-site `see` keys."""
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    data = model.build(conn, cfg)
+    cfg2 = config.load(fixture_impact_repo.path)
+    cfg2.codemap_dir.mkdir(exist_ok=True)
+    brief.emit(conn, cfg2, data)
+
+    body = (cfg2.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
+    assert "Dependency reference" in body and "libraries.json" in body
+    assert "This repo's modules" in body and "`svc`" in body      # the fixture's one module
+
+    ld = json.loads((cfg2.codemap_dir / "briefs" / "libraries-derived.json").read_text(encoding="utf-8"))
+    assert "svc" in ld["items"]
+    svc = ld["items"]["svc"]
+    assert svc["scope"] == "internal" and svc["kind"] == "module"
+    assert isinstance(svc["see"], list)
+    # internal module `see` prefers its entry points (report_view / main)
+    assert any(k.startswith("svc/") for k in svc["see"])
+
+
 def test_emit_brief_scenario_index_orders_entry_points_by_workflow(fixture_impact_repo, tmp_path):
     """The impact fixture has an `@app.get("/report")` route and a `__main__`
     entry. `scenarios-derived.json` should carry every entry point as a

@@ -1,9 +1,10 @@
 """``codemap explore --emit-brief`` — a deterministic analysis pack for the
 course-authoring skill (repo-root ``SKILL.md``).
 
-The skill reads these briefs and writes ``.codemap/learn.json``; it never has to
-re-read the repository, because every code snippet a module needs is
-pre-extracted here verbatim with its ``file (lines a-b)`` header. Mirrors the
+The skill reads these briefs and writes ``.codemap/libraries.json``,
+``.codemap/explanations.json`` and ``.codemap/scenarios.json``; it never has to
+re-read the repository, because every code snippet it needs is pre-extracted
+here verbatim with its ``file (lines a-b)`` header. Mirrors the
 ``module-brief-template.md`` idea from the upstream ``codebase-to-course`` skill.
 """
 
@@ -150,6 +151,61 @@ def _emit_scenarios_derived(briefs_dir, data: dict, written: list[str]) -> list[
     return candidates
 
 
+def _call_sites_in_files(data: dict, paths: set[str], limit: int) -> list[str]:
+    """The busiest symbols (by fan-out — they're the ones making calls) that live
+    in ``paths``. A cheap proxy for "the code that actually uses this import"."""
+    nodes = data["nodes"]
+    hits = [n for n in nodes if n["file"] in paths]
+    hits.sort(key=lambda n: (-n["fan_out"], -n["fan_in"], n["qual"]))
+    return [n["key"] for n in hits[:limit]]
+
+
+def _library_candidates(data: dict) -> list[dict]:
+    """Every import dependency (third-party + stdlib) and every top-level repo
+    module as a Learn-tab reference candidate, each with its importing files and
+    the call-site symbol keys worth annotating. Nothing is capped."""
+    nodes = data["nodes"]
+    ep_by_module: dict[str, list[str]] = {}
+    for ep in data["entry_points"]:
+        i = ep.get("node")
+        if i is not None:
+            ep_by_module.setdefault(nodes[i]["module"], []).append(nodes[i]["key"])
+
+    out: list[dict] = []
+    for d in data["dependencies"]:
+        importers = list(d.get("importers", []))
+        out.append({
+            "name": d["name"], "kind": d["kind"], "scope": "external",
+            "importers": importers,
+            "see": _call_sites_in_files(data, set(importers), 4),
+        })
+    for m in data["modules"]:
+        paths = {f["path"] for f in data["files"] if f["fi"] in m["files"]}
+        see = ep_by_module.get(m["name"], [])[:4] or _call_sites_in_files(data, paths, 4)
+        out.append({
+            "name": m["name"], "kind": "module", "scope": "internal",
+            "files": len(m["files"]), "symbols": m["symbol_count"],
+            "entry_points": ep_by_module.get(m["name"], []),
+            "see": see,
+        })
+    return out
+
+
+def _emit_libraries_derived(briefs_dir, data: dict, written: list[str]) -> list[dict]:
+    """``.codemap/briefs/libraries-derived.json`` — the import-graph half of the
+    Learn-tab reference (every dependency + module, its importers, its call
+    sites) for the skill to annotate with ``general`` / ``here`` prose. Returns
+    the candidate list so the overview can list the same set."""
+    import json as _json
+
+    candidates = _library_candidates(data)
+    items = {c["name"]: {k: v for k, v in c.items() if k != "name"} for c in candidates}
+    path = briefs_dir / "libraries-derived.json"
+    path.write_text(_json.dumps({"items": items}, indent=2), encoding="utf-8")
+    written.append(str(path))
+    return candidates
+
+
 def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     briefs_dir = cfg.codemap_dir / "briefs"
     briefs_dir.mkdir(parents=True, exist_ok=True)
@@ -160,8 +216,8 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     modules = data["modules"]
     written: list[str] = []
 
-    # scenario candidates first — the overview lists them, the JSON carries the
-    # hero step trees
+    # derived JSON packs first — the overview lists the same candidate sets
+    library_candidates = _emit_libraries_derived(briefs_dir, data, written)
     scenario_candidates = _emit_scenarios_derived(briefs_dir, data, written)
 
     # ---- 00-overview -------------------------------------------------
@@ -187,6 +243,23 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     for n in hot:
         ov.append(f"- `{n['qual']}` ({n['file']}) — {n['fan_in']} callers, {n['churn']} changes")
     ov.append("")
+    ov.append("## Dependency reference (candidates for `libraries.json`)")
+    ov.append("The Learn tab is a library / module reference. Cover **every** "
+              "entry below: write a `general` line (what it is, for someone who's "
+              "never used it — skip for obvious stdlib) and a `here` line (its "
+              "concrete job in this repo). `libraries-derived.json` carries the "
+              "importers + call-site `see` keys — annotate that.")
+    ov.append("")
+    ext = [c for c in library_candidates if c["scope"] == "external"]
+    ov.append(f"- **External packages** ({len(ext)})")
+    for c in ext:
+        imp = ", ".join(f"`{p}`" for p in c["importers"][:6]) or "—"
+        ov.append(f"  - `{c['name']}` [{c['kind']}] — imported by {imp}")
+    ov.append("- **This repo's modules**")
+    for c in (c for c in library_candidates if c["scope"] == "internal"):
+        eps = f", {len(c['entry_points'])} entry points" if c["entry_points"] else ""
+        ov.append(f"  - `{c['name']}` — {c['files']} files, {c['symbols']} symbols{eps}")
+    ov.append("")
     ov.append("## Scenario index (candidates for `scenarios.json`)")
     if scenario_candidates:
         ov.append("Every entry point below is a candidate Simulate scenario. Ship "
@@ -211,10 +284,10 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
                   "the busiest-symbol fallback the Simulate tab uses on its own.")
     ov.append("")
     ov.append("## What to produce")
-    ov.append("1. `.codemap/learn.json` — the Learn-tab course. Follow "
-              "`references/learn-schema.md`; design 4–6 modules per `SKILL.md`; "
-              "every screen ≥50% visual, every technical term tooltipped, quizzes "
-              "test application not recall.")
+    ov.append("1. `.codemap/libraries.json` — the Learn tab's library / module "
+              "reference. Follow `references/libraries-schema.md`. Annotate every "
+              "entry from the **Dependency reference** above with `general` + "
+              "`here` (+ optional `see` keys); start from `libraries-derived.json`.")
     ov.append("2. `.codemap/explanations.json` — one plain-English `what` line per "
               "symbol, shown in the Graph inspector. Follow "
               "`references/explanations-schema.md`. Key every entry by the symbol "
@@ -275,19 +348,18 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
             lines.append(n["excerpt"])
             lines.append("```")
         lines.append("")
-        lines.append("## Interactive elements checklist")
-        lines.append("- [ ] Code↔English translation (pick from the snippets above)")
-        lines.append("- [ ] Quiz — 3–5 questions, scenario / debugging / tracing style")
-        lines.append("- [ ] Call-path replay or trace exercise (use a real entry path)")
-        lines.append("- [ ] Glossary tooltips on every technical term, first use")
+        lines.append("## Checklist for this module")
+        lines.append(f"- [ ] `libraries.json` — `here` line for `{name}` naming these symbols")
+        lines.append("- [ ] `libraries.json` — every third-party / stdlib import this "
+                     "module uses (see **Talks to** and the per-file imports)")
         lines.append("- [ ] `explanations.json` — a `what` line for every snippet key above")
         lines.append("")
         lines.append("## Reference files to read")
         lines.append("- `references/content-philosophy.md` — always")
         lines.append("- `references/gotchas.md` — always")
-        lines.append("- `references/interactive-elements.md` — the sections you use")
-        lines.append("- `references/learn-schema.md` — for `learn.json`")
+        lines.append("- `references/libraries-schema.md` — for `libraries.json`")
         lines.append("- `references/explanations-schema.md` — for `explanations.json`")
+        lines.append("- `references/scenarios-schema.md` — for `scenarios.json`")
         _write(briefs_dir / f"{i:02d}-{_slug(name)}.md", lines, written)
 
     return written
