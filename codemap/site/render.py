@@ -28,6 +28,7 @@ def render(data: dict) -> str:
     shell = _asset("shell.html")
     css = _asset("explore.css")
     js = _asset("explore.js")
+    icons_css = _asset("phosphor-icons.css")
 
     payload = json.dumps(data, separators=(",", ":"), sort_keys=True)
     # every '<' in valid JSON is inside a string literal, so a unicode escape is
@@ -35,7 +36,8 @@ def render(data: dict) -> str:
     payload = payload.replace("<", "\\u003c")
 
     return (
-        shell.replace("/*{{CSS}}*/", css)
+        shell.replace("/*{{ICONS_CSS}}*/", icons_css)
+        .replace("/*{{CSS}}*/", css)
         .replace("/*{{JS}}*/", js)
         .replace("{{TITLE}}", _escape(_title(data)))
         .replace("{{DATA}}", payload)

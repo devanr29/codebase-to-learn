@@ -133,12 +133,17 @@ button { font-family: inherit; }
   font-size: 11px; color: var(--color-neutral-500);
 }
 .topbar .stat b { font-family: var(--font-mono); color: var(--color-text); font-weight: 500; }
-/* the brand mark, 4 tabs and 4 stat counters don't fit a phone-width topbar
+/* the brand mark, 5 tabs and 4 stat counters don't fit a phone-width topbar
    with no wrap and no scroll — at 320-375px this clipped Learn and Timeline
    off the edge entirely, with no way to reach either tab. The counters are
    the least essential thing here (they're repeated in the rail's footer),
-   so they're what gives way; the tabs — actual navigation — never should. */
-@media (max-width: 560px) {
+   so they're what gives way; the tabs — actual navigation — never should.
+   560px was tuned back when there were 4 tabs; a 5th (Map) pushed the real
+   required width to ~825-860px (it grows with the repo's stat digit counts),
+   so anything from ~561-860px — a common tablet-portrait/split-screen band —
+   still overflowed the whole page horizontally with the old threshold. Reuse
+   the 900px breakpoint already used elsewhere in this file for "tablet". */
+@media (max-width: 900px) {
   .topbar .stat, .brand .ver { display: none; }
 }
 @media (max-width: 400px) {
@@ -661,9 +666,13 @@ button { font-family: inherit; }
 /* ── map tab: structure views ────────────────────────────────── */
 .map { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .map-bar {
-  height: var(--bar-h); flex: none;
-  display: flex; align-items: center; gap: 10px;
-  padding: 0 14px; border-bottom: 1px solid var(--color-divider);
+  min-height: var(--bar-h); flex: none;
+  /* Run trace's root picker (up to 340px, see .map-select) + the Simulate
+     pill + stepper don't fit next to the view switcher on a phone-width
+     screen — wrap instead of pushing the whole page into horizontal scroll.
+     min-height (not a fixed height) lets the bar grow to a second line. */
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px; row-gap: 6px;
+  padding: 8px 14px; border-bottom: 1px solid var(--color-divider);
 }
 .map-bar .spacer { margin-left: auto; }
 .map-body { flex: 1; min-height: 0; position: relative; }

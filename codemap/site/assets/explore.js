@@ -2715,7 +2715,10 @@
 
   function narrationPane(st) {
     var box = el("div", { class: "sim-narr", "aria-live": "polite" });
-    box.appendChild(el("div", { class: "sim-narr-row user" }, [el("i", { class: "ph ph-user-fill" }), st.user || "—"]));
+    // ph-user-fill isn't a real Phosphor icon (the filled variant is a
+    // separate style class, not a name suffix — see ph-fill ph-circle
+    // just above) so this always rendered a blank glyph, network or not.
+    box.appendChild(el("div", { class: "sim-narr-row user" }, [el("i", { class: "ph-fill ph-user" }), st.user || "—"]));
     box.appendChild(el("div", { class: "sim-narr-row code" }, [el("i", { class: "ph ph-gear-fine" }), st.code || "—"]));
     if (st.cond)
       box.appendChild(el("div", { class: "sim-narr-cond" },
@@ -3514,7 +3517,11 @@
       railNode.classList.toggle("open", state.mobileRail);
       inspNode.classList.toggle("open", state.mobileInsp);
       var mobileOpen = state.mobileRail || state.mobileInsp;
+      // el() auto-grants this div a button role + tab stop (it has on.click),
+      // but with no text of its own that left it an unlabeled "button" for a
+      // screen reader — give it a name, same as the rail's own close button.
       var backdrop = el("div", { class: "mobile-backdrop" + (mobileOpen ? " show" : ""),
+        "aria-label": "Close panel",
         on: { click: function () { state.mobileRail = false; state.mobileInsp = false; render(); } } });
       frag.appendChild(el("main", { class: "view" }, [railNode, stage(), inspNode, backdrop]));
     } else if (state.tab === "map")

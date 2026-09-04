@@ -357,6 +357,11 @@ Milestones:
 - **M11** — `site/render.py` + the frozen `site/assets/{shell.html,explore.css,
   explore.js}`, the `explore` subcommand. Assets are hand-authored once and
   never regenerated; all variation flows through the inlined JSON.
+  `site/assets/phosphor-icons.css` is the exception: a vendored, generated
+  asset (pinned Phosphor Icons v2.1.1, base64 woff2, trimmed to the glyphs
+  `explore.js` actually references) so icons render without depending on
+  `unpkg.com` being reachable — regenerate it with a fresh grep of `explore.js`
+  for `ph-*`/`ph-fill ph-*` classes whenever a new icon is added there.
 - **M12** — the Timeline tab; fold the impact/headline data into the model.
 - **M13** — `site/brief.py` (`--emit-brief`), `site/learn.py`, the Orientation
   fallback, and the ported interactive components (translation blocks, quizzes,

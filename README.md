@@ -106,8 +106,12 @@ index — no server, no build step, opens with a double-click. Five tabs:
 - **Timeline** — every commit with its stated intent, severity counts, headline
   change and blast radius, linking back into the graph.
 
-Fonts (Inter) and icons (Phosphor) load from a CDN; offline, the page degrades
-to a system font and keeps working. The `[explore]` config controls
+Icons (Phosphor) are vendored into the page itself — no CDN, so they render
+the same whether you're offline or on a network that blocks arbitrary CDNs
+(this was previously a real bug: the icon stylesheet hung forever behind a
+blocked `unpkg.com`, leaving every icon-only button blank with no fallback).
+The body font (Inter) still loads from Google Fonts; offline or blocked, it
+degrades to a system font and keeps working. The `[explore]` config controls
 `rebuild_on_commit` (default true — the hook refreshes the page after each
 commit), `max_symbols` and `max_snippet_lines`.
 
