@@ -478,6 +478,7 @@
     simSpeed: 1,          // Simulate: playback speed multiplier — one of SIM_SPEEDS below
     simCollapsed: { stage: false, flow: false, log: false, source: false },  // Simulate: per-pane hide toggle
     simLayout: { leftW: null, stageH: null, logH: null },  // Simulate: px overrides once a splitter is dragged, else CSS default
+    simSolo: null,        // Simulate: pane key ("stage"/"flow"/"log"/"source") shown full-bleed, else null — dbl-click a pane header
   };
 
   // ---- routing ---------------------------------------------------
@@ -2662,16 +2663,32 @@
       return row;
     });
     m.logCrumb = crumb;
+    m.logScrollEl = scroll;
     m.curLogRow = null;
     return el("div", { class: "sim-loglist" }, [crumb, scroll]);
+  }
+  // keep the current row visible *within the log's own scroller* — never
+  // Element.scrollIntoView(), which walks up and scrolls .sim-pane-body /
+  // .sim-body too, dragging the pinned breadcrumb and the whole Simulate
+  // body along with it.
+  function scrollLogRowIntoView(scroll, row) {
+    if (!scroll || !row) return;   // .sim-log-scroll is position:relative, so offsetTop is scroller-local
+    var pad = 8, top = row.offsetTop, bot = top + row.offsetHeight;
+    if (top < scroll.scrollTop + pad) scroll.scrollTop = Math.max(0, top - pad);
+    else if (bot > scroll.scrollTop + scroll.clientHeight - pad)
+      scroll.scrollTop = bot - scroll.clientHeight + pad;
   }
   function paintTraceLog(m, i) {
     if (!m.logRows) return;
     if (m.curLogRow) m.curLogRow.classList.remove("cur");
     var row = m.logRows[i];
-    if (row) { row.classList.add("cur"); row.scrollIntoView({ block: "nearest" }); }
+    // update the crumb first — it can reflow (a deeper stack is a longer line),
+    // and scrollLogRowIntoView must measure the log scroller *after* that
+    var crumb = traceLogCrumb(m.steps[i] && m.steps[i].stack);
+    m.logCrumb.textContent = crumb;
+    m.logCrumb.title = crumb;
+    if (row) { row.classList.add("cur"); scrollLogRowIntoView(m.logScrollEl, row); }
     m.curLogRow = row || null;
-    m.logCrumb.textContent = traceLogCrumb(m.steps[i] && m.steps[i].stack);
   }
 
   function sourcePane(n, activeLine) {
@@ -2720,7 +2737,9 @@
       if (em && em.surface === "terminal")
         body.appendChild(el("div", { class: "sim-term-line" + (em.stream === "stderr" ? " err" : ""), text: em.text }));
     }
-    var done = i === steps.length - 1 && steps[i].depth === 0 && steps[i].t !== "call";
+    // steps use a 1-based depth (root call = 1); "done" = last step, back at the
+    // root frame, and not still entering a call
+    var done = i === steps.length - 1 && steps[i].depth <= 1 && steps[i].t !== "call";
     if (!done) body.appendChild(el("span", { class: "sim-term-cursor" }));
     box.appendChild(body);
     return box;
@@ -2931,12 +2950,26 @@
       on: { click: function () { state.simCollapsed[key] = !state.simCollapsed[key]; applyPaneChrome(); } } },
       [el("i", { class: "ph " + (collapsed ? "ph-caret-down" : "ph-caret-up") })]);
   }
+  // ⤢ maximise: same effect as double-clicking the pane header — the pane fills
+  // the panes area and the other three (plus every splitter) hide. A second
+  // press, another double-click, or Esc restores the four-pane layout.
+  function simPaneSoloBtn(key) {
+    var on = state.simSolo === key;
+    return el("button", { class: "sim-pane-solo", "aria-pressed": on ? "true" : "false",
+      title: "Double-click the header to maximise",
+      "aria-label": (on ? "Restore " : "Maximise ") + SIM_PANE_TITLE[key] + " pane",
+      on: { click: function () { toggleSimSolo(key); } } },
+      [el("i", { class: "ph " + (on ? "ph-corners-in" : "ph-corners-out") })]);
+  }
   function simPaneWrap(key, bodyEl) {
-    var hd = el("div", { class: "sim-pane-hd" }, [
+    var hd = el("div", { class: "sim-pane-hd",
+      on: { dblclick: function (ev) { if (!ev.target.closest("button")) toggleSimSolo(key); } } }, [
       el("span", { class: "sim-pane-title", text: SIM_PANE_TITLE[key] }),
+      simPaneSoloBtn(key),
       simPaneToggle(key),
     ]);
-    var wrap = el("div", { class: "sim-pane sim-pane-" + key + (state.simCollapsed[key] ? " collapsed" : "") },
+    var wrap = el("div", { class: "sim-pane sim-pane-" + key +
+      (state.simCollapsed[key] ? " collapsed" : "") + (state.simSolo === key ? " solo" : "") },
       [hd, el("div", { class: "sim-pane-body" }, [bodyEl])]);
     return { wrap: wrap, hd: hd };
   }
@@ -2949,6 +2982,38 @@
       var btn = pw.hd.querySelector(".sim-pane-toggle"), icon = btn && btn.querySelector("i");
       if (btn) btn.setAttribute("aria-label", (collapsed ? "Show " : "Hide ") + SIM_PANE_TITLE[key]);
       if (icon) icon.setAttribute("class", "ph " + (collapsed ? "ph-caret-down" : "ph-caret-up"));
+    });
+  }
+  // Solo: one pane full-bleed. `data-solo` on .sim-panes + `.solo` on the pane
+  // + `.has-solo` on its column drive the CSS; sizes/collapsed state are left
+  // untouched so restoring is exact. Persisted in state.simSolo, like collapse.
+  function toggleSimSolo(key) {
+    state.simSolo = state.simSolo === key ? null : key;
+    if (state.simSolo && state.simCollapsed[key]) {
+      state.simCollapsed[key] = false;   // can't focus a pane that's collapsed to its header
+      applyPaneChrome();
+    }
+    applySimSolo();
+  }
+  function applySimSolo() {
+    var m = simMount;
+    if (!m || !m.paneWraps || !m.panesRow) return;
+    var solo = state.simSolo;
+    if (solo && !m.paneWraps[solo]) solo = state.simSolo = null;
+    if (solo) m.panesRow.setAttribute("data-solo", solo);
+    else m.panesRow.removeAttribute("data-solo");
+    [m.leftCol, m.rightCol].forEach(function (col) {
+      if (col) col.classList.toggle("has-solo", !!solo && col.contains(m.paneWraps[solo].wrap));
+    });
+    Object.keys(m.paneWraps).forEach(function (key) {
+      var pw = m.paneWraps[key], on = key === solo;
+      pw.wrap.classList.toggle("solo", on);
+      var btn = pw.hd.querySelector(".sim-pane-solo"), icon = btn && btn.querySelector("i");
+      if (btn) {
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        btn.setAttribute("aria-label", (on ? "Restore " : "Maximise ") + SIM_PANE_TITLE[key] + " pane");
+      }
+      if (icon) icon.setAttribute("class", "ph " + (on ? "ph-corners-in" : "ph-corners-out"));
     });
   }
   function wireVSplitter(grip, leftEl, rowEl) {
@@ -3063,8 +3128,11 @@
   }
   document.addEventListener("keydown", function (e) {
     if (state.tab !== "sim" || !simMount) return;
+    if (e.key === "Escape" && state.simSolo) { e.preventDefault(); state.simSolo = null; applySimSolo(); return; }
     var tag = (e.target && e.target.tagName || "").toLowerCase();
-    if (tag === "input" || tag === "textarea") return;
+    // a focused control handles its own keys — Space on a transport button
+    // would otherwise both click it and toggle play (double-action)
+    if (tag === "input" || tag === "textarea" || tag === "button" || tag === "select") return;
     if (e.key === " ") { e.preventDefault(); state.simPlaying ? simPause() : simPlay(); }
     else if (e.key === "ArrowRight" || e.key === ".") { e.preventDefault(); simSetStep(state.simStep + 1); }
     else if (e.key === "ArrowLeft" || e.key === ",") { e.preventDefault(); simSetStep(state.simStep - 1); }
@@ -3124,12 +3192,14 @@
 
     simMount = { sc: sc, steps: steps, layout: layout, flow: flow,
       stageBox: stageBox, logBox: logBox, sourceBox: sourceBox, narrBox: narrBox,
+      leftCol: leftCol, rightCol: rightCol, panesRow: panesRow,
       paneWraps: { stage: stagePane, flow: flowPane, log: logPane_, source: sourcePane_ } };
     logBox.appendChild(buildTraceLog(simMount));   // built once; paintTraceLog re-marks the current row
     simMount.transport = buildTransport(simMount);
     transportBox.appendChild(simMount.transport.box);
 
     paintSimStep(i, false);
+    applySimSolo();   // re-apply a solo pane picked before this scenario switch
 
     return el("div", { class: "sim" }, [
       simRail(),

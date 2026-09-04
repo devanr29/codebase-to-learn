@@ -951,20 +951,37 @@ button { font-family: inherit; }
   padding: 6px 10px; border-bottom: 1px solid var(--color-divider);
 }
 .sim-pane-title { flex: 1; font: 500 9.5px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); }
-.sim-pane-toggle {
+.sim-pane-hd { user-select: none; }   /* double-click to solo shouldn't select the title text */
+.sim-pane-toggle, .sim-pane-solo {
   width: 20px; height: 20px; flex: none; display: grid; place-items: center;
   border: 1px solid var(--color-neutral-800); border-radius: 5px;
   background: var(--color-surface-2); color: var(--color-neutral-500); cursor: pointer;
 }
-.sim-pane-toggle:hover { border-color: var(--color-accent); color: var(--color-accent-200); }
-.sim-pane-toggle i { font-size: 10.5px; }
+.sim-pane-toggle:hover, .sim-pane-solo:hover { border-color: var(--color-accent); color: var(--color-accent-200); }
+.sim-pane-toggle i, .sim-pane-solo i { font-size: 10.5px; }
+.sim-pane-solo[aria-pressed="true"] { border-color: var(--color-accent); color: var(--color-accent-200); background: var(--color-accent-900); }
+
+/* solo / maximise: one pane fills the panes area, the other three + every
+   splitter hide. Toggled by dbl-clicking a pane header, the ⤢ button, or Esc.
+   All sizes / collapse state are left intact so restoring is exact. */
+.sim-panes[data-solo] .sim-vsplit,
+.sim-panes[data-solo] .sim-hsplit { display: none; }
+.sim-panes[data-solo] > .sim-col:not(.has-solo) { display: none; }
+.sim-panes[data-solo] > .sim-col.has-solo {
+  flex: 1 1 100% !important; min-width: 0; max-width: none !important;
+}
+.sim-panes[data-solo] .sim-pane:not(.solo) { display: none; }
+.sim-panes[data-solo] .sim-pane.solo { flex: 1 1 100% !important; }
 .sim-pane-body { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
 
 .sim-stagebody { flex: 1; display: flex; min-height: 0; }
-.sim-flowbody { background: radial-gradient(120% 90% at 35% 20%, #1b1e2e 0%, #141622 55%, #101220 100%); }
+.sim-flowbody { flex: 1; min-height: 0; background: radial-gradient(120% 90% at 35% 20%, #1b1e2e 0%, #141622 55%, #101220 100%); }
 .sim-flowbody svg { display: block; }
-.sim-logbody { padding: 0; }
-.sim-sourcebody { display: flex; flex-direction: column; }
+/* flex column with a bounded height so .sim-loglist -> .sim-log-scroll can
+   own the scrollbar and .sim-log-crumb stays pinned (without this the whole
+   list grows to content and .sim-pane-body scrolls the crumb away). */
+.sim-logbody { padding: 0; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.sim-sourcebody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 
 /* trace log — full run as clickable history; `.cur` marks the step you're on,
    rows after it are dimmed until execution reaches them (single-class toggle,
@@ -973,9 +990,11 @@ button { font-family: inherit; }
 .sim-log-crumb {
   flex: none; padding: 6px 10px; border-bottom: 1px solid var(--color-divider);
   font: 400 10.5px/1.4 var(--font-mono); color: var(--color-neutral-500);
-  white-space: nowrap; overflow-x: auto;
+  /* ellipsis, not a scrollbar — a scrollbar here grew the crumb's own box and
+     reflowed (and mis-scrolled) the trace list under it. Full stack on hover. */
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.sim-log-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 5px 0; }
+.sim-log-scroll { position: relative; flex: 1; min-height: 0; overflow-y: auto; padding: 5px 0; }
 .sim-log-row {
   display: flex; align-items: baseline; gap: 7px; cursor: pointer;
   padding: 2px 10px 2px 0; font: 400 11px var(--font-mono); color: var(--color-neutral-400);
@@ -1128,6 +1147,9 @@ button { font-family: inherit; }
   .sim-vsplit { display: none; }   /* nothing left to resize horizontally once columns stack */
   .sim-pane { flex: none !important; height: 220px; }
   .sim-pane.collapsed { height: auto; }
+  /* solo on a stacked layout: hide the rest, let the one pane grow */
+  .sim-panes[data-solo] .sim-hsplit { display: none; }
+  .sim-panes[data-solo] .sim-pane.solo { height: auto !important; flex: 1 1 auto !important; min-height: 60vh; }
   /* the full transport (5 icon buttons + scrub + counter + speed slider)
      doesn't fit one row under ~420px — give the scrub its own row and let the
      rest wrap onto a second one instead of clipping past the viewport edge. */
