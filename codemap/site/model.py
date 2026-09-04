@@ -343,6 +343,13 @@ def build(
 
     course = _learn.load(cfg)
 
+    # -- authored library / module descriptions (optional) — the Learn tab is
+    #    a dependency reference; explore.js falls back to the import graph + a
+    #    bundled table of well-known-library blurbs when this is absent -----
+    from . import libraries as _libraries
+
+    libs = _libraries.load(cfg)
+
     # -- simulate scenarios (optional; Lane 1 is derived client-side) -----
     from . import simulate as _simulate
 
@@ -380,6 +387,7 @@ def build(
         "dependencies": dependencies,
         "timeline": timeline,
         "learn": course,
+        "libraries": libs,
         "sim": sim,
     }
     return out

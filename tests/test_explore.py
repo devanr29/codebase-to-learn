@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from codemap import cli, config, db, indexer
-from codemap.site import brief, explain, learn, model, render
+from codemap.site import brief, explain, learn, libraries, model, render
 
 
 def _idx(repo, tmp_path, until):
@@ -128,6 +128,46 @@ def test_learn_json_absent_then_valid(fixture_impact_repo, tmp_path):
     lf.write_text("{ not json", encoding="utf-8")
     assert learn.load(cfg) is None
     lf.unlink()
+
+
+def test_libraries_json_absent_invalid_then_valid(fixture_impact_repo, tmp_path):
+    cfg = config.load(fixture_impact_repo.path)
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    lf = cfg.codemap_dir / "libraries.json"
+    lf.unlink(missing_ok=True)
+    try:
+        assert libraries.load(cfg) is None                       # absent -> None
+
+        lf.write_text("{ not json", encoding="utf-8")
+        assert libraries.load(cfg) is None                       # malformed -> None
+
+        lf.write_text(json.dumps({"items": {
+            "networkx": {
+                "general": "  Graph data structures and algorithms.  ",
+                "here": "impact.py builds the call graph.",
+                "see": ["codemap/impact.py::call_graph", "", "  "],
+            },
+            "os": {"general": ""},                                # empty -> dropped
+            "bad": "not an object",                               # dropped
+            "codemap/site": {"here": "renders explore.html"},
+        }}), encoding="utf-8")
+
+        loaded = libraries.load(cfg)
+        assert set(loaded["items"]) == {"networkx", "codemap/site"}
+        nx = loaded["items"]["networkx"]
+        assert nx["general"] == "Graph data structures and algorithms."   # trimmed
+        assert nx["see"] == ["codemap/impact.py::call_graph"]             # blanks removed
+        assert "general" not in loaded["items"]["codemap/site"]
+    finally:
+        lf.unlink(missing_ok=True)
+
+
+def test_model_carries_libraries_key(fixture_impact_repo, tmp_path):
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    data = model.build(conn, cfg)
+    assert "libraries" in data                       # always present, None when unauthored
+    assert data["libraries"] is None or isinstance(data["libraries"], dict)
+    assert json.loads(json.dumps(data["libraries"])) == data["libraries"]
 
 
 def test_explanations_json_absent_invalid_then_valid(fixture_impact_repo, tmp_path):
