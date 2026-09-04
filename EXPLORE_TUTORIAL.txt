@@ -164,7 +164,10 @@ LEFT RAIL -- the scenario curriculum.
         record dot = recorded -- a real run captured with `codemap trace`
                      (real branches taken, real loop counts, real output).
 
-MAIN AREA -- four resizable, collapsible panes plus a narration line:
+MAIN AREA -- four resizable, collapsible panes plus a narration line.
+Drag the handle between two panes to resize; the caret button on a pane
+header collapses it; DOUBLE-CLICK a pane header (or its corners-out button)
+to maximise that one pane full-bleed -- Esc, or double-click again, restores.
     STAGE      the user's world -- a fake terminal / browser / API / file that
                fills in as output is produced.
     FLOW       the call graph for this run; the active function lights up, a
