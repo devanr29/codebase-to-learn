@@ -53,12 +53,12 @@ codemap = "codemap.cli:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["codemap"]
-
-[tool.hatch.build.targets.wheel.force-include]
-"codemap/schema.sql" = "codemap/schema.sql"
-"codemap/languages/queries" = "codemap/languages/queries"
-"codemap/hooks" = "codemap/hooks"
-"codemap/site/assets" = "codemap/site/assets"
+# The data files under codemap/ (schema.sql, languages/queries/*.scm,
+# hooks/post-commit, site/assets/*) are git-tracked inside the package, so
+# hatchling ships them via `packages` above. A force-include table listing
+# those same paths double-adds them and the wheel build aborts on the
+# collision (`A second file is being added ... at the same path`). Editable
+# installs never hit it, which is why -e installs and CI stayed green.
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
