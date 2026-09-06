@@ -1,5 +1,6 @@
 {
   "name": "codemap",
+  "version": "0.1.0",
   "description": "Skills for the codemap CLI: author the Learn/Graph/Simulate content that codemap explore bakes into explore.html, plus slash commands that wrap the scan/explore/explain workflow.",
   "author": {
     "name": "Devan Ramadhana",
