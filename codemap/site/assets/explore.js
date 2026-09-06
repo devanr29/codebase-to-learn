@@ -2473,8 +2473,11 @@
   function derivedScenario(rootI) {
     var id = "derive:" + N[rootI].key;
     if (!derivedCache[id])
+      // no `surface` here on purpose — resolveSurface() infers one from the
+      // root node's entry-point kind / file / excerpt instead of defaulting
+      // every derived scenario to a fake terminal.
       derivedCache[id] = { id: id, title: N[rootI].qual + " runs", source: "derived", root: rootI,
-        trigger: { surface: "terminal", text: N[rootI].qual } };
+        trigger: { text: N[rootI].qual } };
     return derivedCache[id];
   }
   var SIM_SCENARIOS = [];
@@ -2764,7 +2767,101 @@
     return box;
   }
 
-  function terminalStage(sc, steps, i) {
+  // ── adaptive Stage surface ──────────────────────────────────────────
+  // Which of the seven Stage renderers below a scenario gets is resolved
+  // once per scenario (cached on sc._surface — same pattern as sc._raw/
+  // sc._norm) rather than trusting `trigger.surface` alone: an authored
+  // scenario that set it always wins, but a *derived* scenario never sets
+  // it (derivedScenario() leaves it out on purpose), so most scenarios
+  // reach this ladder. Evidence, in order: an explicit trigger surface, the
+  // majority surface actually emitted, the root symbol's entry-point kind
+  // (route/task/cli/... — already computed server-side by entrypoints.py
+  // and carried on every node as `entry`), then a few content heuristics
+  // over that node's file path / excerpt. `terminal` is the final fallback,
+  // matching today's behaviour for anything unrecognised.
+  var SIM_ENTRY_SURFACE = { task: "job", cli: "terminal", script: "terminal", main: "terminal", docker: "terminal" };
+  var SIM_UI_FILE_RE = /\.(tsx|jsx|vue|svelte)$/i;
+  var SIM_UI_PATH_RE = /(^|\/)(components?|pages?|views?|ui|frontend)(\/|$)/i;
+  // deliberately NOT a bare `<Word>` sniff — that also matches a C `#include
+  // <stdio.h>`, a docstring placeholder like `<path>`, or `<redacted>`. Require
+  // either a real closing tag or an attribute (`=`) alongside the angle
+  // brackets, so only actual markup trips it.
+  var SIM_UI_EXCERPT_RE = /<\/[A-Za-z]|<[A-Za-z][\w.-]*\s+[\w-]+=|className=|useState\(|styled\./;
+  var SIM_DB_EXCERPT_RE = /\b(SELECT|INSERT INTO|UPDATE|DELETE FROM|BEGIN|COMMIT)\b|\bcursor\.|\.execute\(|session\.query/i;
+  var SIM_DB_PATH_RE = /(^|\/)(db|repository|dao|models?|queries|store)(\/|$)/i;
+  var SIM_JOB_EXCERPT_RE = /threading\.Thread|asyncio\.create_task|\.delay\(|\.apply_async\(/;
+  var SIM_JOB_NAME_RE = /(worker|task|job|queue|celery|cron)/i;
+  var SIM_RENDER_RE = /render_template|render\(|TemplateResponse|redirect\(/;
+  var SIM_API_RESP_RE = /jsonify|JSONResponse|res\.json|serialize/;
+  var SIM_WRITE_RE = /open\([^)]*["']w|\.write\(|\.write_text\(|to_csv|json\.dump/;
+  function simSurfaceFromContent(n) {
+    if (!n) return null;
+    var file = n.file || "", excerpt = n.excerpt || "", name = n.name || "";
+    if (SIM_UI_FILE_RE.test(file) || SIM_UI_PATH_RE.test(file) || SIM_UI_EXCERPT_RE.test(excerpt)) return "ui";
+    if (SIM_DB_EXCERPT_RE.test(excerpt) || SIM_DB_PATH_RE.test(file)) return "db";
+    if (SIM_JOB_EXCERPT_RE.test(excerpt) || SIM_JOB_NAME_RE.test(file) || SIM_JOB_NAME_RE.test(name)) return "job";
+    if (SIM_WRITE_RE.test(excerpt)) return "file";
+    return null;
+  }
+  function simSurfaceForRoute(n) {
+    var excerpt = n.excerpt || "";
+    if (SIM_API_RESP_RE.test(excerpt)) return "api";
+    var entry = (n.entry && n.entry[0]) || "";
+    var detail = entry.split(":").slice(1).join(":");     // "POST /tools/refresh-data/"
+    var path = detail.replace(/^\S+\s+/, "");              // strip the leading method
+    if (/^\/api(\/|$)/i.test(path)) return "api";
+    if (SIM_RENDER_RE.test(excerpt)) return "browser";
+    return "browser";   // a route with no stronger signal reads as a page, not raw JSON
+  }
+  function simSurfaceFromEntry(n) {
+    if (!n || !n.entry || !n.entry.length) return null;
+    for (var idx = 0; idx < n.entry.length; idx++) {
+      var kind = n.entry[idx].split(":")[0];
+      if (kind === "route" || kind === "controller") return simSurfaceForRoute(n);
+      if (SIM_ENTRY_SURFACE[kind]) return SIM_ENTRY_SURFACE[kind];
+    }
+    return null;
+  }
+  function simMajorityEmitSurface(steps) {
+    var counts = {}, best = null, bestN = 0;
+    steps.forEach(function (st) {
+      if (st.emit && st.emit.surface) {
+        var s = st.emit.surface;
+        counts[s] = (counts[s] || 0) + 1;
+        if (counts[s] > bestN) { best = s; bestN = counts[s]; }
+      }
+    });
+    return best;
+  }
+  function simRootNode(sc, steps) {
+    if (sc.root != null && N[sc.root]) return N[sc.root];
+    if (steps.length && N[steps[0].node]) return N[steps[0].node];
+    return null;
+  }
+  function resolveSurface(sc, steps) {
+    if (sc._surface) return sc._surface;
+    var surface = (sc.trigger && sc.trigger.surface) || simMajorityEmitSurface(steps);
+    if (!surface) {
+      var n = simRootNode(sc, steps);
+      surface = simSurfaceFromEntry(n) || simSurfaceFromContent(n) || "terminal";
+    }
+    sc._surface = surface;
+    return surface;
+  }
+  // An emit with no `surface` of its own (the common case — scenarios.py no
+  // longer coerces one) belongs to whatever the scenario resolved to.
+  function stepEmitSurface(st, fallback) {
+    return st.emit ? (st.emit.surface || fallback) : null;
+  }
+  function prettyMaybeJson(text) {
+    var t = text.trim();
+    if (t[0] === "{" || t[0] === "[") {
+      try { return JSON.stringify(JSON.parse(t), null, 2); } catch (e) { /* not JSON — show as-is */ }
+    }
+    return text;
+  }
+
+  function terminalStage(sc, steps, i, surface) {
     var box = el("div", { class: "sim-term" });
     box.appendChild(el("div", { class: "sim-term-hd" }, [
       el("span", { class: "sim-term-dot r" }), el("span", { class: "sim-term-dot y" }), el("span", { class: "sim-term-dot g" }),
@@ -2773,7 +2870,7 @@
     body.appendChild(el("div", { class: "sim-term-cmd", text: "$ " + ((sc.trigger && sc.trigger.text) || sc.title) }));
     for (var k = 0; k <= i; k++) {
       var em = steps[k].emit;
-      if (em && em.surface === "terminal")
+      if (em && stepEmitSurface(steps[k], surface) === "terminal")
         body.appendChild(el("div", { class: "sim-term-line" + (em.stream === "stderr" ? " err" : ""), text: em.text }));
     }
     // steps use a 1-based depth (root call = 1); "done" = last step, back at the
@@ -2783,51 +2880,156 @@
     box.appendChild(body);
     return box;
   }
-  function browserStage(sc, steps, i) {
+  function browserStage(sc, steps, i, surface) {
     var box = el("div", { class: "sim-browser" });
-    box.appendChild(el("div", { class: "sim-browser-bar" }, [
-      el("span", { class: "sim-browser-dot" }),
-      el("span", { class: "sim-browser-url", text: (sc.trigger && sc.trigger.text) || "" }),
-    ]));
+    var urlEl = el("span", { class: "sim-browser-url", text: (sc.trigger && sc.trigger.text) || "" });
+    box.appendChild(el("div", { class: "sim-browser-bar" }, [el("span", { class: "sim-browser-dot" }), urlEl]));
     var page = el("div", { class: "sim-browser-page" });
-    var blocks = 0;
-    for (var k = 0; k <= i; k++) if (steps[k].emit && steps[k].emit.surface === "browser") blocks++;
-    if (!blocks) page.appendChild(el("div", { class: "sim-browser-spinner" }));
-    for (var b = 0; b < Math.min(blocks, 6); b++) page.appendChild(el("div", { class: "sim-browser-block" }));
+    var lines = [];
+    for (var k = 0; k <= i; k++) {
+      var st = steps[k], em = st.emit;
+      if (em && stepEmitSurface(st, surface) === "browser") {
+        lines.push(em.text);
+        // a narrated redirect/navigation updates the URL bar so the page
+        // reflects where the browser actually ended up, not just where it started
+        var navigated = em.text.match(/(?:redirect(?:ed|s|ing)?|navigat\w*)\s+to\s+(\S+)/i);
+        if (navigated) urlEl.textContent = navigated[1].replace(/[.,;:]+$/, "");
+      }
+    }
+    if (!lines.length) {
+      var waiting = N[steps[i].node];
+      page.appendChild(el("div", { class: "sim-browser-spinner" }));
+      page.appendChild(el("div", { class: "sim-browser-wait",
+        text: "waiting on the server" + (waiting ? " — " + waiting.name + " is still running" : "") }));
+    } else {
+      lines.forEach(function (text) { page.appendChild(el("div", { class: "sim-browser-line", text: text })); });
+    }
     box.appendChild(page);
     return box;
   }
-  function apiStage(sc, steps, i) {
+  function apiStage(sc, steps, i, surface) {
     var box = el("div", { class: "sim-api" });
-    var req = null, res = null;
+    var triggerText = (sc.trigger && sc.trigger.text) || "";
+    var m = triggerText.match(/^([A-Z]+)\s+(\S+)/);
+    var method = m ? m[1] : "", path = m ? m[2] : triggerText;
+    box.appendChild(el("div", { class: "sim-api-head" }, [
+      method ? el("span", { class: "sim-api-method sim-api-method-" + method.toLowerCase(), text: method }) : null,
+      el("span", { class: "sim-api-path", text: path || "…" }),
+    ]));
+    var msgs = [];
     for (var k = 0; k <= i; k++) {
       var em = steps[k].emit;
-      if (em && em.surface === "api") { if (req == null) req = em.text; else res = em.text; }
+      if (em && stepEmitSurface(steps[k], surface) === "api") msgs.push(em.text);
     }
-    box.appendChild(el("div", { class: "sim-api-card" }, [el("div", { class: "sim-api-lbl", text: "REQUEST" }),
-      el("div", { class: "sim-api-body", text: req || "…" })]));
-    box.appendChild(el("div", { class: "sim-api-card" }, [el("div", { class: "sim-api-lbl", text: "RESPONSE" }),
-      el("div", { class: "sim-api-body", text: res || "…" })]));
+    if (!msgs.length) {
+      box.appendChild(el("div", { class: "sim-api-card" }, [el("div", { class: "sim-api-lbl", text: "REQUEST" }),
+        el("div", { class: "sim-api-body", text: triggerText || "…" })]));
+      box.appendChild(el("div", { class: "sim-api-card sim-api-pending" }, [el("div", { class: "sim-api-lbl", text: "RESPONSE" }),
+        el("div", { class: "sim-api-body", text: "waiting…" })]));
+    } else {
+      msgs.forEach(function (text, idx) {
+        var status = text.match(/\b([1-5])\d\d\b/);
+        var lbl = el("div", { class: "sim-api-lbl" }, [idx === 0 ? "REQUEST" : idx === 1 ? "RESPONSE" : "RESPONSE #" + idx]);
+        if (status) lbl.appendChild(el("span", { class: "sim-api-status sim-api-status-" + status[1] + "xx", text: status[0] }));
+        box.appendChild(el("div", { class: "sim-api-card" }, [lbl, el("div", { class: "sim-api-body", text: prettyMaybeJson(text) })]));
+      });
+    }
     return box;
   }
-  function fileStage(sc, steps, i) {
-    var box = el("div", { class: "sim-file" });
-    var bytes = 0, name = "";
+  function uiStage(sc, steps, i, surface) {
+    var box = el("div", { class: "sim-ui" });
+    var root = simRootNode(sc, steps);
+    box.appendChild(el("div", { class: "sim-ui-frame-hd", text: root ? (root.name || root.qual) : "UI" }));
+    var tree = el("div", { class: "sim-ui-tree" });
+    var mounted = {}, activeNode = steps[i].node;
+    for (var k = 0; k <= i; k++) {
+      var st = steps[k];
+      if (st.t !== "call" || mounted[st.node]) continue;
+      mounted[st.node] = true;
+      var n = N[st.node];
+      if (!n) continue;
+      var depth = Math.max(0, (st.depth || 1) - 1);
+      tree.appendChild(el("div", {
+        class: "sim-ui-chip" + (st.node === activeNode ? " active" : " mounted"),
+        style: "margin-left:" + (depth * 16) + "px",
+      }, [el("i", { class: "ph ph-caret-right" }), el("span", { text: n.name })]));
+    }
+    box.appendChild(tree);
+    var blocks = el("div", { class: "sim-ui-content" });
+    for (var j = 0; j <= i; j++) {
+      var em = steps[j].emit;
+      if (em && stepEmitSurface(steps[j], surface) === "ui") blocks.appendChild(el("div", { class: "sim-ui-block", text: em.text }));
+    }
+    if (blocks.childNodes.length) box.appendChild(blocks);
+    box.appendChild(el("div", { class: "sim-ui-footer", text: "mounting · step " + (i + 1) + " of " + steps.length }));
+    return box;
+  }
+  function jobStage(sc, steps, i, surface) {
+    var box = el("div", { class: "sim-job" });
+    var st = steps[i];
+    var done = i === steps.length - 1 && st.depth <= 1 && st.t !== "call";
+    var state = i === 0 ? "queued" : (done ? "done" : "running");
+    box.appendChild(el("div", { class: "sim-job-hd" }, [
+      el("span", { class: "sim-job-pill sim-job-pill-" + state, text: state }),
+      el("span", { class: "sim-job-title", text: (sc.trigger && sc.trigger.text) || sc.title }),
+    ]));
+    var log = el("div", { class: "sim-job-log" }), n = 0;
     for (var k = 0; k <= i; k++) {
       var em = steps[k].emit;
-      if (em && em.surface === "file") { bytes += em.text.length; if (!name) name = em.text.split(" ")[0]; }
+      if (em && stepEmitSurface(steps[k], surface) === "job") { log.appendChild(el("div", { class: "sim-job-line", text: em.text })); n++; }
     }
-    box.appendChild(el("i", { class: "ph ph-file-text sim-file-icon" }));
-    box.appendChild(el("div", { class: "sim-file-name", text: name || "…" }));
-    box.appendChild(el("div", { class: "sim-file-bytes", text: bytes + " bytes written" }));
+    if (!n) log.appendChild(el("div", { class: "sim-job-line pending", text: "working…" }));
+    box.appendChild(log);
+    box.appendChild(el("div", { class: "sim-job-footer", text: n + " log line" + (n === 1 ? "" : "s") + " · step " + (i + 1) + " of " + steps.length }));
+    return box;
+  }
+  function dbStage(sc, steps, i, surface) {
+    var box = el("div", { class: "sim-db" });
+    var list = el("div", { class: "sim-db-list" }), count = 0;
+    for (var k = 0; k <= i; k++) {
+      var em = steps[k].emit;
+      if (!(em && stepEmitSurface(steps[k], surface) === "db")) continue;
+      var text = em.text.trim();
+      if (/^(BEGIN|COMMIT|ROLLBACK)\b/i.test(text)) list.appendChild(el("div", { class: "sim-db-marker", text: "● " + text.toUpperCase() }));
+      else { list.appendChild(el("div", { class: "sim-db-stmt", text: text })); count++; }
+    }
+    if (!list.childNodes.length) list.appendChild(el("div", { class: "sim-db-stmt pending", text: "waiting on the database…" }));
+    box.appendChild(list);
+    box.appendChild(el("div", { class: "sim-db-footer", text: count + " statement" + (count === 1 ? "" : "s") }));
+    return box;
+  }
+  function fileStage(sc, steps, i, surface) {
+    var rows = [];
+    for (var k = 0; k <= i; k++) {
+      var em = steps[k].emit;
+      if (em && stepEmitSurface(steps[k], surface) === "file") rows.push(em.text);
+    }
+    if (!rows.length)
+      return el("div", { class: "sim-file sim-file-empty" }, [
+        el("i", { class: "ph ph-file-text sim-file-icon" }), el("div", { class: "sim-file-name", text: "…" }),
+      ]);
+    var box = el("div", { class: "sim-file" });
+    rows.forEach(function (text) {
+      var bytes = text.match(/[\d,._]*\d\s*(?:bytes|KB|MB|GB)\b/i);
+      box.appendChild(el("div", { class: "sim-file-row" }, [
+        el("i", { class: "ph ph-file-text" }),
+        el("div", { class: "sim-file-row-body" }, [
+          el("div", { class: "sim-file-name", text: text }),
+          bytes ? el("div", { class: "sim-file-bytes", text: bytes[0] }) : null,
+        ]),
+      ]));
+    });
     return box;
   }
   function stageFor(sc, steps, i) {
-    var surface = (sc.trigger && sc.trigger.surface) || "terminal";
-    if (surface === "browser") return browserStage(sc, steps, i);
-    if (surface === "api") return apiStage(sc, steps, i);
-    if (surface === "file") return fileStage(sc, steps, i);
-    return terminalStage(sc, steps, i);
+    var surface = resolveSurface(sc, steps);
+    if (surface === "browser") return browserStage(sc, steps, i, surface);
+    if (surface === "api") return apiStage(sc, steps, i, surface);
+    if (surface === "ui") return uiStage(sc, steps, i, surface);
+    if (surface === "job") return jobStage(sc, steps, i, surface);
+    if (surface === "db") return dbStage(sc, steps, i, surface);
+    if (surface === "file") return fileStage(sc, steps, i, surface);
+    return terminalStage(sc, steps, i, surface);
   }
 
   var SIM_LANE_ICON = { derived: "ph-lightning", authored: "ph-pencil-simple", recorded: "ph-record" };

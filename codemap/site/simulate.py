@@ -66,7 +66,7 @@ def _resolve_scenario(sc: dict, key_to_i: dict[str, int]) -> dict | None:
         steps = []
 
     out = {
-        "id": sc["id"], "title": sc["title"], "trigger": sc.get("trigger") or {"surface": "terminal", "text": ""},
+        "id": sc["id"], "title": sc["title"], "trigger": sc.get("trigger") or {"text": ""},
         "source": sc.get("source", "authored"), "steps": steps,
     }
     if root_i is not None:

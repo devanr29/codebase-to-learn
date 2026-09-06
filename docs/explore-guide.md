@@ -170,8 +170,13 @@ collapses it; double-click a pane header (or its corners-out button) to
 maximise that one pane full-bleed — <kbd>Esc</kbd>, or double-click again,
 restores.
 
-- **Stage** — the user's world: a fake terminal / browser / API / file that
-  fills in as output is produced.
+- **Stage** — the user's world, rendered as one of seven mockups (terminal,
+  browser, API, background job, database, UI component tree, file) that fills
+  in as output is produced. Which one is picked adapts to the scenario: an
+  authored `trigger.surface` always wins, otherwise it's inferred from what the
+  root symbol actually is — an HTTP route, a background task, a React/Vue
+  component, a database call, and so on (see `scenarios-schema.md` in the
+  `codebase-to-course` skill for the full inference order).
 - **Flow** — the call graph for this run; the active function lights up, a
   token flies along each call edge as it happens.
 - **Trace log** — every step of the run as a scrollable list. The current step

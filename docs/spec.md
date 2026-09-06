@@ -540,10 +540,14 @@ undertaking on its own, separate from the general three-tier mechanism above.
 Every explorer view through M17 is static and simultaneous — the whole
 structure at once. M18 adds a fifth tab, **Simulate**: a transport-controlled
 player that walks one *scenario* — one thing a person does with the software —
-call by call, pairing the user's world (a terminal/browser/API/file stage)
-with the code's world (an animated call-flow graph, a live call stack, the
-source line executing) and two narration lines per step. Three lanes feed the
-same normalized step shape, increasing in fidelity:
+call by call, pairing the user's world (one of seven Stage mockups — terminal,
+browser, API, UI component tree, background job, database, file — picked by
+`resolveSurface()` in `explore.js`: an authored `trigger.surface` wins,
+otherwise it's inferred from the root symbol's entry-point kind and its file/
+excerpt, falling back to terminal) with the code's world (an animated
+call-flow graph, a live call stack, the source line executing) and two
+narration lines per step. Three lanes feed the same normalized step shape,
+increasing in fidelity:
 
 1. **Derived** (⚡) — computed entirely client-side in `explore.js` from the
    call graph, the same architectural pattern as the Map tab's own

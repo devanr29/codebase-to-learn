@@ -65,9 +65,62 @@ def test_scenarios_json_absent_malformed_then_valid(fixture_impact_repo, tmp_pat
         loaded = scenarios.load(cfg)
         assert [s["id"] for s in loaded] == ["ok"]
         assert loaded[0]["source"] == "authored"
-        assert loaded[0]["trigger"] == {"surface": "terminal", "text": ""}
+        # no `surface` key here on purpose: the scenario set no trigger at all,
+        # and an absent/invalid surface is left unset (not coerced to
+        # "terminal") so explore.js's resolveSurface() can infer one instead
+        assert loaded[0]["trigger"] == {"text": ""}
     finally:
         sf.unlink(missing_ok=True)
+
+
+def test_scenarios_load_keeps_an_explicit_valid_surface_but_drops_an_invalid_one(fixture_impact_repo, tmp_path):
+    cfg = config.load(fixture_impact_repo.path)
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    sf = cfg.codemap_dir / "scenarios.json"
+    sf.write_text(json.dumps({"scenarios": [
+        {"id": "job-one", "title": "A background job", "trigger": {"surface": "job", "text": "enqueue"},
+         "steps": [
+             {"node": "a::b", "t": "call", "emit": {"surface": "job", "text": "extracting archive"}},
+             {"node": "a::b", "t": "return"},
+         ]},
+        {"id": "bogus", "title": "Invalid surface", "trigger": {"surface": "not-a-real-surface", "text": "x"},
+         "steps": [
+             {"node": "a::b", "t": "call", "emit": {"surface": "also-bogus", "text": "hi"}},
+             {"node": "a::b", "t": "return"},
+         ]},
+    ]}), encoding="utf-8")
+    try:
+        loaded = scenarios.load(cfg)
+    finally:
+        sf.unlink(missing_ok=True)
+    by_id = {s["id"]: s for s in loaded}
+    assert by_id["job-one"]["trigger"] == {"surface": "job", "text": "enqueue"}
+    assert by_id["job-one"]["steps"][0]["emit"] == {"surface": "job", "text": "extracting archive"}
+    # an unrecognised surface is dropped, not silently rewritten to "terminal"
+    assert by_id["bogus"]["trigger"] == {"text": "x"}
+    assert by_id["bogus"]["steps"][0]["emit"] == {"text": "hi"}
+
+
+def test_scenarios_load_keeps_a_stderr_stream_on_an_authored_emit(fixture_impact_repo, tmp_path):
+    """Parity with a recorded (Lane 3) trace's emit shape (tracer.py's
+    _merge()), so an authored terminal scenario can mark a line as stderr the
+    same way a real run does (terminalStage colours it red in explore.js)."""
+    cfg = config.load(fixture_impact_repo.path)
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    sf = cfg.codemap_dir / "scenarios.json"
+    sf.write_text(json.dumps({"scenarios": [
+        {"id": "err", "title": "A failing run", "steps": [
+            {"node": "a::b", "t": "call", "emit": {"text": "traceback...", "stream": "stderr"}},
+            {"node": "a::b", "t": "return", "emit": {"text": "ok", "stream": "not-a-real-stream"}},
+        ]},
+    ]}), encoding="utf-8")
+    try:
+        loaded = scenarios.load(cfg)
+    finally:
+        sf.unlink(missing_ok=True)
+    steps = loaded[0]["steps"]
+    assert steps[0]["emit"] == {"text": "traceback...", "stream": "stderr"}
+    assert steps[1]["emit"] == {"text": "ok"}   # an invalid stream is dropped, not kept as-is
 
 
 def test_scenarios_load_accepts_root_only_curriculum_entry(fixture_impact_repo, tmp_path):
@@ -155,6 +208,9 @@ def test_simulate_build_resolves_keys_and_drops_unresolvable(fixture_impact_repo
     demo = out["scenarios"][0]
     assert demo["root"] == real_i
     assert [s["node"] for s in demo["steps"]] == [real_i, real_i]   # the bad step vanished, not crashed
+    # no `trigger.surface` was authored -> simulate.build must not invent one;
+    # explore.js's resolveSurface() is what infers a stage from here on
+    assert "surface" not in demo["trigger"]
 
 
 def _idx_at_cfg_db(repo, until):

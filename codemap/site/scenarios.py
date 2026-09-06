@@ -48,7 +48,7 @@ from ..config import Config
 
 SCENARIOS_FILE = "scenarios.json"
 
-_VALID_SURFACES = {"terminal", "browser", "api", "file"}
+_VALID_SURFACES = {"terminal", "browser", "api", "file", "ui", "job", "db"}
 _VALID_STEP_TYPES = {"call", "return", "emit", "note", "branch"}
 
 
@@ -85,13 +85,16 @@ def load(cfg: Config) -> list[dict]:
             continue
         trigger = sc.get("trigger") if isinstance(sc.get("trigger"), dict) else {}
         surface = trigger.get("surface")
+        trigger_out: dict = {"text": str(trigger.get("text") or "").strip()}
+        # an explicit, valid surface always wins; leaving it unset (rather than
+        # defaulting to "terminal") lets the renderer's resolveSurface() infer
+        # one from the scenario's own evidence instead of guessing wrong
+        if surface in _VALID_SURFACES:
+            trigger_out["surface"] = surface
         entry: dict = {
             "id": sid.strip(),
             "title": title.strip(),
-            "trigger": {
-                "surface": surface if surface in _VALID_SURFACES else "terminal",
-                "text": str(trigger.get("text") or "").strip(),
-            },
+            "trigger": trigger_out,
             "steps": clean_steps,
             "source": "authored",
         }
@@ -134,10 +137,19 @@ def _clean_step(st: object) -> dict | None:
         surface = emit.get("surface")
         text = emit.get("text")
         if isinstance(text, str) and text.strip():
-            entry["emit"] = {
-                "surface": surface if surface in _VALID_SURFACES else "terminal",
-                "text": text.strip(),
-            }
+            # same rule as the scenario-level trigger: an unset/invalid surface
+            # is left off rather than coerced, so the client falls back to the
+            # scenario's own resolved surface instead of a wrong hardcoded one
+            clean_emit: dict = {"text": text.strip()}
+            if surface in _VALID_SURFACES:
+                clean_emit["surface"] = surface
+            # parity with a recorded (Lane 3) trace's emit shape (tracer.py's
+            # _merge()) so an authored terminal scenario can mark a line as
+            # stderr the same way a real run does
+            stream = emit.get("stream")
+            if stream in ("stdout", "stderr"):
+                clean_emit["stream"] = stream
+            entry["emit"] = clean_emit
     cond = st.get("cond")
     if isinstance(cond, dict) and isinstance(cond.get("text"), str) and cond["text"].strip():
         kind = cond.get("kind")

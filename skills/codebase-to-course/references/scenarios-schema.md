@@ -75,8 +75,27 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
 ## Fields
 
 **Scenario** — `id` (unique, used in the URL — keep it short and stable), `title`,
-`trigger` (`surface`: `terminal` | `browser` | `api` | `file`, `text`: what the user
-types/clicks/sends).
+`trigger` (`surface`: `terminal` | `browser` | `api` | `ui` | `job` | `db` | `file`,
+`text`: what the user types/clicks/sends).
+
+- **`surface` is optional — leave it out and the renderer infers one.** The
+  Stage pane (`explore.js`'s `resolveSurface`) tries, in order: your explicit
+  `surface`; the majority `emit.surface` across the steps; the root symbol's
+  entry-point kind (a `route`/`controller` → `browser` or `api`, a `task` →
+  `job`, a `cli`/`script`/`main`/`docker` → `terminal`); then the root symbol's
+  file path and code (`.tsx`/`.jsx`/`components/` → `ui`, SQL/`cursor.execute`
+  → `db`, `threading.Thread`/`.delay(`/`worker` → `job`, a file write → `file`).
+  It falls back to `terminal` only when none of that matches. Set `surface`
+  yourself only when the inference gets it wrong — e.g. a route that returns
+  JSON but has no `jsonify`/`serialize` in its snippet, so it's guessed as
+  `browser` instead of `api`.
+- **`emit.text` is rendered verbatim as what the user sees** — a browser page
+  line, an API response body, a job's log line, a mounted UI block — not
+  discarded narration. Write it as the actual output, not a description of it:
+  `"redirected to /tools/refresh-data/"`, not `"the page redirects"`. An
+  `emit.surface` is optional too, same inference rule as the trigger — most
+  emits should just omit it and inherit the scenario's resolved surface; set it
+  only when one scenario genuinely mixes surfaces (rare).
 
 - `root` — a `data.nodes[].key`. **Required whenever `steps` is omitted** (it is what
   the renderer derives the call tree from); with `steps` present it is informational —
@@ -96,9 +115,11 @@ types/clicks/sends).
 same rule as `explanations.json`), `t` (`call` | `return` | `emit` | `note` | `branch`,
 default `call`), optional `from` (the caller's key, draws the animated edge), `user` /
 `code` (one sentence each — 👤 what the user perceives, ⚙ what the code is doing; either
-may be omitted but at least one should carry real content), `emit` (`{surface, text}` —
-an `emit` step's `node` is just the frame it happened inside; `surface` should usually
-match the scenario's `trigger.surface`), `cond` (`{kind: "if"|"for"|"while"|"try", text}`
+may be omitted but at least one should carry real content), `emit` (`{text, surface?}` —
+an `emit` step's `node` is just the frame it happened inside; `text` is the real output,
+shown verbatim on the Stage — a page line, a response body, a job log line, a mounted
+UI block, a file written; omit `surface` unless this one emit belongs on a different
+stage than the rest of the scenario), `cond` (`{kind: "if"|"for"|"while"|"try", text}`
 — a one-line note about the branch/loop/guard this call sits inside).
 
 ## Rules
