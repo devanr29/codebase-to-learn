@@ -29,7 +29,7 @@ HARD_EXCLUDES = (
 )
 
 _TEMPLATE = """\
-# codemap configuration. See https://github.com/OWNER/codemap/tree/main/docs/spec.md.
+# codemap configuration. See https://github.com/devanr29/codebase-to-learn/tree/main/docs/spec.md.
 
 # Extra ignore patterns (gitignore syntax), applied on top of .gitignore and the
 # built-in hard excludes (.git, .venv, node_modules, vendor, dist, build, target, ...).

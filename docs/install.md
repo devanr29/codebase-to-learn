@@ -12,13 +12,13 @@ Not on PyPI yet — install straight from GitHub.
 own virtualenv and puts `codemap` on `PATH`:
 
 ```
-pipx install git+https://github.com/OWNER/codemap
+pipx install git+https://github.com/devanr29/codebase-to-learn
 ```
 
 **Or [uv](https://docs.astral.sh/uv/):**
 
 ```
-uv tool install git+https://github.com/OWNER/codemap
+uv tool install git+https://github.com/devanr29/codebase-to-learn
 ```
 
 Both need `git` on `PATH` (they clone the repo themselves — you don't need a
@@ -38,7 +38,7 @@ it means the CLI is installed and looking for a repo to index. See
 ### From a local checkout (contributing, or before it's pushed to GitHub)
 
 ```
-git clone https://github.com/OWNER/codemap
+git clone https://github.com/devanr29/codebase-to-learn
 cd codemap
 python -m venv .venv
 .venv/Scripts/python -m pip install -e ".[dev]"   # Windows
@@ -85,7 +85,7 @@ works and falls back gracefully without it. See
 In Claude Code:
 
 ```
-/plugin marketplace add OWNER/codemap
+/plugin marketplace add devanr29/codebase-to-learn
 /plugin install codemap@codemap
 ```
 

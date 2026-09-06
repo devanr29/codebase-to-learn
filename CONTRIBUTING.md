@@ -60,13 +60,22 @@ Never hand-edit `phosphor-icons.css`.
 
 ## Publishing (maintainer notes)
 
-Every absolute GitHub URL in this repo currently points at the placeholder
-`OWNER/codemap` — there's no real repo yet. Once you've created one, stamp the
-real address everywhere in one shot:
+Absolute GitHub URLs in this repo are stamped with the real slug
+(`devanr29/codebase-to-learn`) by `scripts/set-repo.py`. If the repo ever
+moves, re-stamp everywhere in one shot:
 
 ```
-python scripts/set-repo.py <your-username-or-org>/codemap
+python scripts/set-repo.py <owner>/<repo>
 ```
 
 See `scripts/set-repo.py`'s docstring for the exact file list. It prints
 every replacement it makes — review the diff, commit, push.
+
+The skills publish as a Claude Code plugin straight from this repo — no
+separate release step. Once a change to `.claude-plugin/`, `skills/`, or
+`commands/` lands on `main`, users pick it up with:
+
+```
+/plugin marketplace add devanr29/codebase-to-learn
+/plugin install codemap@codemap
+```

@@ -39,10 +39,10 @@ dependencies = [
 # "codemap-explorer") while keeping the `codemap` console command below.
 
 [project.urls]
-Homepage = "https://github.com/OWNER/codemap"
-Repository = "https://github.com/OWNER/codemap"
-Issues = "https://github.com/OWNER/codemap/issues"
-Documentation = "https://github.com/OWNER/codemap/tree/main/docs"
+Homepage = "https://github.com/devanr29/codebase-to-learn"
+Repository = "https://github.com/devanr29/codebase-to-learn"
+Issues = "https://github.com/devanr29/codebase-to-learn/issues"
+Documentation = "https://github.com/devanr29/codebase-to-learn/tree/main/docs"
 
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]

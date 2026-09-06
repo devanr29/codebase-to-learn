@@ -1,6 +1,6 @@
 # codemap — change explainer for AI-assisted codebases
 
-[![CI](https://github.com/OWNER/codemap/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/codemap/actions/workflows/ci.yml)
+[![CI](https://github.com/devanr29/codebase-to-learn/actions/workflows/ci.yml/badge.svg)](https://github.com/devanr29/codebase-to-learn/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `codemap` keeps a symbol-level graph rooted in **the worktree** — the code as
@@ -17,7 +17,7 @@ answers the question this tool was built around:
 |  | **The tool** | **The skills** |
 |---|---|---|
 | What | the `codemap` CLI | a Claude Code plugin |
-| Install | `pipx install git+https://github.com/OWNER/codemap` | `/plugin install codemap@codemap` |
+| Install | `pipx install git+https://github.com/devanr29/codebase-to-learn` | `/plugin install codemap@codemap` |
 | Needs | Python 3.11+ | the tool, installed first |
 | Does | indexes your repo, explains diffs, renders `explore.html` | authors the prose `explore.html` can't derive on its own |
 | Optional? | — | yes — every tab has a deterministic fallback with zero authored content |
@@ -35,7 +35,7 @@ together, and why the split is deliberate.
 ## Quickstart
 
 ```
-pipx install git+https://github.com/OWNER/codemap
+pipx install git+https://github.com/devanr29/codebase-to-learn
 cd your-repo
 codemap scan
 codemap explore --open

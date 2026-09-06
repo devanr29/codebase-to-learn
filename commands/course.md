@@ -5,8 +5,8 @@ description: Author the Learn/Graph/Simulate content for this repo's explore.htm
 Run the full `codebase-to-course` authoring workflow against the current repo.
 
 1. Check the CLI is installed: run `codemap --version`. If that fails, tell the
-   user to install it first — `pipx install git+https://github.com/OWNER/codemap`
-   (or `uv tool install git+https://github.com/OWNER/codemap`) — and stop.
+   user to install it first — `pipx install git+https://github.com/devanr29/codebase-to-learn`
+   (or `uv tool install git+https://github.com/devanr29/codebase-to-learn`) — and stop.
 2. If there is no `.codemap/index.db` yet, run `codemap scan`.
 3. Run `codemap explore --emit-brief` to write the analysis pack under
    `.codemap/briefs/`.

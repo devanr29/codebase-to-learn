@@ -5,8 +5,8 @@ description: Index the repo and open codemap's explore.html (Graph / Map / Simul
 Run codemap's explore workflow against the current repo.
 
 1. Check the CLI is installed: run `codemap --version`. If that fails, tell the
-   user to install it first — `pipx install git+https://github.com/OWNER/codemap`
-   (or `uv tool install git+https://github.com/OWNER/codemap`) — and stop.
+   user to install it first — `pipx install git+https://github.com/devanr29/codebase-to-learn`
+   (or `uv tool install git+https://github.com/devanr29/codebase-to-learn`) — and stop.
 2. Run `codemap scan` to sync the live worktree graph (safe to run even if
    already up to date).
 3. Run `codemap explore --open` to render `.codemap/explore.html` and open it

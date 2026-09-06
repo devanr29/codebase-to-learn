@@ -5,8 +5,8 @@
     "name": "Devan Ramadhana",
     "email": "devanr2911@gmail.com"
   },
-  "homepage": "https://github.com/OWNER/codemap",
-  "repository": "https://github.com/OWNER/codemap",
+  "homepage": "https://github.com/devanr29/codebase-to-learn",
+  "repository": "https://github.com/devanr29/codebase-to-learn",
   "license": "MIT",
   "skills": "./skills",
   "commands": "./commands"

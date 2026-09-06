@@ -4,7 +4,7 @@
   "description": "codemap's own Claude Code plugin: the codebase-to-course skill and /codemap:* commands.",
   "owner": {
     "name": "Devan Ramadhana",
-    "url": "https://github.com/OWNER"
+    "url": "https://github.com/devanr29"
   },
   "plugins": [
     {

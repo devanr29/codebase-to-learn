@@ -23,7 +23,7 @@ site and never edits the renderer.
 
 **Prerequisite:** the `codemap` CLI must be on `PATH` — this skill only
 authors content, it doesn't index or render anything itself. If `codemap
---version` fails, install it first (`pipx install git+https://github.com/OWNER/codemap`
+--version` fails, install it first (`pipx install git+https://github.com/devanr29/codebase-to-learn`
 — see `docs/install.md` in the codemap repo, or tell the user to run that
 before continuing).
 

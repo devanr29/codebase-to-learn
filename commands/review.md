@@ -5,8 +5,8 @@ description: Explain a commit, uncommitted changes, or everything since you last
 Run codemap's change-explainer against the current repo.
 
 1. Check the CLI is installed: run `codemap --version`. If that fails, tell the
-   user to install it first — `pipx install git+https://github.com/OWNER/codemap`
-   (or `uv tool install git+https://github.com/OWNER/codemap`) — and stop.
+   user to install it first — `pipx install git+https://github.com/devanr29/codebase-to-learn`
+   (or `uv tool install git+https://github.com/devanr29/codebase-to-learn`) — and stop.
 2. Interpret `$ARGUMENTS`:
    - empty or `HEAD` → `codemap explain HEAD`
    - `worktree` → `codemap explain worktree` (uncommitted changes)
