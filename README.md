@@ -41,7 +41,9 @@ codemap scan
 codemap explore --open
 ```
 
-That's the whole tool. Full flag reference: [`docs/cli.md`](docs/cli.md).
+`scan`/`explore`/`trace` show live progress in a terminal (plain lines when
+redirected — see "Progress output" in [`docs/cli.md`](docs/cli.md)). That's
+the whole tool. Full flag reference: [`docs/cli.md`](docs/cli.md).
 Full walkthrough of the rendered page: [`docs/explore-guide.md`](docs/explore-guide.md).
 More install options (uv, from source, Windows notes, the plugin):
 [`docs/install.md`](docs/install.md).

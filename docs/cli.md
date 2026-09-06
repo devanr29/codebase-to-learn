@@ -4,6 +4,27 @@ Every command accepts `--path <repo>` to run against a repository other than
 the current directory. Run `codemap --version` to check the install, or
 `codemap <command> --help` for the flags below straight from argparse.
 
+## Progress output
+
+`scan`, `explore`, and `trace` can take a while on a large repo, so they show
+live progress on **stderr** (stdout stays parseable — `explore --json`,
+`snapshot`'s markdown, and so on are never touched). It adapts to where it's
+running:
+
+- **A real terminal:** an animated bar per phase (`history`, `worktree`,
+  `graph`, `symbols`, …) that settles into a one-line summary when the phase
+  finishes. ASCII/Unicode blocks only, redrawn with `\r` — no ANSI escapes, so
+  it renders correctly in Windows conhost, Git Bash/MINTTY, and Windows
+  Terminal alike.
+- **Redirected or piped** (the post-commit hook's `codemap scan >log 2>&1`,
+  Claude Code capturing output, `codemap scan | cat`): plain `\n`-terminated
+  lines at each phase's start, every 25% boundary, and its end. No animation.
+- **Silenced:** pass `--no-progress`, set `CODEMAP_NO_PROGRESS=1`, or pass
+  `explore --quiet` — nothing is written at all.
+
+`CI=1`, `TERM=dumb`, or `NO_COLOR` set also downgrade a real terminal to the
+plain-line form.
+
 ## `codemap status`
 
 Prints the index state — commit/file/symbol/ref/change counts, and which
@@ -25,6 +46,7 @@ commit you want reflected, or any time before `explore`/`snapshot`.
 ```
 codemap scan
 codemap scan --since <commit>   # index from this commit forward instead of the last indexed one
+codemap scan --no-progress      # plain output only -- see "Progress output" above
 ```
 
 ## `codemap explain [<rev>]`
@@ -83,8 +105,9 @@ codemap explore --open
 | `--emit-brief` | write module briefs for the `codebase-to-course` skill |
 | `--max-symbols N` | cap graph nodes (default: from config) |
 | `--open` | open the result in a browser |
-| `--quiet` | suppress the summary line |
+| `--quiet` | suppress the summary line and progress output |
 | `--if-enabled` | no-op unless `[explore] rebuild_on_commit` is true — this is what the post-commit hook calls, so it never fights a repo that's turned auto-rebuild off |
+| `--no-progress` | plain output only — see "Progress output" above |
 
 ## `codemap trace -- <command>`
 
@@ -103,9 +126,13 @@ codemap trace --values -- -m myapp.cli process input.csv
 |---|---|
 | `--name <title>` | scenario title (default: the command itself) |
 | `--values` | capture call-argument reprs, truncated; secret-named args redacted |
+| `--no-progress` | plain output only — see "Progress output" above |
 
 `cmd` is everything after `--`, passed through as-is (e.g. `-m mymodule
---flag`).
+--flag`). If `cmd` is itself `codemap` (as in the first example above), its
+progress output is silenced automatically — otherwise its animation would
+fight the recorder's own, and since it isn't writing to a real terminal by the
+time it runs, it would end up captured as text in the trace instead.
 
 ## `codemap note "<text>"`
 

@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from . import __version__, config, db
+from . import progress as _progress
 
 _COUNT_QUERIES = {
     "commits": "SELECT COUNT(*) AS n FROM commits",
@@ -87,8 +88,12 @@ def cmd_scan(args: argparse.Namespace) -> int:
     cfg = config.init(root)
     conn = db.connect(cfg.db_path)
     db.migrate(conn)
+    rep = _progress.from_args(args, command="scan", root=root)
     try:
-        stats = indexer.scan(conn, cfg, since=args.since)
+        try:
+            stats = indexer.scan(conn, cfg, since=args.since, progress=rep)
+        finally:
+            rep.close()
         print(
             f"indexed {stats.commits_indexed} commit(s), "
             f"{stats.files_parsed} file(s) parsed, "
@@ -187,13 +192,33 @@ def cmd_explore(args: argparse.Namespace) -> int:
     if getattr(args, "if_enabled", False) and not cfg.explore.rebuild_on_commit:
         return 0
     conn = _db.connect(cfg.db_path)
+    # progress goes to stderr and never touches the --json/--emit-brief output
+    # on stdout; `--quiet` (the post-commit hook's flag) silences it too, via
+    # from_args(). Built and closed around model.build()+render() together so
+    # the terminal is left clean before any of this command's own print()s.
+    rep = _progress.from_args(args, command="explore", root=root)
     try:
-        data = _model.build(
-            conn,
-            cfg,
-            max_symbols=args.max_symbols or cfg.explore.max_symbols,
-            max_snippet_lines=cfg.explore.max_snippet_lines,
-        )
+        try:
+            data = _model.build(
+                conn,
+                cfg,
+                max_symbols=args.max_symbols or cfg.explore.max_symbols,
+                max_snippet_lines=cfg.explore.max_snippet_lines,
+                progress=rep,
+            )
+            html = out = None
+            if not data.get("empty") and not getattr(args, "emit_brief", False) and not args.json:
+                from .site import render as _render
+
+                with rep.phase("render") as p:
+                    out = Path(args.out) if args.out else (cfg.codemap_dir / "explore.html")
+                    html = _render.render(data)
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    out.write_text(html, encoding="utf-8")
+                    p.set_summary(f"{len(html.encode('utf-8')) / 1_048_576:.1f} MB written")
+        finally:
+            rep.close()
+
         if data.get("empty"):
             print("index is empty — run `codemap scan` first")
             return 0
@@ -207,12 +232,6 @@ def cmd_explore(args: argparse.Namespace) -> int:
             print(_json.dumps(data, indent=2, sort_keys=True))
             return 0
 
-        from .site import render as _render
-
-        out = Path(args.out) if args.out else (cfg.codemap_dir / "explore.html")
-        html = _render.render(data)
-        out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(html, encoding="utf-8")
         size_mb = len(html.encode("utf-8")) / 1_048_576
         if size_mb > 8:
             print(f"warning: {out.name} is {size_mb:.1f} MB", file=sys.stderr)
@@ -254,7 +273,15 @@ def cmd_trace(args: argparse.Namespace) -> int:
         return 2
 
     name = args.name or " ".join(argv)
-    trace = _tracer.record(cfg, argv, name=name, values=args.values)
+    # Built *before* tracer.record() swaps sys.stdout/sys.stderr for its
+    # capture tee, so the reporter's bound stream is the real terminal, never
+    # the tee -- see progress.Reporter's stream-binding note and
+    # tracer._CaptureStream.
+    rep = _progress.from_args(args, command="trace", root=root)
+    try:
+        trace = _tracer.record(cfg, argv, name=name, values=args.values, progress=rep)
+    finally:
+        rep.close()
     out_path = _tracer.write(cfg, trace)
     n_steps = len(trace["steps"])
     msg = f"wrote {out_path}  ({n_steps} step{'' if n_steps == 1 else 's'})"
@@ -312,6 +339,10 @@ def build_parser() -> argparse.ArgumentParser:
     def add(name: str, fn, help_: str) -> argparse.ArgumentParser:
         sp = sub.add_parser(name, help=help_)
         sp.add_argument("--path", help="repo path (default: search up from cwd)")
+        sp.add_argument(
+            "--no-progress", action="store_true",
+            help="plain output only — no animated progress display",
+        )
         sp.set_defaults(func=fn)
         return sp
 
@@ -336,7 +367,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--emit-brief", action="store_true", help="write module briefs for the course-authoring skill")
     sp.add_argument("--max-symbols", type=int, default=0, help="cap graph nodes (default: config)")
     sp.add_argument("--open", action="store_true", help="open the result in a browser")
-    sp.add_argument("--quiet", action="store_true", help="suppress the summary line")
+    sp.add_argument("--quiet", action="store_true", help="suppress the summary line and progress output")
     sp.add_argument("--if-enabled", action="store_true",
                     help="no-op unless [explore] rebuild_on_commit is true (used by the hook)")
 
@@ -363,7 +394,11 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     args = build_parser().parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except KeyboardInterrupt:
+        sys.stderr.write("\ninterrupted\n")
+        return 130
 
 
 if __name__ == "__main__":

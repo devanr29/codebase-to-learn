@@ -45,6 +45,7 @@ def test_explore_command_writes_html(fixture_impact_repo, tmp_path, capsys):
         open = False
         quiet = False
         if_enabled = False
+        no_progress = False
 
     # point config discovery at the fixture repo but keep its own .codemap db
     cfg = config.load(fixture_impact_repo.path)
@@ -77,6 +78,7 @@ def test_explore_json_flag(fixture_impact_repo, tmp_path, capsys):
         open = False
         quiet = True
         if_enabled = False
+        no_progress = False
 
     assert cli.cmd_explore(Args()) == 0
     data = json.loads(capsys.readouterr().out)
@@ -106,6 +108,7 @@ def test_if_enabled_noops_when_disabled(fixture_impact_repo, tmp_path, monkeypat
         open = False
         quiet = True
         if_enabled = True
+        no_progress = False
 
     assert cli.cmd_explore(Args()) == 0
     assert not out.exists()

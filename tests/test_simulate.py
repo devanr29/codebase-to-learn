@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import json
 
-from codemap import config, db, indexer, tracer
+from codemap import config, db, indexer, progress, tracer
 from codemap.site import model, scenarios, simulate
 
 
@@ -206,6 +206,72 @@ def test_tracer_records_a_real_run_inside_the_repo(fixture_impact_repo, tmp_path
     loaded = tracer.load_all(cfg)
     assert any(t["id"] == trace["id"] for t in loaded)
     out_path.unlink()
+
+
+def test_tracer_with_animated_progress_never_pollutes_the_recording(
+    fixture_impact_repo, tmp_path, monkeypatch
+):
+    """Hazard: tracer._CaptureStream tees the target's stdout/stderr *and*
+    records every complete line into the trace. progress.Reporter binds its
+    stream once at construction (never re-resolves sys.stderr later), so the
+    painter thread writes straight to the real terminal and its `\\r` frames
+    can never pass through the capture tee -- confirmed here by running a
+    real animated Reporter, on a real background thread, around a real
+    ``tracer.record()`` call, and inspecting the recorded emit steps."""
+    monkeypatch.setattr(progress, "_FIRST_PAINT_DELAY", 0.0)
+    monkeypatch.setattr(progress, "_FRAME_INTERVAL", 0.005)
+    cfg = _idx_at_cfg_db(fixture_impact_repo, "i3-sig-partial")
+
+    script = tmp_path / "runner.py"
+    script.write_text(
+        "import sys, time\n"
+        f"sys.path.insert(0, {str(fixture_impact_repo.path)!r})\n"
+        "from svc import report\n"
+        "print('about to build')\n"
+        "time.sleep(0.05)\n"
+        "report.build_report('daily')\n"
+        "print('done')\n",
+        encoding="utf-8",
+    )
+
+    class FakeTTY:
+        encoding = "utf-8"
+
+        def __init__(self) -> None:
+            self.chunks: list[str] = []
+
+        def write(self, s: str) -> int:
+            self.chunks.append(s)
+            return len(s)
+
+        def flush(self) -> None:
+            pass
+
+        def isatty(self) -> bool:
+            return True
+
+        @property
+        def text(self) -> str:
+            return "".join(self.chunks)
+
+    stream = FakeTTY()
+    rep = progress.Reporter(stream, mode=progress.ANIMATED, command="trace")
+    try:
+        trace = tracer.record(cfg, [str(script)], name="progress test run", progress=rep)
+    finally:
+        rep.close()
+
+    emits = [s for s in trace["steps"] if s["t"] == "emit"]
+    assert any(e["emit"]["text"] == "about to build" for e in emits)
+    assert any(e["emit"]["text"] == "done" for e in emits)
+    for e in emits:
+        text = e["emit"]["text"]
+        assert "\r" not in text
+        assert progress._UNICODE_GLYPHS["full"] not in text
+        assert progress._ASCII_GLYPHS["full"] not in text
+    # the reporter drew at least one real frame on its own (separate) stream --
+    # proof the mechanism actually ran, not a vacuous pass
+    assert "\r" in stream.text
 
 
 def test_tracer_survives_a_crashing_target(fixture_impact_repo, tmp_path):

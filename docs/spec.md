@@ -95,6 +95,17 @@ it at commit time. Inference is the last resort and must be labelled as such. Se
 A semantic diff is a statement about two graphs. The DB stores versions per commit, not a
 single current state.
 
+**5.5 — Progress output: three modes, stderr, no ANSI.**
+`scan`/`explore`/`trace` report live progress (`codemap/progress.py`) in whichever of three
+modes fits where output is going — an animated `\r`-redrawn bar in a real terminal, plain
+milestone lines when redirected or piped (the post-commit hook, CI, Claude Code capturing
+output), or nothing at all (`--no-progress` / `CODEMAP_NO_PROGRESS` / `explore --quiet`). It
+always writes to **stderr**, never stdout, so `explore --json` and friends stay parseable and
+§4's "same input, same output" determinism contract stays about stdout. It never emits an ANSI
+escape sequence —
+`\r` plus pad-to-clear only — so it renders correctly in Windows conhost and Git Bash/MINTTY as
+well as a real VT100 terminal, without needing to enable VT processing anywhere.
+
 ---
 
 ## 6. Project layout
@@ -130,6 +141,7 @@ codemap/                     # THE TOOL — the installable Python package
   digest.py             # catchup digest across multiple change entries
   retention.py          # change-entry retention/pruning
   tracer.py             # M18 — `codemap trace`, records a real run for Simulate
+  progress.py           # scan/explore/trace's live terminal progress (see §5.5)
   hooks/post-commit
   site/                 # M10-M18 — the `explore` renderer (see §12)
     model.py, render.py, brief.py, explain.py, libraries.py, scenarios.py, simulate.py

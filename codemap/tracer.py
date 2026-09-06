@@ -22,12 +22,14 @@ this format is deliberately language-neutral.
 
 from __future__ import annotations
 
+import os
 import re
 import runpy
 import sys
 import time
 from pathlib import Path
 
+from . import progress as _progress
 from .config import Config
 from .db import connect, get_meta
 from .indexer import WORKTREE_SHA
@@ -98,13 +100,22 @@ def _load_index(cfg: Config) -> _SymbolIndex:
 
 class _CaptureStream:
     """Tee stdout/stderr to the real stream and to a timestamped line buffer,
-    so recorded output can be replayed at the moments it actually printed."""
+    so recorded output can be replayed at the moments it actually printed.
 
-    def __init__(self, stream, kind: str, sink: list[dict], t0: float) -> None:
+    Defines only ``write``/``flush`` -- no ``isatty`` -- by design: any code
+    that queries it (e.g. ``progress.choose_mode`` on a nested
+    ``codemap trace -- -m codemap scan``) must degrade rather than crash, so
+    ``isatty()`` is provided explicitly below and always answers False.
+    """
+
+    def __init__(self, stream, kind: str, sink: list[dict], t0: float, *, on_write=None) -> None:
         self._stream, self._kind, self._sink, self._t0 = stream, kind, sink, t0
+        self._on_write = on_write
         self._buf = ""
 
     def write(self, s: str) -> int:
+        if s and self._on_write is not None:
+            self._on_write()
         self._stream.write(s)
         self._buf += s
         while "\n" in self._buf:
@@ -115,6 +126,9 @@ class _CaptureStream:
 
     def flush(self) -> None:
         self._stream.flush()
+
+    def isatty(self) -> bool:
+        return False
 
 
 def _run_target(argv: list[str]) -> None:
@@ -138,12 +152,20 @@ def _run_target(argv: list[str]) -> None:
         runpy.run_path(script, run_name="__main__")
 
 
-def record(cfg: Config, argv: list[str], *, name: str, values: bool = False) -> dict:
+def record(
+    cfg: Config,
+    argv: list[str],
+    *,
+    name: str,
+    values: bool = False,
+    progress: _progress.Reporter | None = None,
+) -> dict:
     """Run ``argv`` in-process under a call/return profiler, capturing every
     frame that maps to an indexed symbol plus real stdout/stderr timing.
     Returns the trace dict; the caller decides whether/where to write it."""
     if not argv:
         raise ValueError("nothing to run")
+    progress = progress or _progress.NULL
     resolver = _load_index(cfg)
 
     events: list[dict] = []
@@ -178,22 +200,51 @@ def record(cfg: Config, argv: list[str], *, name: str, values: bool = False) -> 
             if key is not None and len(events) < MAX_STEPS:
                 events.append({"t": "return", "key": key, "ts": time.perf_counter() - t0})
 
-    old_out, old_err = sys.stdout, sys.stderr
-    old_argv = sys.argv
-    sys.stdout = _CaptureStream(old_out, "stdout", stdout_lines, t0)
-    sys.stderr = _CaptureStream(old_err, "stderr", stdout_lines, t0)
-    crashed = None
-    sys.setprofile(profiler)
-    try:
-        _run_target(argv)
-    except SystemExit:
-        pass
-    except BaseException as e:  # a crashing target still leaves a useful partial trace
-        crashed = f"{type(e).__name__}: {e}"
-    finally:
-        sys.setprofile(None)
-        sys.stdout, sys.stderr = old_out, old_err
-        sys.argv = old_argv
+    with progress.phase("run", unit="steps") as phase:
+        # the painter polls this once a frame instead of the profiler calling
+        # advance() -- `profiler` above runs on every call/return in the
+        # traced program and must stay pure dict/list work, not I/O
+        phase.bind_counter(lambda: len(events))
+
+        first_write = {"done": False}
+
+        def on_target_write() -> None:
+            # the target's own prints are about to hit the real terminal via
+            # the tee below -- freeze this phase's line once, permanently, so
+            # it never interleaves with a live \r-redrawn frame. One-shot: an
+            # interlock on every write would tax the very thing being timed.
+            if not first_write["done"]:
+                first_write["done"] = True
+                phase.suspend_animation()
+
+        old_out, old_err = sys.stdout, sys.stderr
+        old_argv = sys.argv
+        sys.stdout = _CaptureStream(old_out, "stdout", stdout_lines, t0, on_write=on_target_write)
+        sys.stderr = _CaptureStream(old_err, "stderr", stdout_lines, t0, on_write=on_target_write)
+        crashed = None
+        # a traced target that is itself `codemap` (the documented
+        # `codemap trace -- -m codemap explore`) must not build a second
+        # reporter bound to the capture-stream tee -- force it silent.
+        old_env = os.environ.get("CODEMAP_NO_PROGRESS")
+        os.environ["CODEMAP_NO_PROGRESS"] = "1"
+        sys.setprofile(profiler)
+        try:
+            _run_target(argv)
+        except SystemExit:
+            pass
+        except BaseException as e:  # a crashing target still leaves a useful partial trace
+            crashed = f"{type(e).__name__}: {e}"
+        finally:
+            sys.setprofile(None)
+            sys.stdout, sys.stderr = old_out, old_err
+            sys.argv = old_argv
+            if old_env is None:
+                os.environ.pop("CODEMAP_NO_PROGRESS", None)
+            else:
+                os.environ["CODEMAP_NO_PROGRESS"] = old_env
+
+        if truncated:
+            phase.set_summary(f"{len(events)} steps recorded, truncated at {MAX_STEPS}")
 
     steps = _merge(events, stdout_lines)
     trace = {

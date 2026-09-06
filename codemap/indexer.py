@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import discovery, entrypoints, gitio
+from . import progress as _progress
 from .config import Config
 from .db import get_meta, set_meta
 from .languages.registry import spec_for_path
@@ -384,7 +385,9 @@ def index_commit(
     stats: ScanStats,
     *,
     reindex: bool = False,
+    phase: _progress.Phase | None = None,
 ) -> None:
+    phase = phase or _progress.NO_PHASE
     root = cfg.root
     meta = gitio.commit_meta(root, sha)
     conn.execute(
@@ -422,6 +425,7 @@ def index_commit(
 
     for entry in entries:
         path = entry.path
+        phase.set_detail(f"{sha[:7]} {path}")
         # rename: move the files-row identity from old path to new
         if path in renamed_from:
             conn.execute(
@@ -491,7 +495,13 @@ def _index_repo_entry_points(conn: sqlite3.Connection, root, sha: str) -> None:
 # ------------------------------------------------------------------------ worktree
 
 
-def _index_worktree(conn: sqlite3.Connection, cfg: Config, stats: ScanStats) -> None:
+def _index_worktree(
+    conn: sqlite3.Connection,
+    cfg: Config,
+    stats: ScanStats,
+    *,
+    progress: _progress.Reporter | None = None,
+) -> None:
     """Sync the ``worktree`` pseudo-commit to the current on-disk state (spec M15).
 
     This is the graph's root now: it reflects whatever is on disk — including
@@ -505,6 +515,7 @@ def _index_worktree(conn: sqlite3.Connection, cfg: Config, stats: ScanStats) -> 
     sets ``meta.graph_head`` instead, which is what a *view* (explore/status/
     snapshot) should read to find the graph a user would actually want to see.
     """
+    progress = progress or _progress.NULL
     sha = WORKTREE_SHA
     root = cfg.root
     parent = gitio.head(root) if gitio.is_repo(root) else get_meta(conn, "last_indexed_commit")
@@ -526,20 +537,22 @@ def _index_worktree(conn: sqlite3.Connection, cfg: Config, stats: ScanStats) -> 
             (sha,),
         )
     }
-    for entry in entries:
-        blob = discovery.read_worktree_bytes(cfg.root, entry.path)
-        if blob is None:
-            continue
-        fid = _file_id(conn, entry.path, entry.lang, entry.tier)
-        if prev_hashes.get(entry.path) == _sha1(blob):
-            stats.files_skipped += 1
-            continue
-        pf = parse_source(entry.path, blob, spec_for_path(entry.path))
-        status = "added" if entry.path not in prev_hashes else "modified"
-        _write_parsed(conn, sha, fid, pf, blob, status, internal_roots)
-        stats.files_parsed += 1
-        if not pf.ok:
-            stats.errors.append((entry.path, pf.error or "parse error"))
+    with progress.phase("worktree", len(entries), unit="files") as p:
+        for entry in entries:
+            p.advance(detail=entry.path)
+            blob = discovery.read_worktree_bytes(cfg.root, entry.path)
+            if blob is None:
+                continue
+            fid = _file_id(conn, entry.path, entry.lang, entry.tier)
+            if prev_hashes.get(entry.path) == _sha1(blob):
+                stats.files_skipped += 1
+                continue
+            pf = parse_source(entry.path, blob, spec_for_path(entry.path))
+            status = "added" if entry.path not in prev_hashes else "modified"
+            _write_parsed(conn, sha, fid, pf, blob, status, internal_roots)
+            stats.files_parsed += 1
+            if not pf.ok:
+                stats.errors.append((entry.path, pf.error or "parse error"))
 
     for path in list(prev_hashes):
         if path not in present:
@@ -549,14 +562,14 @@ def _index_worktree(conn: sqlite3.Connection, cfg: Config, stats: ScanStats) -> 
     conn.commit()
 
 
-def sync_worktree(conn: sqlite3.Connection, cfg: Config) -> ScanStats:
+def sync_worktree(conn: sqlite3.Connection, cfg: Config, *, progress: _progress.Reporter | None = None) -> ScanStats:
     """Public entry point for a worktree-only sync (no git history walk).
 
     Used by ``scan()`` and by anything that wants to refresh the live graph
     in isolation (e.g. a future watch mode).
     """
     stats = ScanStats()
-    _index_worktree(conn, cfg, stats)
+    _index_worktree(conn, cfg, stats, progress=progress)
     set_meta(conn, "graph_head", WORKTREE_SHA)
     return stats
 
@@ -570,6 +583,7 @@ def scan(
     *,
     since: str | None = None,
     until: str = "HEAD",
+    progress: _progress.Reporter | None = None,
 ) -> ScanStats:
     """Index new commits (spec M2/M3), then sync the live worktree graph (M10).
 
@@ -584,11 +598,12 @@ def scan(
     live graph — and ``meta.graph_head``, which views read to find it — is
     left untouched.
     """
+    progress = progress or _progress.NULL
     stats = ScanStats()
     root = cfg.root
 
     if not gitio.is_repo(root):
-        _index_worktree(conn, cfg, stats)
+        _index_worktree(conn, cfg, stats, progress=progress)
         set_meta(conn, "graph_head", WORKTREE_SHA)
         return stats
 
@@ -607,16 +622,18 @@ def scan(
         from . import impact, intent, report, semdiff
 
         head_sha = resolve_sha(root, until)
-        for sha in shas:
-            index_commit(conn, cfg, sha, stats)
-            stats.commits_indexed += 1
-            meta = gitio.commit_meta(root, sha)
-            intent.capture(conn, cfg, sha, meta.message, consume=(sha == head_sha))
-            parent = parent_sha(conn, sha)
-            if parent is None or _commit_indexed(conn, parent):
-                changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
-                impacts = impact.annotate(conn, cfg, parent, sha, changes)
-                report.write_commit_file(conn, cfg, sha, impacts=impacts)
+        with progress.phase("history", len(shas), unit="commits") as p:
+            for sha in shas:
+                index_commit(conn, cfg, sha, stats, phase=p)
+                stats.commits_indexed += 1
+                meta = gitio.commit_meta(root, sha)
+                intent.capture(conn, cfg, sha, meta.message, consume=(sha == head_sha))
+                parent = parent_sha(conn, sha)
+                if parent is None or _commit_indexed(conn, parent):
+                    changes = semdiff.diff_commits(conn, cfg, parent, sha, persist=True)
+                    impacts = impact.annotate(conn, cfg, parent, sha, changes)
+                    report.write_commit_file(conn, cfg, sha, impacts=impacts)
+                p.advance(detail=sha[:7])
         conn.commit()
 
         from . import retention
@@ -624,7 +641,7 @@ def scan(
         retention.prune(conn, cfg)
 
     if until == "HEAD":
-        _index_worktree(conn, cfg, stats)
+        _index_worktree(conn, cfg, stats, progress=progress)
         set_meta(conn, "graph_head", WORKTREE_SHA)
 
     return stats
