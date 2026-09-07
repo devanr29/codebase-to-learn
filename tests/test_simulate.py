@@ -278,13 +278,21 @@ def test_tracer_with_animated_progress_never_pollutes_the_recording(
     monkeypatch.setattr(progress, "_FRAME_INTERVAL", 0.005)
     cfg = _idx_at_cfg_db(fixture_impact_repo, "i3-sig-partial")
 
+    # The target's *first* write is what freezes the animated line
+    # (tracer.record's on_target_write -> phase.suspend_animation), so the
+    # painter thread only has the window before that print to draw a frame.
+    # Sleep *before* the first print, not after, so that window is a real
+    # ~0.15s -- long enough that the daemon painter reliably lands a frame even
+    # on a loaded CI box. (With the sleep after the print, as it was, a fast
+    # runner finished import+print inside one _FRAME_INTERVAL and the painter
+    # never ran -- CI flaked on every runner quick enough to lose that race.)
     script = tmp_path / "runner.py"
     script.write_text(
         "import sys, time\n"
         f"sys.path.insert(0, {str(fixture_impact_repo.path)!r})\n"
         "from svc import report\n"
+        "time.sleep(0.15)\n"
         "print('about to build')\n"
-        "time.sleep(0.05)\n"
         "report.build_report('daily')\n"
         "print('done')\n",
         encoding="utf-8",
@@ -325,8 +333,9 @@ def test_tracer_with_animated_progress_never_pollutes_the_recording(
         assert "\r" not in text
         assert progress._UNICODE_GLYPHS["full"] not in text
         assert progress._ASCII_GLYPHS["full"] not in text
-    # the reporter drew at least one real frame on its own (separate) stream --
-    # proof the mechanism actually ran, not a vacuous pass
+    # the reporter drew at least one real frame on its own (separate) stream
+    # during the pre-print sleep above -- proof the mechanism actually ran, not
+    # a vacuous pass
     assert "\r" in stream.text
 
 
