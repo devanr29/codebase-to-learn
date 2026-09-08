@@ -245,6 +245,20 @@ def _clear_file_rows(conn: sqlite3.Connection, file_id: int, sha: str) -> None:
     )
 
 
+def _route_component_key(pf: ParsedFile, name_to_key: dict[str, str]) -> str | None:
+    """Which symbol a route *file* names, for detectors keyed on file location
+    rather than a decorator (``entrypoints.from_route_file``). Prefer the
+    file's own ``export default``; fall back to the first top-level
+    capitalized function/class — the React component-naming convention —
+    for an anonymous default export (``export default function () {...}``)."""
+    if pf.default_export and pf.default_export in name_to_key:
+        return name_to_key[pf.default_export]
+    for sym in pf.symbols:
+        if sym.qualified_name == sym.name and sym.kind in ("function", "class") and sym.name[:1].isupper():
+            return sym.key
+    return None
+
+
 def _write_parsed(
     conn: sqlite3.Connection,
     sha: str,
@@ -253,6 +267,7 @@ def _write_parsed(
     source: bytes,
     status: str,
     internal_roots: set[str],
+    frontend_roots: list[entrypoints.FrontendRoot],
 ) -> None:
     _clear_file_rows(conn, file_id, sha)
     loc = source.count(b"\n") + (1 if source and not source.endswith(b"\n") else 0)
@@ -319,6 +334,27 @@ def _write_parsed(
             conn.execute(
                 "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
                 (sha, key_to_id[key], "main", f"__main__ @ {pf.path}"),
+            )
+
+    # --- frontend entry points: file-based routing (reliable) + registration
+    #     regexes (best-effort) — see entrypoints.py's module docstring
+    if frontend_roots:
+        route_hit = entrypoints.from_route_file(pf.path, frontend_roots)
+        if route_hit:
+            comp_key = _route_component_key(pf, name_to_key)
+            if comp_key:
+                kind, detail = route_hit
+                conn.execute(
+                    "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+                    (sha, key_to_id[comp_key], kind, detail),
+                )
+        for hit in entrypoints.from_source(source.decode("utf-8", "replace"), pf.lang):
+            key = name_to_key.get(hit.component) if hit.component else None
+            if key is None:
+                continue
+            conn.execute(
+                "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+                (sha, key_to_id[key], hit.kind, hit.detail),
             )
 
 
@@ -406,6 +442,9 @@ def index_commit(
     entries = discovery.iter_commit(root, sha, cfg)
     internal_roots = _internal_names(entries)
     present_paths = {e.path for e in entries}
+    froots = entrypoints.frontend_roots(
+        gitio.ls_tree(root, sha), lambda p: gitio.show_bytes(root, sha, p)
+    )
 
     changed: dict[str, str] = {}   # path -> A|M
     renamed_from: dict[str, str] = {}
@@ -443,7 +482,7 @@ def index_commit(
         if blob is None:
             continue
         pf = parse_source(path, blob, spec_for_path(path))
-        _write_parsed(conn, sha, fid, pf, blob, changed.get(path, "A"), internal_roots)
+        _write_parsed(conn, sha, fid, pf, blob, changed.get(path, "A"), internal_roots, froots)
         stats.files_parsed += 1
         if not pf.ok:
             stats.errors.append((path, pf.error or "parse error"))
@@ -528,6 +567,9 @@ def _index_worktree(
     entries = discovery.iter_worktree(cfg)
     internal_roots = _internal_names(entries)
     present = {e.path for e in entries}
+    froots = entrypoints.frontend_roots(
+        discovery.raw_worktree_paths(root), lambda p: discovery.read_worktree_bytes(root, p)
+    )
 
     prev_hashes = {
         row["path"]: row["content_hash"]
@@ -549,7 +591,7 @@ def _index_worktree(
                 continue
             pf = parse_source(entry.path, blob, spec_for_path(entry.path))
             status = "added" if entry.path not in prev_hashes else "modified"
-            _write_parsed(conn, sha, fid, pf, blob, status, internal_roots)
+            _write_parsed(conn, sha, fid, pf, blob, status, internal_roots, froots)
             stats.files_parsed += 1
             if not pf.ok:
                 stats.errors.append((entry.path, pf.error or "parse error"))

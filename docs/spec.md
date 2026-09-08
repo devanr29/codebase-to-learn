@@ -1,7 +1,7 @@
 # codemap — Change Explainer for AI-Assisted Codebases
 
 **Spec version:** 2.0 (supersedes 1.0 — architecture changed, do not follow v1)
-**Status:** Implemented through M18 (see §8 Milestones) — this document is a
+**Status:** Implemented through M19 (see §8 Milestones, §17) — this document is a
 design record, not a task list; treat it as historical context for *why* the
 code is shaped the way it is, not a to-do.
 **Audience:** contributors, and Claude Code when extending the implementation
@@ -500,6 +500,15 @@ un-fielded child; Swift's parameter list isn't wrapped in any single node a
 `@params` capture could point at), so a clean tags.scm for either needs either
 a grammar-version-specific workaround or a change to the capture contract
 itself — a real design decision, not a mechanical add, and out of scope here.
+Also not shipped, same reason it's out of scope rather than an oversight: Dart
+(no `tree-sitter-language-pack` grammar carried at all) and Vue/Svelte (a
+single-file-component format layering its own template/script/style split on
+top of a host grammar — a different extraction shape than "one grammar, one
+tags.scm"). A Flutter/Dart, native-Kotlin, native-Swift, or Vue/Svelte
+frontend is therefore invisible to `codemap scan` today, same as any other
+unregistered extension (§1 discovery.py `_accept`): zero files indexed, zero
+entry points, zero Simulate scenarios — not partially covered, not silently
+degraded, just absent. See §17 for what *is* covered on the JS/TS side.
 
 ## 15. Resolution uplift (M17)
 
@@ -590,6 +599,82 @@ carries neither, from the same stack). Scrubbing is therefore exact and
 instant, and `#/sim/<scenario-id>/<step>` deep-links reproduce a frame
 byte-for-byte identical to reaching it by playback. Layout is computed once
 per scenario switch, never per step, so nodes never move while playing.
+
+---
+
+## 17. Frontend awareness (M19)
+
+Through M18 a JS/TS frontend was *indexed* (`.tsx`/`.jsx` are tier-1/2
+languages since M1) but structurally invisible to everything that mattered:
+`entrypoints.py` only knew server frameworks (Flask/FastAPI/NestJS decorators,
+`[project.scripts]`, Dockerfile, Python `__main__`), so a repo with a real
+Expo/Next/Remix frontend detected zero frontend entry points, which meant zero
+frontend Simulate scenarios (`site/brief.py`'s candidates are entry-points-
+only) — the whole frontend half of a full-stack repo was absent from the
+Simulate rail and the Scenario index, not just under-covered. M19 closes three
+separate gaps that all had to move together for a screen to become a real,
+playable scenario:
+
+1. **Frontend entry-point detection** (`entrypoints.py`) — file-based routing
+   (expo-router, Next.js app + pages router, Remix/React Router v7 flat
+   routes) is path-based and deterministic, gated on a matching dependency in
+   the nearest `package.json` (`frontend_roots`) so an `app/` directory in a
+   Node *backend* is never mistaken for a router. Registration-based detection
+   (React Navigation `<Stack.Screen>`, an app root like
+   `AppRegistry.registerComponent`/`ReactDOM.render`) is regex-over-source,
+   best-effort, and explicitly documented as such — a screen assembled in a
+   loop or imported from elsewhere is invisible to it. A route file resolves
+   to a symbol via its `export default` (`parsing.py::_default_export_name`,
+   a new JS/TS-only `ParsedFile.default_export` field) or, for an anonymous
+   default export, the first top-level capitalized function/class — the React
+   component-naming convention.
+2. **JSX composition as real graph edges** — `tags.scm` gains a
+   `@reference.render` capture (`jsx_opening_element`/
+   `jsx_self_closing_element`), filtered in `parsing.py` to capitalized names
+   only (the JSX convention separating a component from an intrinsic host
+   element like `<div>`, which the grammar doesn't encode) and folded into the
+   same `refs` rows a `@reference.call` produces — no schema change, and it
+   rides the existing EXTRACTED/INFERRED/AMBIGUOUS resolution tiers (§15) for
+   free. This is why gap 3 mattered: without alias resolution, `<Foo/>`
+   composed from an aliased import (`@/components/Foo`) never earns an
+   INFERRED edge, and reads as a leaf. `tsx` gets its **own** query_dir
+   (`queries/tsx/`, not shared with `typescript`) because the plain
+   `typescript` grammar has no JSX node types and fails to *compile* a query
+   that references them — not merely "matches nothing." `javascript`'s single
+   grammar already parses JSX, so `.jsx` needed no split.
+3. **tsconfig/jsconfig `paths` aliases** (`resolve.py::load_ts_aliases`,
+   `TsAlias`) — the M17 non-goal ("the real cross-file resolution graphify has
+   for JS/TS... a substantial, JS/TS-specific undertaking on its own") is now
+   scoped down and shipped: `paths` (JSONC-tolerant parse, `extends` not
+   followed since it typically points into hard-excluded `node_modules`) is
+   read and expanded before falling back to plain relative resolution. A
+   match classifies as `internal` even when the exact target file isn't among
+   the indexed set (e.g. a re-export barrel) — the whole point of an alias is
+   that it names something in this repo, not a package. This is opt-in via
+   `resolve_imports(..., aliases=...)`: `site/model.py` (which builds the live
+   graph `codemap explore` renders) loads and passes them; `impact.analyze`'s
+   per-commit pass across a full `codemap scan` history deliberately does not,
+   so a large repo's history walk doesn't pay a tsconfig read on every
+   historical commit for a feature that only matters for the live view.
+
+`site/brief.py`'s `_SCENARIO_GROUP` gains `screen`/`layout` kinds, sorted
+ahead of the backend groups ("The app shell mounts", "A screen opens" before
+"A request comes in") so a full-stack repo's Scenario index reads as one
+narrative across the seam. The flat `_HERO_STEP_BUDGET` (first 8 candidates
+got a derived step tree) becomes a **per-group** budget (2 per group, 12
+overall) — otherwise 20+ screens sorting ahead of the routes would spend the
+whole budget on the frontend and leave the backend with none.
+
+`codemap scan` gained `--rebuild` (drop every table, re-migrate, full-history
+rescan): all three gaps change parse/detection *output* for file content that
+hasn't changed, and an incremental scan skips unchanged files by content hash
+— without `--rebuild`, upgrading `codemap` on an already-indexed repo would
+silently keep every frontend file's stale (entry-point-less, edge-less) rows.
+
+**Deliberately out of scope**, same boundary §14 draws: Flutter/Dart, native
+Kotlin/Swift, Vue/Svelte stay unindexed (no registered grammar) — nothing in
+M19 changes that. "All frontend-friendly," here, means every JS/TS frontend
+convention in common use, not every mobile UI toolkit.
 
 ---
 

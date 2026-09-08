@@ -95,6 +95,17 @@ def _walk_plain(root: Path) -> list[str]:
     return found
 
 
+def raw_worktree_paths(root: Path | str) -> list[str]:
+    """Every path in the worktree, honoring ``.gitignore``, with **no**
+    language filter — used to find files a registered-language walk would
+    never see, like ``package.json`` or ``tsconfig.json`` (frontend
+    entry-point + import-alias detection)."""
+    root = Path(root)
+    if gitio.is_repo(root):
+        return gitio.worktree_files(root)
+    return _walk_plain(root)
+
+
 def read_worktree_bytes(root: Path | str, rel_path: str) -> bytes | None:
     p = Path(root) / rel_path
     try:

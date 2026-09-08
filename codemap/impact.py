@@ -86,7 +86,9 @@ def _path_of(key: str) -> str:
 # --------------------------------------------------------------------------- graph
 
 
-def _imports_by_file(conn: sqlite3.Connection, sha: str) -> dict[str, set[str]]:
+def _imports_by_file(
+    conn: sqlite3.Connection, sha: str, aliases: list[resolve.TsAlias] | None = None
+) -> dict[str, set[str]]:
     """``file path -> resolved file paths it imports``, at ``sha`` — the
     evidence a call needs to earn ``INFERRED`` rather than falling all the way
     to a global, over-broad name match (spec M15 resolution uplift)."""
@@ -107,13 +109,15 @@ def _imports_by_file(conn: sqlite3.Connection, sha: str) -> dict[str, set[str]]:
         )
     ]
     out: dict[str, set[str]] = {}
-    for ri in resolve.resolve_imports(pairs, paths):
+    for ri in resolve.resolve_imports(pairs, paths, aliases=aliases):
         if ri.target:
             out.setdefault(ri.importer, set()).add(ri.target)
     return out
 
 
-def call_graph(conn: sqlite3.Connection, sha: str) -> nx.DiGraph:
+def call_graph(
+    conn: sqlite3.Connection, sha: str, aliases: list[resolve.TsAlias] | None = None
+) -> nx.DiGraph:
     """Directed graph of symbol keys; an edge ``caller -> callee`` for every
     reference, resolved in three tiers (spec M15) — each edge carries a
     ``confidence`` attribute recording which one won, but which edges exist
@@ -143,7 +147,7 @@ def call_graph(conn: sqlite3.Connection, sha: str) -> nx.DiGraph:
         name_to_keys.setdefault(r["name"], []).append(r["key"])
         g.add_node(r["key"])
 
-    imports_by_file = _imports_by_file(conn, sha)
+    imports_by_file = _imports_by_file(conn, sha, aliases=aliases)
 
     for r in conn.execute(
         "SELECT from_symbol_id, target_name FROM refs "

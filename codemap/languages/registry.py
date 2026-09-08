@@ -11,6 +11,11 @@ The ``tags.scm`` contract (captures the parser understands):
     @docstring    string node that is the first body statement, optional
     @decorator    a decorator / annotation node
     @reference.call   a call expression node (paired with its @name)
+    @reference.render a JSX element being rendered (paired with its @name);
+        only ``tsx``/``javascript`` define this capture. ``parsing.py`` keeps
+        only capitalized names (a component convention, not a grammar fact —
+        intrinsic host elements like ``<div>`` are filtered there) and folds
+        the rest into the same call-graph edges as @reference.call.
     @import       a whole import statement node (raw text is kept verbatim)
 
 Everything else — nesting, method-vs-function, which decorator binds to which
@@ -49,7 +54,12 @@ def _register(exts: list[str], spec: LanguageSpec) -> None:
 _PY = LanguageSpec("python", "python", "python", tier=2)
 _JS = LanguageSpec("javascript", "javascript", "javascript", tier=1)
 _TS = LanguageSpec("typescript", "typescript", "typescript", tier=2)
-_TSX = LanguageSpec("tsx", "tsx", "typescript", tier=2)
+# TSX gets its own query_dir (not a shared "typescript" one): the plain
+# `typescript` grammar has no JSX node types at all, so a query that adds
+# @reference.render (jsx_opening_element etc.) fails to *compile* against it
+# — not just "matches nothing". queries/tsx/tags.scm = typescript's tags plus
+# the JSX rules; queries/typescript/tags.scm stays JSX-free.
+_TSX = LanguageSpec("tsx", "tsx", "tsx", tier=2)
 
 _register([".py", ".pyi"], _PY)
 _register([".js", ".jsx", ".mjs", ".cjs"], _JS)

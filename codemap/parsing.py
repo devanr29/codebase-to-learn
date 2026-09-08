@@ -70,6 +70,7 @@ class ParsedFile:
     refs: list[Ref] = field(default_factory=list)
     imports: list[Import] = field(default_factory=list)
     main_calls: list[str] = field(default_factory=list)  # names called under `if __name__ == "__main__"`
+    default_export: str | None = None  # JS/TS only: name of `export default ...`, if resolvable
     ok: bool = True
     error: str | None = None
 
@@ -162,6 +163,16 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
         elif "reference.call" in caps:
             if caps.get("name"):
                 call_items.append((_text(source, caps["name"][0]), caps["reference.call"][0]))
+        elif "reference.render" in caps:
+            # JSX composition folds into the same call-graph edges as an
+            # ordinary call — a rendered <Component/> IS a reference to it.
+            # Keep only capitalized names: that's the JSX convention that
+            # separates a component (`<TodayCard/>`) from an intrinsic host
+            # element (`<div/>`), which the grammar itself doesn't encode.
+            if caps.get("name"):
+                name = _text(source, caps["name"][0])
+                if name[:1].isupper():
+                    call_items.append((name, caps["reference.render"][0]))
         elif "import" in caps:
             import_nodes.extend(caps["import"])
 
@@ -277,6 +288,8 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
 
     if spec.name == "python":
         pf.main_calls = _main_guard_calls(tree.root_node, source)
+    elif spec.name in ("javascript", "typescript", "tsx"):
+        pf.default_export = _default_export_name(tree.root_node, source)
 
     pf.symbols = symbols
 
@@ -308,3 +321,42 @@ def _main_guard_calls(root_node, source: bytes) -> list[str]:
             for j in range(n.named_child_count):
                 stack.append(n.named_child(j))
     return out
+
+
+def _default_export_name(root_node, source: bytes) -> str | None:
+    """Name of a top-level ``export default ...`` (JS/TS), if one exists and
+    names something resolvable. Used by ``entrypoints.py`` to tie a route file
+    (one component per file, by convention) to a symbol."""
+    for i in range(root_node.named_child_count):
+        node = root_node.named_child(i)
+        if node.type != "export_statement":
+            continue
+        children = node.children  # includes anonymous tokens: 'export', 'default'
+        kinds = [c.type for c in children]
+        if "default" not in kinds:
+            continue
+        idx = kinds.index("default")
+        if idx + 1 >= len(children):
+            continue
+        name = _name_of_export_target(children[idx + 1], source)
+        if name:
+            return name
+    return None
+
+
+def _name_of_export_target(node, source: bytes) -> str | None:
+    if node.type in ("function_declaration", "class_declaration", "generator_function_declaration"):
+        name_node = node.child_by_field_name("name")
+        return _text(source, name_node) if name_node else None
+    if node.type == "identifier":
+        return _text(source, node)
+    if node.type == "call_expression":
+        # best-effort: `export default memo(Foo)` / `connect(...)(Foo)` — only
+        # when there's exactly one identifier argument, so this doesn't guess
+        # wrong on a genuinely ambiguous call
+        args = node.child_by_field_name("arguments")
+        if args is not None:
+            idents = [c for c in args.named_children if c.type == "identifier"]
+            if len(idents) == 1:
+                return _text(source, idents[0])
+    return None

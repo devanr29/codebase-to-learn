@@ -97,6 +97,20 @@ of the library you're describing.
    an actual run: `codemap trace --name "<title>" -- <command>` (never edit its
    output by hand).
 
+   **Frontend screens are scenarios too.** If the Scenario index has `screen`/
+   `layout` entries (codemap detects expo-router, Next.js app/pages router,
+   Remix/React Router flat routes, and React Navigation registrations), they
+   sort into their own groups ("The app shell mounts", "A screen opens") ahead
+   of the backend — treat them exactly like a route: ship every one as a
+   `root`-only entry, no different authoring effort. If the repo has **both** a
+   frontend and a backend, make at least one hero scenario cross the seam:
+   root it at a screen, and narrate through to the API-client call and the
+   backend route it hits (`scenarios-derived.json`'s derived tree for a screen
+   root already includes that hop when the code is written to import the API
+   client directly). That one scenario is worth more than either half alone —
+   it is the only place in the whole surface that shows how the two sides of
+   the app actually connect.
+
 6. **Bake and review.**
    ```
    codemap explore --open

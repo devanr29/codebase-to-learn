@@ -29,6 +29,15 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
       "summary": "how an inbound sync call fans out to the ledger and the DB"
     },
     {
+      "id": "budget-overview-screen",
+      "title": "Opening the budget screen",
+      "trigger": { "surface": "ui", "text": "tap the Budget tab" },
+      "root": "mobile/src/app/(tabs)/budget/index.tsx::BudgetOverviewScreen",
+      "group": "A screen opens",
+      "order": 16,
+      "summary": "what mounts and which API calls fire when the budget tab opens"
+    },
+    {
       "id": "explore-run",
       "title": "Running `codemap explore`",
       "trigger": { "surface": "terminal", "text": "codemap explore" },
@@ -81,14 +90,24 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
 - **`surface` is optional — leave it out and the renderer infers one.** The
   Stage pane (`explore.js`'s `resolveSurface`) tries, in order: your explicit
   `surface`; the majority `emit.surface` across the steps; the root symbol's
-  entry-point kind (a `route`/`controller` → `browser` or `api`, a `task` →
-  `job`, a `cli`/`script`/`main`/`docker` → `terminal`); then the root symbol's
-  file path and code (`.tsx`/`.jsx`/`components/` → `ui`, SQL/`cursor.execute`
-  → `db`, `threading.Thread`/`.delay(`/`worker` → `job`, a file write → `file`).
-  It falls back to `terminal` only when none of that matches. Set `surface`
-  yourself only when the inference gets it wrong — e.g. a route that returns
-  JSON but has no `jsonify`/`serialize` in its snippet, so it's guessed as
-  `browser` instead of `api`.
+  entry-point kind (a `route`/`controller` → `browser` or `api`, a `screen`/
+  `layout` → `ui`, a `task` → `job`, a `cli`/`script`/`main`/`docker` →
+  `terminal`); then the root symbol's file path and code (`.tsx`/`.jsx`/
+  `components/` → `ui`, SQL/`cursor.execute` → `db`, `threading.Thread`/
+  `.delay(`/`worker` → `job`, a file write → `file`). It falls back to
+  `terminal` only when none of that matches. Set `surface` yourself only when
+  the inference gets it wrong — e.g. a route that returns JSON but has no
+  `jsonify`/`serialize` in its snippet, so it's guessed as `browser` instead
+  of `api`.
+- **A frontend screen** (`entrypoints.py` detected it from a route file —
+  `app/**/*.tsx` for expo-router/Next, `pages/**` for Next's pages router, or
+  a React Navigation `<Stack.Screen>` registration) gets entry kind `screen`
+  or `layout` and, left with no explicit `trigger`, resolves to the `ui`
+  surface automatically. **Make at least one hero scenario cross the seam**
+  when a repo has both a frontend and a backend: root it at the screen, and
+  let a later step land on the API-client call and the backend route it hits
+  — that single scenario teaches more about how the app actually works than
+  either half alone.
 - **`emit.text` is rendered verbatim as what the user sees** — a browser page
   line, an API response body, a job's log line, a mounted UI block — not
   discarded narration. Write it as the actual output, not a description of it:

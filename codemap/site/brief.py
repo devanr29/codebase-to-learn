@@ -57,19 +57,27 @@ def _derive_scenario_steps(
 
 
 # entry-point kind -> (Simulate-rail group, base order). The skill orders the
-# rail ascending by `order`, so startup fires before an inbound request fires
-# before a background job. `main`/`docker` cover process start; `route`/
-# `controller` an inbound call; `task` a queue handler; `script` a one-shot tool.
+# rail ascending by `order`, so the curriculum reads as one narrative across
+# the frontend/backend seam: the app starts -> its shell mounts -> a screen
+# opens -> a request hits the backend -> a background job runs. `main`/
+# `docker` cover process start; `layout`/`screen` a frontend route (see
+# entrypoints.py's frontend detectors); `route`/`controller` an inbound
+# backend call; `task` a queue handler; `script` a one-shot tool.
 _SCENARIO_GROUP = {
     "main": ("Startup", 10),
     "docker": ("Startup", 10),
+    "layout": ("The app shell mounts", 14),
+    "screen": ("A screen opens", 16),
     "route": ("A request comes in", 20),
     "controller": ("A request comes in", 20),
     "task": ("Background jobs", 40),
     "script": ("Scripts & tools", 50),
 }
 _SCENARIO_GROUP_DEFAULT = ("Other entry points", 60)
-_HERO_STEP_BUDGET = 8   # emit real derived step trees for the first N candidates only
+_HERO_PER_GROUP = 2      # real derived step trees per group ...
+_HERO_STEP_BUDGET = 12   # ... capped at this many overall, so 20+ screens
+                         # sorting ahead of the routes can't starve every
+                         # other group of a hero tree
 
 
 def _scenario_candidates(data: dict) -> list[dict]:
@@ -134,16 +142,21 @@ def _emit_scenarios_derived(briefs_dir, data: dict, written: list[str]) -> list[
         ]
 
     scenarios = []
-    for rank, c in enumerate(candidates):
+    hero_total = 0
+    hero_per_group: dict[str, int] = {}
+    for c in candidates:
         entry = {
             "root_key": c["key"], "root_qual": c["qual"], "file": c["file"],
             "kind": c["kind"], "detail": c["detail"], "fan_in": c["fan_in"],
             "suggested_group": c["group"], "suggested_order": c["order"],
         }
-        if rank < _HERO_STEP_BUDGET:
+        grp = c["group"]
+        if hero_total < _HERO_STEP_BUDGET and hero_per_group.get(grp, 0) < _HERO_PER_GROUP:
             steps = _derive_scenario_steps(nodes, out_calls, c["i"])
             if len(steps) >= 2:
                 entry["steps"] = steps
+                hero_total += 1
+                hero_per_group[grp] = hero_per_group.get(grp, 0) + 1
         scenarios.append(entry)
 
     path = briefs_dir / "scenarios-derived.json"
@@ -268,9 +281,13 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
                   "`root` + `group` + `order` + `summary`, no `steps`); the "
                   "renderer derives each call tree. Hand-author `steps` only for "
                   "the few a Learn screen links via `\"sim\"`. `scenarios-derived.json` "
-                  "has real step trees for the first "
-                  f"{_HERO_STEP_BUDGET}. Suggested `group`/`order` are a starting "
-                  "point — reorder to match how the app really runs.")
+                  f"has real step trees for up to {_HERO_PER_GROUP} candidates per "
+                  f"group ({_HERO_STEP_BUDGET} total), so a screen and a route can "
+                  "both get one. Suggested `group`/`order` are a starting point — "
+                  "reorder to match how the app really runs, and consider making "
+                  "at least one hero scenario cross the frontend/backend seam "
+                  "(tap -> screen -> api client -> HTTP -> backend route) if this "
+                  "repo has both.")
         ov.append("")
         last_group = None
         for c in scenario_candidates:

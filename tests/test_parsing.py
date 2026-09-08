@@ -71,3 +71,98 @@ def test_every_file_parses_clean_at_c1(fixture_repo):
     parsed = _parse_commit(fixture_repo.path, fixture_repo.sha("c1-initial"))
     assert all(pf.ok for pf in parsed.values())
     assert set(parsed) == {"app/core.py", "app/util.py", "web/api.ts", "web/loader.ts"}
+
+
+# --------------------------------------------------------- M19: default_export
+
+
+def _parse_tsx(src: bytes, path: str = "app/screen.tsx"):
+    spec = spec_for_path(path)
+    return parse_source(path, src, spec)
+
+
+def test_default_export_named_function_declaration():
+    pf = _parse_tsx(b"export default function BudgetScreen() { return null; }")
+    assert pf.default_export == "BudgetScreen"
+
+
+def test_default_export_named_class_declaration():
+    pf = _parse_tsx(b"export default class BudgetScreen {}")
+    assert pf.default_export == "BudgetScreen"
+
+
+def test_default_export_re_export_identifier():
+    pf = _parse_tsx(b"function BudgetScreen() {}\nexport default BudgetScreen;")
+    assert pf.default_export == "BudgetScreen"
+
+
+def test_default_export_const_arrow_then_export():
+    pf = _parse_tsx(b"const BudgetScreen = () => null;\nexport default BudgetScreen;")
+    assert pf.default_export == "BudgetScreen"
+
+
+def test_default_export_wrapped_in_single_arg_call():
+    pf = _parse_tsx(b"function BudgetScreen() {}\nexport default memo(BudgetScreen);")
+    assert pf.default_export == "BudgetScreen"
+
+
+def test_default_export_anonymous_function_is_none():
+    pf = _parse_tsx(b"export default function () { return null; }")
+    assert pf.default_export is None
+
+
+def test_default_export_absent_for_python():
+    pf = parse_source("app/core.py", b"def load(path):\n    return path\n", spec_for_path("app/core.py"))
+    assert pf.default_export is None
+
+
+# -------------------------------------------------- M19: JSX composition edges
+
+
+def test_jsx_component_reference_becomes_a_call_ref():
+    src = b"""
+function BudgetOverviewScreen() {
+  return <View><TodayCard /><WalletStrip data={x} /></View>;
+}
+"""
+    pf = _parse_tsx(src)
+    targets = {r.target_name for r in pf.refs if r.from_key == "app/screen.tsx::BudgetOverviewScreen"}
+    assert "TodayCard" in targets
+    assert "WalletStrip" in targets
+
+
+def test_jsx_intrinsic_host_elements_are_not_captured():
+    src = b"""
+function BudgetOverviewScreen() {
+  return <View><div className="x"><span>hi</span></div></View>;
+}
+"""
+    pf = _parse_tsx(src)
+    targets = {r.target_name for r in pf.refs if r.from_key == "app/screen.tsx::BudgetOverviewScreen"}
+    # `View` is capitalized (a component) and kept; `div`/`span` are lowercase
+    # intrinsic host elements and must not read as call-graph edges.
+    assert "View" in targets
+    assert "div" not in targets
+    assert "span" not in targets
+
+
+def test_jsx_member_expression_component():
+    src = b"""
+function Screen() {
+  return <Comp.Sub />;
+}
+"""
+    pf = _parse_tsx(src)
+    targets = {r.target_name for r in pf.refs if r.from_key == "app/screen.tsx::Screen"}
+    assert "Sub" in targets
+
+
+def test_jsx_works_in_plain_jsx_files_too():
+    src = b"""
+function Screen() {
+  return <TodayCard />;
+}
+"""
+    pf = parse_source("app/screen.jsx", src, spec_for_path("app/screen.jsx"))
+    targets = {r.target_name for r in pf.refs if r.from_key == "app/screen.jsx::Screen"}
+    assert "TodayCard" in targets

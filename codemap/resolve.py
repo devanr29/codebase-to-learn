@@ -6,17 +6,27 @@ demand for the explorer, **without touching the incremental index path**, so the
 from-scratch / incremental equality contract in ``tests/test_incremental.py`` is
 unaffected. It can later be promoted into ``_write_parsed`` to fill the column.
 
-Resolution is best-effort and structural only: dynamic imports, path aliases
-(``@/components/...``) and re-export barrels are blind spots, same as the rest
-of codemap's graph.
+Resolution is best-effort and structural only: dynamic imports and re-export
+barrels are blind spots, same as the rest of codemap's graph. tsconfig/
+jsconfig ``paths`` aliases (``@/components/...``) are **not** a blind spot —
+``load_ts_aliases`` reads them and ``resolve_imports`` expands them before
+falling back to a bare specifier — but the aliases are opt-in via the
+``aliases`` parameter. ``codemap explore`` (``site/model.py``) loads and passes
+them, since that is what builds the live graph the HTML surface shows;
+``impact.analyze``'s per-commit pass across a full ``codemap scan`` history
+does not, so a large repo's history walk doesn't pay a tsconfig read on every
+historical commit for a feature that only matters for the live view.
 """
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 
-from . import discovery
+from . import discovery, gitio
+from .config import HARD_EXCLUDES
 from .indexer import (
     _internal_names,
     classify_import,
@@ -108,18 +118,42 @@ def _ts_candidates(mod: str, importer: str) -> list[str]:
 
 
 def resolve_imports(
-    pairs, file_paths: set[str] | frozenset[str]
+    pairs, file_paths: set[str] | frozenset[str], aliases: list[TsAlias] | None = None
 ) -> list[ResolvedImport]:
     """``pairs``: iterable of ``(importer_path, raw)``. First candidate that
     exists among ``file_paths`` wins, mirroring how the rest of codemap resolves
-    ambiguity (first match, deterministic order)."""
+    ambiguity (first match, deterministic order).
+
+    ``aliases`` (optional, see ``load_ts_aliases``): a bare TS/JS specifier is
+    tried against tsconfig ``paths`` patterns scoped to the importer before
+    falling back to plain relative resolution. A match always classifies as
+    ``internal`` even when the target file isn't among ``file_paths`` (e.g. a
+    re-export barrel) — that's still correct: the whole point of an alias is
+    that it names something in this repo, not a package.
+    """
     paths = set(file_paths)
     internal = _internal_names(_entries(paths))
+    aliases = aliases or []
     out: list[ResolvedImport] = []
     for importer, raw in pairs:
         spec = spec_for_path(importer)
         lang = spec.name if spec else "python"
         mod, external = classify_import(raw, lang, internal)
+
+        alias_matched = False
+        alias_target: str | None = None
+        if aliases and lang in ("typescript", "tsx", "javascript") and not mod.startswith("."):
+            for stem in _expand_alias(mod, aliases, importer):
+                alias_matched = True
+                cands = [f"{stem}{ext}" for ext in _TS_EXTS] + [f"{stem}/index{ext}" for ext in _TS_EXTS]
+                hit = next((c for c in cands if c in paths and c != importer), None)
+                if hit:
+                    alias_target = hit
+                    break
+        if alias_matched:
+            out.append(ResolvedImport(importer, raw, alias_target, False, "internal", mod))
+            continue
+
         kind = _kind_of(mod, lang, external, internal)
         if external or not mod:
             out.append(ResolvedImport(importer, raw, None, bool(external), kind, mod))
@@ -175,3 +209,110 @@ def _kind_of(
         return "internal"  # classify_import never marks a C/C++ include external — see there
     # php and anything else unlisted: no stdlib concept modeled
     return "third_party" if external else "internal"
+
+
+# ------------------------------------------------------------ tsconfig aliases
+
+
+@dataclass(frozen=True)
+class TsAlias:
+    config_dir: str            # posix dir holding the tsconfig/jsconfig ("" = repo root)
+    pattern: str                # e.g. "@/*" or "@/components/*"
+    targets: tuple[str, ...]    # e.g. ("src/*",) — already joined with baseUrl, repo-relative
+
+
+# tsconfig/jsconfig is JSONC (comments + trailing commas). This strips both
+# without touching string contents, so a path containing "//" survives.
+_JSONC_TOKEN_RE = re.compile(r'"(?:\\.|[^"\\])*"|//[^\n]*|/\*.*?\*/', re.DOTALL)
+_TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
+
+
+def _strip_jsonc(text: str) -> str:
+    stripped = _JSONC_TOKEN_RE.sub(lambda m: m.group(0) if m.group(0).startswith('"') else "", text)
+    return _TRAILING_COMMA_RE.sub(r"\1", stripped)
+
+
+def load_ts_aliases(root, sha: str) -> list[TsAlias]:
+    """Every ``paths`` alias declared in any ``tsconfig.json``/``jsconfig.json``
+    in the tree, resolved against its own ``baseUrl``. ``extends`` is not
+    followed — the common case (``"extends": "expo/tsconfig.base"``) points
+    into ``node_modules``, which is hard-excluded anyway, and a project's own
+    ``paths`` block is what actually matters here."""
+    from .indexer import WORKTREE_SHA  # local: avoids a resolve<->indexer import cycle at load time
+
+    if sha == WORKTREE_SHA:
+        all_paths = discovery.raw_worktree_paths(root)
+        read = lambda p: discovery.read_worktree_bytes(root, p)  # noqa: E731
+    else:
+        all_paths = gitio.ls_tree(root, sha)
+        read = lambda p: gitio.show_bytes(root, sha, p)  # noqa: E731
+
+    out: list[TsAlias] = []
+    for path in all_paths:
+        if PurePosixPath(path).name not in ("tsconfig.json", "jsconfig.json"):
+            continue
+        if any(part in HARD_EXCLUDES for part in path.split("/")):
+            continue
+        blob = read(path)
+        if not blob:
+            continue
+        try:
+            data = json.loads(_strip_jsonc(blob.decode("utf-8", "replace")))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        opts = data.get("compilerOptions") or {}
+        paths_map = opts.get("paths") or {}
+        if not isinstance(paths_map, dict) or not paths_map:
+            continue
+
+        config_dir = str(PurePosixPath(path).parent)
+        config_dir = "" if config_dir == "." else config_dir
+        base_url = opts.get("baseUrl") or "."
+        base_dir = str(PurePosixPath(config_dir) / base_url) if config_dir else str(PurePosixPath(base_url))
+        base_dir = "" if base_dir == "." else base_dir.removeprefix("./")
+
+        for pattern, targets in paths_map.items():
+            if not isinstance(targets, list):
+                continue
+            resolved = [
+                (str(PurePosixPath(base_dir) / t) if base_dir else t)
+                for t in targets
+                if isinstance(t, str)
+            ]
+            if resolved:
+                out.append(TsAlias(config_dir=config_dir, pattern=pattern, targets=tuple(resolved)))
+    return out
+
+
+def _expand_alias(mod: str, aliases: list[TsAlias], importer: str) -> list[str]:
+    """Repo-relative stems ``mod`` could resolve to, most-specific ``tsconfig``
+    (deepest ``config_dir`` that's an ancestor of ``importer``) first."""
+    importer_dir = str(PurePosixPath(importer).parent)
+    scoped = [
+        a for a in aliases
+        if not a.config_dir or importer_dir == a.config_dir or importer_dir.startswith(a.config_dir + "/")
+    ]
+    scoped.sort(key=lambda a: -len(a.config_dir))
+    out: list[str] = []
+    for alias in scoped:
+        out.extend(_expand_pattern(mod, alias.pattern, alias.targets))
+    return out
+
+
+def _expand_pattern(mod: str, pattern: str, targets: tuple[str, ...]) -> list[str]:
+    if "*" not in pattern:
+        return list(targets) if mod == pattern else []
+    prefix, _, suffix = pattern.partition("*")
+    if not mod.startswith(prefix) or not mod.endswith(suffix) or len(mod) < len(prefix) + len(suffix):
+        return []
+    captured = mod[len(prefix): len(mod) - len(suffix)] if suffix else mod[len(prefix):]
+    out = []
+    for t in targets:
+        if "*" in t:
+            tp, _, ts = t.partition("*")
+            out.append(f"{tp}{captured}{ts}")
+        else:
+            out.append(t)
+    return out

@@ -87,6 +87,21 @@ def cmd_scan(args: argparse.Namespace) -> int:
     root = _find_root(Path(args.path) if args.path else None)
     cfg = config.init(root)
     conn = db.connect(cfg.db_path)
+    if getattr(args, "rebuild", False):
+        # Drop every table and re-migrate from scratch, then fall through to
+        # an ordinary full-history scan (since=None). Needed whenever parsing/
+        # detection *output* changes for unchanged file content — an
+        # incremental scan skips such files by content hash and would
+        # silently keep their stale rows otherwise.
+        conn.executescript(
+            "DROP TABLE IF EXISTS meta; DROP TABLE IF EXISTS commits; "
+            "DROP TABLE IF EXISTS files; DROP TABLE IF EXISTS file_versions; "
+            "DROP TABLE IF EXISTS symbols; DROP TABLE IF EXISTS symbol_versions; "
+            "DROP TABLE IF EXISTS refs; DROP TABLE IF EXISTS imports; "
+            "DROP TABLE IF EXISTS entry_points; DROP TABLE IF EXISTS changes; "
+            "DROP TABLE IF EXISTS intents;"
+        )
+        args.since = None
     db.migrate(conn)
     rep = _progress.from_args(args, command="scan", root=root)
     try:
@@ -350,6 +365,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("scan", cmd_scan, "index commits into the graph")
     sp.add_argument("--since", help="index from this commit forward (default: last indexed)")
+    sp.add_argument(
+        "--rebuild", action="store_true",
+        help="drop the existing index and re-scan full history from scratch "
+             "(use after a codemap upgrade that changes parsing/detection, since "
+             "an incremental scan skips unchanged files by content hash)",
+    )
 
     sp = add("explain", cmd_explain, "print the markdown change entry for a commit")
     sp.add_argument(

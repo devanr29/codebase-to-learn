@@ -115,7 +115,12 @@ def build(
             (sha,),
         ).fetchall()
 
-        g = call_graph(conn, sha)
+        # tsconfig/jsconfig `paths` aliases (`@/components/...`) — loaded once
+        # here (not in impact.py's per-commit history pass; see resolve.py's
+        # module docstring) so both the call graph and the file-import graph
+        # below treat an aliased import as internal, not a phantom package.
+        ts_aliases = resolve.load_ts_aliases(cfg.root, sha)
+        g = call_graph(conn, sha, aliases=ts_aliases)
 
         # call-site line numbers: `call_graph()` matches refs by (from_symbol_id,
         # target_name) but only keeps the edge, not where it happened — Simulate
@@ -235,7 +240,7 @@ def build(
             (sha,),
         ).fetchall()
         resolved = resolve.resolve_imports(
-            [(r["path"], r["raw"]) for r in imp_rows], all_paths
+            [(r["path"], r["raw"]) for r in imp_rows], all_paths, aliases=ts_aliases
         )
         file_edges_set: set[tuple[int, int]] = set()
         external_by_file: dict[int, set[str]] = {}       # -> file["imports"] (name strings, ext only)
