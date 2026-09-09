@@ -55,7 +55,7 @@ Each value:
 |---|---|
 | `general` | one or two plain sentences — what this library/module is, for someone who's never used it. Overrides the bundled blurb. |
 | `here` | one or two plain sentences — the specific job it does *in this repo*. No general theory; name the modules/functions that touch it. |
-| `see` | optional list of `data.nodes[].key` strings — the call sites / owning symbols worth opening in the Graph tab. Unknown keys are dropped silently. |
+| `see` | optional list of `data.nodes[].key` strings — the call sites / owning symbols worth opening in the Graph tab. Unknown keys are dropped silently. Also drives the Simulate tab: a step landing on one of these keys shows this entry's blurb inline, the first time that library appears in a scenario — an empty `see` means a scenario that clearly calls into this library never gets that cross-link. |
 
 Any of the three may be omitted; an entry with none of them is dropped. No HTML
 in any string — everything is inserted as text.

@@ -60,6 +60,10 @@
   content: "\e18a";
 }
 
+.ph.ph-compass:before {
+  content: "\e1c8";
+}
+
 .ph.ph-corners-in:before {
   content: "\e1ce";
 }
@@ -120,6 +124,10 @@
   content: "\eb26";
 }
 
+.ph.ph-flag:before {
+  content: "\e244";
+}
+
 .ph.ph-flask:before {
   content: "\e79e";
 }
@@ -170,6 +178,10 @@
 
 .ph.ph-minus:before {
   content: "\e32a";
+}
+
+.ph.ph-package:before {
+  content: "\e390";
 }
 
 .ph.ph-pause:before {
@@ -271,6 +283,10 @@
   content: "\e18a";
 }
 
+.ph-fill.ph-compass:before {
+  content: "\e1c8";
+}
+
 .ph-fill.ph-corners-in:before {
   content: "\e1ce";
 }
@@ -331,6 +347,10 @@
   content: "\eb26";
 }
 
+.ph-fill.ph-flag:before {
+  content: "\e244";
+}
+
 .ph-fill.ph-flask:before {
   content: "\e79e";
 }
@@ -381,6 +401,10 @@
 
 .ph-fill.ph-minus:before {
   content: "\e32a";
+}
+
+.ph-fill.ph-package:before {
+  content: "\e390";
 }
 
 .ph-fill.ph-pause:before {

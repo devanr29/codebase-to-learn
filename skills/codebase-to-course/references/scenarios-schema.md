@@ -6,6 +6,13 @@ malformed is not an error: the tab falls back to what it always has — a derive
 computed client-side from the call graph (Lane 1), and any recorded `codemap trace` runs
 (Lane 3, `.codemap/traces/*.json`, never hand-authored).
 
+Lane 1 also answers the reverse question, entirely on its own — no authoring needed. Any
+Graph-tab symbol reachable from an entry point shows a **"Trace back to entry ▶"** link
+next to its "ON PATH FROM" line, which plays the shortest real chain from that entry down
+to the symbol as an on-demand scenario (`origin:<key>`, `explore.js`'s `originScenario`).
+Don't hand-author a "how do we get here" scenario for something this already covers —
+spend hero `steps` on branches and loops instead, which the reverse walk can't show.
+
 **This file is a curriculum, not a demo.** Ship every real workflow of the app as one
 entry — a repo with 100 routes gets 100 scenarios. The Simulate rail groups them by
 `group` and orders them ascending by `order`, so they read the way the app actually runs

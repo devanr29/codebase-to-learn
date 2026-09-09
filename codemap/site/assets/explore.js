@@ -450,7 +450,7 @@
   // the actual double tap needed to drill in often never registers at all.
   var IS_TOUCH = navigator.maxTouchPoints > 0 || "ontouchstart" in window;
   var state = {
-    tab: "graph",
+    tab: "learn",   // land on Orientation, not the graph — "read the map before the words" (route() sets this from the hash before first render anyway)
     grain: 1,   // 0 Module, 1 File (default), 2 Function — see GRAINS below
     hops: 2,
     focus: null,
@@ -483,7 +483,7 @@
 
   // ---- routing ---------------------------------------------------
   function parseHash() {
-    var h = (location.hash || "#/graph").replace(/^#/, "");
+    var h = (location.hash || "#/learn").replace(/^#/, "");
     var parts = h.split("/").filter(Boolean);
     var raw = parts.slice(1).join("/") || "";
     var arg;
@@ -507,13 +507,15 @@
     var prevTab = state.tab;            // read before route() below overwrites it — see
                                          // updateGraphFocus()'s fast path at the bottom
     var r = parseHash();
-    state.tab = ["graph", "learn", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "graph";
+    state.tab = ["graph", "learn", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "learn";
     if (state.tab === "graph") {
       if (r.arg && keyToI[r.arg] != null) { state.focus = keyToI[r.arg]; state.fileScope = null; }
       else if (!r.arg) state.focus = null;
     } else if (state.tab === "learn") {
-      // #/learn/<lib-or-module-slug>; falls back to the first reference entry
-      state.module = r.arg || (LIB_ENTRIES[0] && LIB_ENTRIES[0].slug) || "";
+      // #/learn/<lib-or-module-slug>; no arg lands on Orientation, not the
+      // first library — "nobody understands a codebase entirely" is a better
+      // first thing to read than whichever package happened to sort first.
+      state.module = r.arg || ORIENTATION_ID;
     } else if (state.tab === "map") {
       var seg = r.arg.split("/");
       if (["layers", "trace", "mass"].indexOf(seg[0]) >= 0) state.mapView = seg[0];
@@ -529,7 +531,12 @@
       var lastPart = simParts[simParts.length - 1];
       var hasStep = simParts.length > 1 && /^\d+$/.test(lastPart);
       var scId = hasStep ? simParts.slice(0, -1).join("/") : r.arg;
-      if (scId && simById[scId]) state.simScenario = scId;
+      // ensureScenario (not a bare simById lookup) so a "derive:"/"origin:"
+      // deep link materializes on arrival even when its target was never one
+      // of the handful pre-seeded into the rail — this is what makes both
+      // Map ▸ "Simulate ▶" and the inspector's "Trace back to entry ▶" work
+      // for a symbol outside the top few busiest in the repo.
+      if (scId && ensureScenario(scId)) state.simScenario = scId;
       else if (!state.simScenario || !simById[state.simScenario])
         state.simScenario = SIM_SCENARIOS.length ? SIM_SCENARIOS[0].id : null;
       state.simStep = hasStep ? parseInt(lastPart, 10) : 0;
@@ -699,10 +706,10 @@
       // A plain label makes the one actual control unambiguous: this row
       // opens the palette (el() gives it a button role + tab stop below,
       // since it carries an on.click), where the real typing happens.
-      el("div", { class: "rail-search", "aria-label": "Find symbol",
+      el("div", { class: "rail-search", "aria-label": "Find anything you saw on screen",
         on: { click: openPalette } }, [
         el("i", { class: "ph ph-magnifying-glass" }),
-        el("span", { class: "rail-search-ph", text: "Find symbol…" }),
+        el("span", { class: "rail-search-ph", text: "Find anything on screen…" }),
         el("kbd", { text: navigator.platform.indexOf("Mac") >= 0 ? "⌘K" : "Ctrl K" }),
       ]),
       el("div", { class: "tree" }),
@@ -1651,6 +1658,8 @@
         style: "width:" + Math.min(100, Math.round((filesHit.size / totalFiles) * 100)) + "%" })]),
     ]));
 
+    if (n.history) body.appendChild(historyPanel(n.history));
+
     if (n.entry.length) {
       var epsec = el("div", { class: "section" }, [el("div", { class: "lbl", text: "ENTRY POINT" })]);
       n.entry.forEach(function (e) {
@@ -1662,12 +1671,23 @@
       body.appendChild(epsec);
     }
 
-    var path = entryPathTo(state.focus);
-    if (path)
-      body.appendChild(el("div", { class: "section" }, [
+    var chain = shortestEntryChain(state.focus);
+    if (chain) {
+      var pathSec = el("div", { class: "section" }, [
         el("div", { class: "lbl", text: "ON PATH FROM" }),
-        el("div", { class: "rowitem", style: "flex-wrap:wrap;white-space:normal", text: path }),
-      ]));
+        el("div", { class: "rowitem", style: "flex-wrap:wrap;white-space:normal", text: chainLabel(chain) }),
+      ]);
+      // "I see this — what made it?" — the same chain above, played instead of
+      // just read. Hidden when this symbol *is* the entry point (chain of one:
+      // there's nothing to walk back through).
+      if (chain.length > 1)
+        pathSec.appendChild(el("div", { class: "orient-link", style: "margin-top:8px",
+          on: { click: function () { go("sim", "origin:" + n.key + "/0"); } } }, [
+          el("div", { class: "orient-link-t" }, [el("i", { class: "ph ph-play-circle" }), " Trace back to entry ▶"]),
+          el("div", { class: "orient-link-s", text: "watch this exact path get here, call by call, in Simulate" }),
+        ]));
+      body.appendChild(pathSec);
+    }
 
     body.appendChild(listSection("DIRECT CALLERS", inAdj[state.focus]));
     body.appendChild(listSection("CALLS OUT TO", outAdj[state.focus]));
@@ -1714,6 +1734,25 @@
     return el("div", { class: "statcard" }, [
       el("div", { class: "lbl", text: l }), el("div", { class: "val", text: v == null ? "0" : String(v) }),
     ]);
+  }
+  // "Read the git history when a line makes no sense — someone wrote a reason
+  // down" (teacher's principle 6). codemap captures intent at commit time
+  // rather than guessing it after the fact, so this can show the *stated*
+  // reason, not a plausible-sounding reconstruction — and says so plainly
+  // when nothing was stated.
+  function historyPanel(h) {
+    var sec = el("div", { class: "section insp-history" }, [el("div", { class: "lbl", text: "HISTORY" })]);
+    sec.appendChild(el("p", { style: "margin:0 0 4px", text:
+      "Changed in " + h.commits + " commit" + (h.commits === 1 ? "" : "s") +
+      (h.last_short ? " — most recently " + h.last_short + "." : ".") }));
+    if (h.intent_text) {
+      sec.appendChild(el("p", { class: "insp-history-why", text:
+        (h.intent_source === "inferred" ? "Likely: " : "") + h.intent_text }));
+    } else {
+      sec.appendChild(el("p", { class: "insp-history-why muted", text:
+        "No reason was recorded for that change — that's normal, not a gap in the tool." }));
+    }
+    return sec;
   }
   // A proportional map of the focused symbol's file: every symbol as a block at
   // its true line span, the unfilled gaps being module-level code (imports,
@@ -1791,11 +1830,18 @@
   var listExpand = {};
   function listSection(label, idxs) {
     var key = state.focus + ":" + label;
+    // "Being lost is the normal state of reading unfamiliar code" — say so
+    // plainly here instead of the old bare "none at this tier", which reads
+    // like a limitation of the tool rather than a normal shape a codebase
+    // takes (dynamic dispatch, a plugin registry, a caller outside the repo).
+    var isCallers = label === "DIRECT CALLERS";
     function build() {
       var sec = el("div", { class: "section" }, [el("div", { class: "lbl", text: label })]);
       var uniq = Array.from(new Set(idxs || []));
       if (!uniq.length) {
-        sec.appendChild(el("div", { class: "rowitem muted", text: "none at this tier" }));
+        sec.appendChild(el("p", { class: "lib-missing", text: isCallers
+          ? "I can't see who calls this — it may be wired up dynamically (a dispatch table, a plugin registry, code outside this repo). That's normal, not a gap in the graph."
+          : "I can't see what this calls out to — it may happen dynamically. That's normal, not a gap in the graph." }));
         return sec;
       }
       var open = listExpand[key];
@@ -1820,7 +1866,13 @@
     }
     return build();
   }
-  function entryPathTo(target) {
+  // Shortest chain, forward edges only, from *some* entry point down to
+  // `target` — the shortest across every entry, BFS'd independently since the
+  // graph is unweighted. One BFS feeds both the inspector's "ON PATH FROM"
+  // label (chainLabel() below) and a reverse scenario (originScenario(),
+  // further down): "I see this — what made it?" is that same chain, played
+  // instead of just read.
+  function shortestEntryChain(target) {
     var entries = N.filter(function (n) { return n.entry.length; }).map(function (n) { return n.i; });
     if (!entries.length) return null;
     var best = null;
@@ -1837,9 +1889,11 @@
       while (c !== -1) { chain.unshift(c); c = prev.get(c); }
       if (!best || chain.length < best.length) best = chain;
     });
-    if (!best) return null;
-    var label = (N[best[0]].entry[0] || "").split(":").slice(1).join(":") || N[best[0]].name;
-    return label + " -> " + best.map(function (i) { return N[i].name; }).join(" -> ");
+    return best;
+  }
+  function chainLabel(chain) {
+    var label = (N[chain[0]].entry[0] || "").split(":").slice(1).join(":") || N[chain[0]].name;
+    return label + " -> " + chain.map(function (i) { return N[i].name; }).join(" -> ");
   }
   function editorUri(n) {
     var root = (DATA.root || "").replace(/\\/g, "/");
@@ -1857,10 +1911,17 @@
     paletteOpen = true;
     var restoreFocus = document.activeElement;
     var sel = 0, matches = N.slice(0, 60);
-    var input = el("input", { placeholder: "symbol name or file…", spellcheck: "false",
-      "aria-label": "Find symbol", role: "combobox", "aria-expanded": "true" });
+    var input = el("input", { placeholder: "symbol, file, or text you saw on screen…", spellcheck: "false",
+      "aria-label": "Find anything you saw on screen", role: "combobox", "aria-expanded": "true" });
     var list = el("ul");
-    var empty = el("li", { class: "palette-empty", text: "No matching symbols", hidden: true });
+    // "text on a button exists somewhere in the files — that's your entry
+    // point into anything" (teacher's principle 6). This box only ever
+    // searches what's actually in the page (source excerpts are capped by
+    // [explore] max_snippet_lines), so a real miss still deserves a plain
+    // explanation rather than reading as "that text doesn't exist".
+    var empty = el("li", { class: "palette-empty",
+      text: "No match in any symbol name, file, docstring, or the source shown here " +
+        "— it may be in a snippet too long for this page to hold.", hidden: true });
     var back = el("div", { class: "palette-back", role: "dialog", "aria-modal": "true",
       on: { click: function (e) { if (e.target === back) closeP(); } } },
       [el("div", { class: "palette" }, [input, list])]);
@@ -1878,21 +1939,45 @@
       document.body.removeChild(back);
       if (restoreFocus && typeof restoreFocus.focus === "function") restoreFocus.focus();
     }
+    // the first line in the doc or the source excerpt that contains the query
+    // — matched text you saw on screen, not just a symbol you already know
+    // the name of. Excerpts are capped by max_snippet_lines, so this is "what's
+    // in the page", not "the whole repo" (the empty state above says so).
+    function findMatchLine(n, q) {
+      if (n.doc && n.doc.toLowerCase().indexOf(q) >= 0)
+        return n.doc.trim().split("\n")[0];
+      if (n.excerpt) {
+        var lines = n.excerpt.split("\n");
+        for (var i = 0; i < lines.length; i++)
+          if (lines[i].toLowerCase().indexOf(q) >= 0) return lines[i].trim();
+      }
+      return null;
+    }
     function refresh() {
       var q = input.value.toLowerCase().trim();
       matches = (q ? N.filter(function (n) {
-        return (n.qual + " " + n.file).toLowerCase().indexOf(q) >= 0;
+        return (n.qual + " " + n.file).toLowerCase().indexOf(q) >= 0
+          || (n.doc && n.doc.toLowerCase().indexOf(q) >= 0)
+          || (n.excerpt && n.excerpt.toLowerCase().indexOf(q) >= 0);
       }) : N).slice(0, 60);
       sel = 0;
       clear(list);
       if (!matches.length) { list.appendChild(empty); empty.hidden = false; return; }
       matches.forEach(function (n, i) {
-        list.appendChild(el("li", { class: i === sel ? "on" : "",
-          on: { click: function () { pick(n); } } }, [
+        var nameHit = (n.qual + " " + n.file).toLowerCase().indexOf(q) >= 0;
+        var row = el("div", { class: "palette-row" }, [
           el("span", { class: "rk", text: kindLabel(n.kind) }),
           el("span", { text: n.qual }),
           el("span", { class: "pth", text: n.file }),
-        ]));
+        ]);
+        var kids = [row];
+        if (q && !nameHit) {
+          var hit = findMatchLine(n, q);
+          if (hit) kids.push(el("div", { class: "palette-hit",
+            text: hit.length > 90 ? hit.slice(0, 90) + "…" : hit }));
+        }
+        list.appendChild(el("li", { class: i === sel ? "on" : "",
+          on: { click: function () { pick(n); } } }, kids));
       });
     }
     function pick(n) { closeP(); go("graph", n.key); }
@@ -2158,9 +2243,18 @@
 
     var controls = [
       el("button", { class: "pill" + (state.hideTests ? " on" : ""),
+        title: "tests/** — the health inspector: checks the kitchen, doesn't do the cooking",
         on: { click: function () { state.hideTests = !state.hideTests; render(); } } },
         [el("i", { class: "ph ph-flask" }), "Hide tests"]),
     ];
+    // The restaurant (teacher's principle 2, reused as the house metaphor —
+    // see content-philosophy.md): a menu is what the outside world can ask
+    // for, a waiter carries the order back but doesn't cook, the kitchen does
+    // the actual work, the fridge/pantry is what survives after everyone goes
+    // home. This diagram's own axis — longest-path import depth — lines up
+    // with it almost exactly: L0 depends on nothing else here (the pantry),
+    // the top layer is called by almost nothing and calls into everything
+    // below it (the waiter), and the cooking happens in the layers between.
     var legend = el("div", { class: "map-legend" }, [
       el("div", { class: "lk", text: "LAYER CAKE" }),
       lgRow(el("span", { class: "sw", style: "width:26px;height:12px;border-radius:3px;" +
@@ -2169,6 +2263,8 @@
       lgRow(el("span", { class: "sw", style: "width:14px;height:12px;border-radius:3px;" +
         "background:transparent;border:2px solid " + GROUP_HUES[0] }), "↺ merged = import cycle"),
       lgRow(el("span", { class: "sw", style: "border:0" }), "L0 imports nothing in-repo · hover a block for its imports"),
+      lgRow(el("span", { class: "sw", style: "border:0" }),
+        "the restaurant: bottom = the pantry & fridge (little calls out, lots call in) · top = the waiter (calls everything, called by little) · the kitchen is between"),
     ]);
     return { controls: controls, content: svg, legend: legend };
   }
@@ -2480,6 +2576,57 @@
         trigger: { text: N[rootI].qual } };
     return derivedCache[id];
   }
+
+  function edgeInfo(fromI, toI) {
+    var calls = outCalls[fromI] || [];
+    for (var k = 0; k < calls.length; k++) if (calls[k].t === toI) return calls[k];
+    return null;
+  }
+  // "I see this — what made it?" (teacher's principles 5+6, run backwards): the
+  // shortest real chain from *some* entry point down to a symbol, replayed as
+  // a scenario instead of just read as the inspector's "ON PATH FROM" line.
+  // This is control flow, not data flow — it shows what ran to reach this
+  // line, never which value produced a number. Reverse fans out far faster
+  // than forward (one symbol in this repo has 40+ callers) — shortestEntryChain()
+  // already resolves that to a single path, so there's no branching factor to
+  // cap the way deriveSteps() caps outCalls; a step's AMBIGUOUS badge (below,
+  // same field the Graph tab shows per edge) is the honest flag that a hop
+  // picked one of several same-named targets.
+  function deriveOrigins(targetI) {
+    var chain = shortestEntryChain(targetI);
+    if (!chain || chain.length < 2) return null;   // already an entry point, or unreachable from one
+    var steps = [];
+    chain.forEach(function (i, d) {
+      var fromI = d > 0 ? chain[d - 1] : null, n = N[i];
+      var edge = fromI != null ? edgeInfo(fromI, i) : null;
+      var user, code;
+      if (fromI == null) {
+        var epLabel = (n.entry[0] || "").split(":").slice(1).join(":") || n.qual;
+        user = "This is where the app actually starts: " + epLabel + ".";
+        code = n.qual + " is an entry point — nothing in this repo calls it; something outside does.";
+      } else {
+        code = N[fromI].name + " calls " + n.name + (edge && edge.line ? " at line " + edge.line : "") + ".";
+        user = d === chain.length - 1
+          ? "This call is what actually reaches the symbol you started from."
+          : "One step closer — execution is now inside " + n.name + ".";
+      }
+      steps.push({ t: "call", node: i, from: fromI, line: (edge && edge.line) || null,
+        conf: (edge && edge.conf) || null, user: user, code: code });
+    });
+    for (var d2 = chain.length - 1; d2 >= 0; d2--)
+      steps.push({ t: "return", node: chain[d2], user: "",
+        code: N[chain[d2]].name + " finishes and returns to its caller." });
+    return steps;
+  }
+  var originCache = {};
+  function originScenario(targetI) {
+    var id = "origin:" + N[targetI].key;
+    if (originCache[id]) return originCache[id];
+    var steps = deriveOrigins(targetI);
+    if (!steps) return null;
+    return (originCache[id] = { id: id, title: "How " + N[targetI].qual + " gets reached",
+      source: "derived", trigger: { text: N[targetI].qual }, _raw: steps });
+  }
   var SIM_SCENARIOS = [];
   var SIM_AUTHORED = (DATA.sim && DATA.sim.scenarios || []);
   SIM_AUTHORED.forEach(function (s) {
@@ -2503,6 +2650,14 @@
         var sc = derivedScenario(idx);
         if (!simById[sc.id]) { simById[sc.id] = sc; SIM_SCENARIOS.push(sc); }
         return sc;
+      }
+    }
+    if (id && id.indexOf("origin:") === 0) {
+      var oi = keyToI[id.slice(7)];
+      if (oi != null) {
+        var osc = originScenario(oi);
+        if (osc && !simById[osc.id]) { simById[osc.id] = osc; SIM_SCENARIOS.push(osc); }
+        return osc;
       }
     }
     return null;
@@ -2553,6 +2708,7 @@
   }
   function normalizeSteps(raw) {
     var stack = [], out = [], prevTs = null;
+    var libsSeen = {};   // library name -> shown once already this scenario
     raw.forEach(function (st) {
       var callerBefore = stack.length ? stack[stack.length - 1] : null;
       var from = st.from != null ? st.from : (st.t === "call" ? callerBefore : null);
@@ -2565,13 +2721,24 @@
       }
       var hasText = (st.user && st.user.trim()) || (st.code && st.code.trim());
       var fallback = hasText ? null : defaultNarration(st, from);
+      // show a library's blurb inline the first time a call touches it — after
+      // that the learner already saw it, and repeating it every step would
+      // turn a 15-40 step thread into a glossary (see item 6, plan doc)
+      var libs = null;
+      if (st.t === "call") {
+        var fresh = (libByNode[st.node] || []).filter(function (nm) { return !libsSeen[nm]; });
+        if (fresh.length) {
+          fresh.forEach(function (nm) { libsSeen[nm] = true; });
+          libs = fresh.map(libFor);
+        }
+      }
       out.push({
         t: st.t, node: st.node, from: from,
         line: st.line || null, cond: st.cond || null, conf: st.conf || null,
         user: (st.user && st.user.trim()) || (fallback ? fallback.user : ""),
         code: (st.code && st.code.trim()) || (fallback ? fallback.code : ""),
         emit: st.emit || null, args: st.args || null,
-        depth: snap.length, stack: snap, dur: dur,
+        depth: snap.length, stack: snap, dur: dur, libs: libs,
       });
       if (st.t === "return" && stack.length) stack.pop();
     });
@@ -2764,6 +2931,13 @@
         [(st.cond.kind === "for" || st.cond.kind === "while" ? "↻ " : st.cond.kind === "try" ? "⚠ " : "◇ ") + st.cond.text]));
     if (st.conf === "AMBIGUOUS")
       box.appendChild(el("div", { class: "sim-narr-cond", text: "◇ one of several same-named targets — shown as the most likely" }));
+    (st.libs || []).forEach(function (lib) {
+      var blurb = lib.here || lib.general;
+      box.appendChild(el("div", { class: "sim-narr-lib",
+        on: { click: function () { go("learn", lib.slug); } } },
+        [el("i", { class: "ph ph-package" }),
+          el("b", { text: lib.name }), " — " + (blurb || "open in Learn ▸")]));
+    });
     return box;
   }
 
@@ -3083,10 +3257,34 @@
       simRailListEl.appendChild(el("div", { class: "sim-rail-empty",
         text: q ? "No scenario matches “" + simRailFilter + "”." : "No scenarios." }));
   }
+  // "One thread followed end to end beats a week of reading files at random"
+  // (teacher's principle 5). A curriculum of 40+ scenarios invites browsing
+  // over depth, so whichever scenario sorts first (lowest `order`, the
+  // convention the skill gives its single hero scenario — see SKILL.md) gets
+  // pinned above the rail as the one thing worth actually finishing.
+  function simStartScenario() {
+    var sorted = simSorted();
+    return sorted.length > 1 ? sorted[0] : null;
+  }
+  function simStartCallout() {
+    var sc = simStartScenario();
+    if (!sc) return null;
+    var here = sc.id === state.simScenario;
+    return el("div", { class: "sim-start" + (here ? " here" : ""),
+      on: { click: function () { go("sim", sc.id); } } }, [
+      el("i", { class: "ph ph-flag" }),
+      el("div", {}, [
+        el("div", { class: "sim-start-lbl", text: here ? "You're on it" : "If you follow only one, follow this one" }),
+        el("div", { class: "sim-start-title", text: sc.title }),
+      ]),
+    ]);
+  }
   function simRail() {
     var total = SIM_SCENARIOS.length;
     var box = el("div", { class: "sim-rail" },
       [el("div", { class: "lk", text: "SCENARIOS · " + total })]);
+    var start = simStartCallout();
+    if (start) box.appendChild(start);
     if (total > 12)
       box.appendChild(el("input", { class: "sim-rail-search", type: "search",
         placeholder: "Filter " + total + " scenarios…", value: simRailFilter,
@@ -3429,7 +3627,10 @@
     if (sc.truncated) notes.push(el("div", { class: "sim-note" }, ["trace truncated to the first " + steps.length + " steps"]));
     if (sc.source === "derived")
       notes.push(el("div", { class: "sim-note" },
-        ["⚡ simulated from the call graph — not a recorded run. Branches and loops are shown as possibilities, not choices."]));
+        ["⚡ This is a prediction from the code's structure, not something that actually ran — " +
+         "branches and loops are shown as possibilities, not the choices a real run would make. " +
+         "Want the real thing? `codemap trace --name \"" + sc.title + "\" -- <command>` records an " +
+         "actual run of this and replays it here, call by call."]));
 
     simMount = { sc: sc, steps: steps, layout: layout, flow: flow,
       stageBox: stageBox, logBox: logBox, sourceBox: sourceBox, narrBox: narrBox,
@@ -3554,6 +3755,41 @@
     return String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
   }
   var LIB_AUTHORED = (DATA.libraries && DATA.libraries.items) || {};
+
+  // ---- Simulate step -> Learn blurb (dependency cross-link) --------------
+  // libraries.json's `see` list already maps a library to the call-site keys
+  // where it matters — invert that once into node -> [library name, ...] so a
+  // scenario step can show the Learn-tab blurb inline instead of sending the
+  // learner to a different tab mid-thread. `see` is exact (authored); a node
+  // it doesn't cover falls back to that file's third-party imports, but only
+  // for a library that actually has something to say (authored or bundled) —
+  // an undescribed dependency would just be noise here.
+  var libByNode = {};
+  function pushLibForNode(i, name) {
+    var list = libByNode[i] || (libByNode[i] = []);
+    if (list.indexOf(name) < 0) list.push(name);
+  }
+  Object.keys(LIB_AUTHORED).forEach(function (name) {
+    (LIB_AUTHORED[name].see || []).forEach(function (k) {
+      var i = keyToI[k];
+      if (i != null) pushLibForNode(i, name);
+    });
+  });
+  function libHasBlurb(name) {
+    var a = LIB_AUTHORED[name];
+    return !!((a && (a.general || a.here)) || libBlurb(name));
+  }
+  N.forEach(function (n) {
+    if (libByNode[n.i] && libByNode[n.i].length) return;  // an authored `see` already claimed this node
+    ((fileByPath[n.file] || {}).deps || []).forEach(function (d) {
+      if (d.kind === "third_party" && libHasBlurb(d.name)) pushLibForNode(n.i, d.name);
+    });
+  });
+  function libFor(name) {
+    var a = LIB_AUTHORED[name] || {};
+    return { name: name, slug: libSlug(name), general: a.general || libBlurb(name) || null, here: a.here || null };
+  }
+
   var LIB_SECTIONS = [
     { key: "third_party", label: "Third-party" },
     { key: "stdlib", label: "Standard library" },
@@ -3579,10 +3815,17 @@
   // typing survives renderLearnNavList() repainting just the list below it
   var learnNavFilter = "";
   var learnNavListEl;
+  // a slug no real library/module can ever produce (libSlug never emits a
+  // leading underscore) — the Learn tab's actual landing screen, not a
+  // library entry. See renderOrientation() / learnTab().
+  var ORIENTATION_ID = "__start__";
   function renderLearnNavList(cur) {
     if (!learnNavListEl) return;
     clear(learnNavListEl);
     var q = learnNavFilter.trim().toLowerCase();
+    learnNavListEl.appendChild(el("div", { class: "mlink orientation-link" + (cur.slug === ORIENTATION_ID ? " active" : ""),
+      on: { click: function () { go("learn"); } } },
+      [el("i", { class: "ph ph-compass" }), "Start here"]));
     var any = false;
     LIB_SECTIONS.forEach(function (sec) {
       var items = LIB_ENTRIES.filter(function (e) { return e.section === sec.key; });
@@ -3603,6 +3846,111 @@
       learnNavListEl.appendChild(el("div", { class: "sim-rail-empty",
         text: "No library matches “" + learnNavFilter + "”." }));
   }
+  // ── Orientation — the Learn tab's actual landing screen ──────────────────
+  // Everything below is copy, not computation: it reuses LIB_ENTRIES (already
+  // built above), DATA.modules, and go() to link into tabs that already exist.
+  // Four teaching moves this repeats on purpose (see the plan doc — teacher's
+  // principles 1, 3, 5, 6, 7): nobody understands a codebase entirely; what
+  // exists vs. what happens are two different pictures; one thread followed
+  // end to end beats a week of random reading; and the four ways to actually
+  // move around one (search on-screen text, jump to a definition, read the
+  // history, run it and watch the order).
+  function orientLink(tab, arg, label, sub) {
+    return el("div", { class: "orient-link", on: { click: function () { go(tab, arg); } } }, [
+      el("div", { class: "orient-link-t", text: label }),
+      sub ? el("div", { class: "orient-link-s", text: sub }) : null,
+    ]);
+  }
+  function renderOrientation() {
+    var wrap = el("div", {}, [
+      el("div", { class: "module-num", text: "0" }),
+      el("div", { class: "module-title", text: "Start here" }),
+    ]);
+
+    var intro = el("div", { class: "screen" });
+    intro.appendChild(el("p", { text:
+      "Nobody understands a codebase entirely — not even the people who wrote it. " +
+      "The goal here isn't to memorize this one. It's to learn how to find your way " +
+      "around it. Being lost is the normal state of reading unfamiliar code — the only " +
+      "difference experience buys you is knowing which direction to walk." }));
+    wrap.appendChild(intro);
+
+    var exists = el("div", { class: "screen orient-split" }, [
+      el("h3", { text: "Two different pictures" }),
+      el("p", { text: "A codebase is a floor plan — files sitting still on disk, describing what " +
+        "exists. Running it is someone walking through that building. The floor plan " +
+        "never moves; the walk does. Keep both pictures in your head." }),
+      el("div", { class: "orient-cols" }, [
+        el("div", { class: "orient-col" }, [
+          el("div", { class: "orient-col-h", text: "What exists — the floor plan" }),
+          orientLink("graph", null, "Graph", "every file and function, and what calls what"),
+          orientLink("map", null, "Map", "the shape of the whole system, layer by layer"),
+          orientLink("learn", null, "Learn", "what every dependency and module actually does"),
+        ]),
+        el("div", { class: "orient-col" }, [
+          el("div", { class: "orient-col-h", text: "What happens — the walk" }),
+          orientLink("sim", null, "Simulate", "watch one thing the app does, call by call"),
+          orientLink("timeline", null, "Timeline", "every commit, and what it actually changed"),
+        ]),
+      ]),
+    ]);
+    wrap.appendChild(exists);
+
+    var moves = el("div", { class: "screen" }, [
+      el("h3", { text: "Four ways to move around" }),
+      el("div", { class: "orient-move", on: { click: openPalette } },
+        [el("i", { class: "ph ph-magnifying-glass" }), el("div", {}, [
+          el("b", { text: "Search for text you saw on screen." }),
+          " A label, an error, a log line — it's typed somewhere in the files. That's your way in.",
+        ])]),
+      el("div", { class: "orient-move", on: { click: function () { go("graph"); } } },
+        [el("i", { class: "ph ph-crosshair" }), el("div", {}, [
+          el("b", { text: "Jump to where a name is defined," }),
+          " not just where it's used — click any symbol in the Graph tab.",
+        ])]),
+      el("div", { class: "orient-move", on: { click: function () { go("graph"); } } },
+        [el("i", { class: "ph ph-git-commit" }), el("div", {}, [
+          el("b", { text: "Read the history when a line makes no sense." }),
+          " Focus it in the Graph tab — the inspector shows when it last changed and, when someone recorded it, why.",
+        ])]),
+      el("div", { class: "orient-move", on: { click: function () { go("sim"); } } },
+        [el("i", { class: "ph ph-play" }), el("div", {}, [
+          el("b", { text: "Run it and watch the order things happen in." }),
+          " The Simulate tab predicts that from the code; `codemap trace` records the real thing.",
+        ])]),
+    ]);
+    wrap.appendChild(moves);
+
+    var mods = LIB_ENTRIES.filter(function (e) { return e.section === "module"; });
+    if (mods.length) {
+      var tour = el("div", { class: "screen" }, [
+        el("h3", { text: "Read the map before the words" }),
+        el("p", { text: "Folder names carry more information per second of reading than any " +
+          "single file does. Before opening anything, here's what this repo's own top-level " +
+          "folders are for:" }),
+      ]);
+      var list = el("div", { class: "steps" });
+      mods.forEach(function (e) {
+        var authored = LIB_AUTHORED[e.name] || {};
+        var blurb = authored.here || authored.general;
+        list.appendChild(el("div", { class: "step orient-mod",
+          on: { click: function () { go("learn", e.slug); } } }, [
+          el("div", { class: "sn", text: "→" }),
+          el("div", {}, [
+            el("span", { class: "sf", text: e.name + "/" }),
+            el("span", { class: "orient-mod-n", text: "  " + e.files + " file" + (e.files === 1 ? "" : "s") +
+              " · " + e.symbols + " symbols" }),
+            blurb ? el("p", { class: "orient-mod-blurb", text: blurb }) : null,
+          ]),
+        ]));
+      });
+      tour.appendChild(list);
+      wrap.appendChild(tour);
+    }
+
+    return wrap;
+  }
+
   function learnTab() {
     if (!LIB_ENTRIES.length)
       return el("div", { class: "learn", style: "display:flex" }, [
@@ -3610,20 +3958,23 @@
           el("div", { class: "module-title", text: "Nothing to describe" }),
           el("p", { class: "module-sub", text: "This graph imports no external packages and has no modules." }),
         ])])]);
-    var cur = LIB_BY_SLUG[state.module] || LIB_ENTRIES[0];
-    state.module = cur.slug;
+    var isOrientation = state.module === ORIENTATION_ID;
+    var cur = isOrientation ? null : (LIB_BY_SLUG[state.module] || LIB_ENTRIES[0]);
+    if (cur) state.module = cur.slug;
+    var navCur = cur || { slug: ORIENTATION_ID };
     var nav = el("div", { class: "learn-nav" }, [el("div", { class: "lk", text: "LIBRARIES · " + LIB_ENTRIES.length })]);
     // matches the Simulate rail's own threshold for when a flat list is long
     // enough that scanning it beats typing a filter — same idiom, same number.
     if (LIB_ENTRIES.length > 12)
       nav.appendChild(el("input", { class: "sim-rail-search", type: "search",
         placeholder: "Filter " + LIB_ENTRIES.length + " libraries…", value: learnNavFilter,
-        on: { input: function (e) { learnNavFilter = e.target.value; renderLearnNavList(cur); } } }));
+        on: { input: function (e) { learnNavFilter = e.target.value; renderLearnNavList(navCur); } } }));
     learnNavListEl = el("div", { class: "learn-nav-list" });
     nav.appendChild(learnNavListEl);
-    renderLearnNavList(cur);
+    renderLearnNavList(navCur);
     return el("div", { class: "learn", style: "display:flex" }, [nav,
-      el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" }, [renderLibEntry(cur)])])]);
+      el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" },
+        [isOrientation ? renderOrientation() : renderLibEntry(cur)])])]);
   }
   function libImportingFiles(e) {
     if (e.scope === "internal") {

@@ -70,8 +70,12 @@ of the library you're describing.
    - `here` — one or two concrete sentences: the job it does *in this repo*.
      Name the modules and functions that touch it. If your sentence would read
      the same for any project, it belongs in `general` or nowhere.
-   - `see` — optional `data.nodes[].key` list, the call sites worth opening in
-     the Graph tab (the briefs print every key).
+   - `see` — `data.nodes[].key` list, the call sites worth opening in the Graph
+     tab (the briefs print every key). Technically optional, but worth filling
+     in: `see` is also how the Simulate tab knows to show this library's blurb
+     inline the first time a scenario's steps actually touch it — an empty
+     `see` means that cross-link never fires for this entry, even when a
+     scenario clearly calls into it.
 
 4. **Write `.codemap/explanations.json`** following
    `references/explanations-schema.md`. One plain-English `what` line for every
@@ -110,6 +114,14 @@ of the library you're describing.
    client directly). That one scenario is worth more than either half alone —
    it is the only place in the whole surface that shows how the two sides of
    the app actually connect.
+
+   **Point at a safe first edit.** codemap never edits code — it only reads
+   and explains it — but a `screen`/`layout` scenario's `summary` can still
+   name one harmless, literal string visible in that screen's source (a
+   button label, a heading, a placeholder) worth changing and re-running. That
+   moment — a string in a file becoming a thing on screen — is when "this is
+   all just text a person typed" actually clicks. Only ever point at a plain
+   string literal already sitting in the excerpt; never suggest touching logic.
 
 6. **Bake and review.**
    ```

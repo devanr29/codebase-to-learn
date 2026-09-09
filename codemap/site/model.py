@@ -146,6 +146,23 @@ def build(
                 "WHERE c.severity != 'cosmetic' GROUP BY s.key"
             )
         }
+        # most recent non-cosmetic change per symbol, with that commit's
+        # *captured* (not inferred) intent — "someone wrote a reason down"
+        # (teacher's principle 6). One row per symbol: the newest commit wins
+        # because the query is already ordered newest-first, same tie-break as
+        # _timeline()'s own commit ordering.
+        last_change_by_key: dict[str, sqlite3.Row] = {}
+        for r in conn.execute(
+            "SELECT s.key AS key, c.commit_sha AS sha, co.ts AS ts, "
+            "i.source AS intent_source, i.text AS intent_text "
+            "FROM changes c "
+            "JOIN symbols s ON s.id = c.symbol_id "
+            "JOIN commits co ON co.sha = c.commit_sha "
+            "LEFT JOIN intents i ON i.commit_sha = c.commit_sha "
+            "WHERE c.severity != 'cosmetic' "
+            "ORDER BY co.ts DESC, co.indexed_at DESC"
+        ):
+            last_change_by_key.setdefault(r["key"], r)
         ep_map = _entry_points(conn, sha)  # {key: [(kind, detail), ...]}
         _p_graph.set_summary(f"{len(file_rows)} files, {len(sym_rows)} symbols")
 
@@ -184,6 +201,22 @@ def build(
             return None
         return "\n".join(lines[max(start - 1, 0) : end])
 
+    def history_of(k: str) -> dict | None:
+        n = change_counts.get(k, 0)
+        if not n:
+            return None
+        row = last_change_by_key.get(k)
+        if row is None:  # counted above but the join found no commit row — stale index
+            return {"commits": n, "last_sha": None, "last_short": None, "intent_source": "inferred", "intent_text": None}
+        text = (row["intent_text"] or "").strip().splitlines()[0] if row["intent_text"] else None
+        return {
+            "commits": n,
+            "last_sha": row["sha"],
+            "last_short": _short(row["sha"]),
+            "intent_source": row["intent_source"] or "inferred",
+            "intent_text": text,
+        }
+
     nodes: list[dict] = []
     with progress.phase("symbols", len(ordered), unit="symbols") as p:
         for i, r in enumerate(ordered):
@@ -204,6 +237,7 @@ def build(
                     "fan_in": fan_in(k),
                     "fan_out": fan_out(k),
                     "churn": change_counts.get(k, 0),
+                    "history": history_of(k),
                     "entry": [f"{kind}:{detail}" for kind, detail in ep_map.get(k, [])],
                     "excerpt": excerpt(r["file"], r["start_line"], r["end_line"]),
                     "explain": explanations.get(k) or None,

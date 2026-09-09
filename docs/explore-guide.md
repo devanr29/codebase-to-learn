@@ -2,7 +2,9 @@
 
 `codemap explore` turns the symbol graph in `.codemap/index.db` into **one
 self-contained file**, `.codemap/explore.html`, that you open in a browser. No
-server, no build step. Five tabs: Graph, Map, Simulate, Learn, Timeline.
+server, no build step. Five tabs: Graph, Map, Simulate, Learn, Timeline. It
+opens on Learn's Orientation screen (§8) first, not the graph — read the map
+before the words.
 
 All commands below assume you've installed the CLI (see
 [`install.md`](install.md)) and are running `codemap` from the repo root. If
@@ -73,7 +75,11 @@ Useful flags:
 - click a file to expand its functions
 - click a function to focus it
 - the number on each row is that symbol's caller count
-- press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>Cmd</kbd>+<kbd>K</kbd> on Mac) for fuzzy search over every symbol
+- press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>Cmd</kbd>+<kbd>K</kbd> on Mac), or
+  click "Find anything on screen" at the top of the rail, to search — not just
+  symbol names and file paths, but docstrings and the source shown on the page
+  (capped by `max_snippet_lines`, §10 — a real miss says so, it doesn't just
+  look empty)
 
 **Centre canvas — the neural graph.**
 - the Package / Module / File / Function buttons change what a dot means
@@ -91,7 +97,14 @@ at a time. The "Whole graph" button clears the focus.
 - a file-anatomy strip: the whole file as a bar, each symbol a block at its
   real line range, coloured by kind — the empty gaps are module-level code
 - a blast-radius bar: "editing this reaches N callers across M files"
-- the shortest path from an entry point (e.g. `GET /report` → … → `fetch`)
+- **history** — how many commits actually changed this symbol and, for the
+  most recent one, the reason someone recorded at the time (never a guess —
+  `codemap` captures intent, it doesn't reverse-engineer it, same source as
+  the Timeline tab's intent line, §7)
+- the shortest path from an entry point (e.g. `GET /report` → … → `fetch`),
+  with a **"Trace back to entry ▶"** link that plays that exact chain as a
+  Simulate scenario instead of just printing it (hidden when this symbol *is*
+  the entry point — there's nothing to walk back through)
 - a "Trace calls from here" link into the Map tab's Run trace (§5)
 - the symbol's source, and an "Open in editor" link
 
@@ -152,11 +165,15 @@ The Graph and Map tabs are about **structure**. Simulate is about **time**: it
 replays one run of the code as an animation you drive with a transport bar
 (play / pause / step / scrub / speed).
 
-**Left rail — the scenario curriculum.** Scenarios are grouped into sections
-("Startup", "A request comes in", "Talking to the database", "When it
-breaks", …) and ordered the way the app actually runs. Only the section you're
-in (and the first one) is expanded; click a section header to open another, or
-use the filter box when there are many. Each row has a lane icon:
+**Left rail — the scenario curriculum.** A pinned card above the list points
+at whichever scenario sorts first (lowest `order`) — "if you follow only one,
+follow this one." One thread followed all the way through beats reading files
+at random; the rest of the rail is there for later, not for first. Scenarios
+are grouped into sections ("Startup", "A request comes in", "Talking to the
+database", "When it breaks", …) and ordered the way the app actually runs.
+Only the section you're in (and the first one) is expanded; click a section
+header to open another, or use the filter box when there are many. Each row
+has a lane icon:
 
 | Icon | Lane | Meaning |
 |---|---|---|
@@ -187,13 +204,21 @@ restores.
   highlighted.
 
 Under the panes, two lines per step: a person icon = what the user sees, a
-gear icon = what the code is doing.
+gear icon = what the code is doing. The first time a step touches a
+third-party library the Learn tab actually describes, a third, quieter line
+shows that blurb inline — click it to open the full entry in Learn (§8).
+
+A derived (⚡) scenario's banner spells out honestly what it is — a prediction
+from the code's shape, not a recorded run — and gives you the exact
+`codemap trace` command to record the real thing instead.
 
 To get authored scenarios: same as the Learn tab — run `--emit-brief`, invoke
 the `codebase-to-course` skill, re-render (§8). With no authoring at all,
 Simulate still works: it offers a derived scenario for the busiest few
-functions. See `skills/codebase-to-course/references/scenarios-schema.md` for
-the file format.
+functions, plus an on-demand one for any Graph-tab symbol via its "Trace back
+to entry ▶" link (§4). See
+`skills/codebase-to-course/references/scenarios-schema.md` for the file
+format.
 
 ## 7. The Timeline tab
 
@@ -208,9 +233,19 @@ Graph tab.
 
 ## 8. The Learn tab (library & module reference)
 
-The Learn tab explains the code's **dependencies**, not the code itself. It
-lists every package the project imports (third-party and standard library)
-and every top-level module of the repo, and for each one shows:
+This is also where `explore.html` opens by default — on **Orientation**, not
+a library entry. It states the tool's whole premise up front (nobody
+understands a codebase entirely, including whoever wrote it), lays out which
+tabs show what *exists* (Graph, Map, Learn) versus what *happens* (Simulate,
+Timeline), lists the repo's own top-level folders before anything else, and
+names the four ways to actually move around unfamiliar code: search for text
+you saw on screen, jump to a definition, read the history, run it and watch
+the order. "Start here" at the top of the rail always returns to it.
+
+Past that screen, the Learn tab explains the code's **dependencies**, not the
+code itself. It lists every package the project imports (third-party and
+standard library) and every top-level module of the repo, and for each one
+shows:
 
 - **In general** — what that library/module is, for someone who's never heard
   of it (one or two plain sentences).
