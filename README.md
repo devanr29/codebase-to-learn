@@ -48,14 +48,15 @@ Full walkthrough of the rendered page: [`docs/explore-guide.md`](docs/explore-gu
 More install options (uv, from source, Windows notes, the plugin):
 [`docs/install.md`](docs/install.md).
 
-## The five tabs
+## The six tabs
 
 | Tab | Answers | |
 |---|---|---|
 | **Graph** | What calls what — source tree, a neural-style code graph, focus any symbol to see its callers/callees, blast radius, and source. | ![Graph tab](docs/images/graph.png) |
 | **Map** | What shape is the system, and where — dependency layers, a subway-map run trace, a treemap of the whole repo. | ![Map tab, Layers view](docs/images/map-layers.png) |
 | **Simulate** | What happens when it *runs* — a transport-controlled animation of one call-by-call scenario, with a scrollable trace log. | ![Simulate tab](docs/images/simulate.png) |
-| **Learn** | What every dependency and repo module actually does, in general and in this codebase. | ![Learn tab](docs/images/learn.png) |
+| **Learn** | A guided tour of the codebase — what its parts are, how they fit together, and what each folder is for. | <!-- TODO: new screenshot showing the walkthrough --> |
+| **Packages** | What every dependency and repo module actually does, in general and in this codebase. | ![Packages tab](docs/images/learn.png) |
 | **Timeline** | Every commit, its stated intent, and its blast radius. | ![Timeline tab](docs/images/timeline.png) |
 
 Icons are vendored into the page itself (base64, no CDN) — they render the

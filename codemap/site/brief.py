@@ -220,6 +220,28 @@ def _emit_libraries_derived(briefs_dir, data: dict, written: list[str]) -> list[
     return candidates
 
 
+def _folder_candidates(data: dict) -> list[dict]:
+    """Every surviving folder (``folders.py``'s already-folded tree) as a
+    candidate for a ``walkthrough.json`` ``folders`` entry. Nothing recomputed
+    here — ``folders.py`` did the hard work; this just hands its list back for
+    the overview and the derived JSON to share."""
+    return data["folders"]
+
+
+def _emit_folders_derived(briefs_dir, data: dict, written: list[str]) -> list[dict]:
+    """``.codemap/briefs/folders-derived.json`` — the full folder tree (loc,
+    symbols, langs, deps, imports/imported_by, reach) for the skill to draw
+    ``walkthrough.json``'s ``folders`` entries from. Returns the candidate
+    list so the overview can list the same set."""
+    import json as _json
+
+    candidates = _folder_candidates(data)
+    path = briefs_dir / "folders-derived.json"
+    path.write_text(_json.dumps({"folders": candidates}, indent=2), encoding="utf-8")
+    written.append(str(path))
+    return candidates
+
+
 def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     briefs_dir = cfg.codemap_dir / "briefs"
     briefs_dir.mkdir(parents=True, exist_ok=True)
@@ -233,6 +255,7 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     # derived JSON packs first — the overview lists the same candidate sets
     library_candidates = _emit_libraries_derived(briefs_dir, data, written)
     scenario_candidates = _emit_scenarios_derived(briefs_dir, data, written)
+    folder_candidates = _emit_folders_derived(briefs_dir, data, written)
 
     # ---- 00-overview -------------------------------------------------
     ov = ["# Codebase analysis pack", ""]
@@ -251,6 +274,26 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     ov.append("## Modules (top-level directories)")
     for m in modules:
         ov.append(f"- `{m['name']}` — {len(m['files'])} files, {m['symbol_count']} symbols")
+    ov.append("")
+    ov.append("## Folder map (candidates for `walkthrough.json`)")
+    ov.append("A finer-grained breakdown of the same directories above — one row per "
+              "folder the graph kept after folding. `folders-derived.json` has the full "
+              "picture (loc, symbols, langs, imports/imported_by) that won't fit on one "
+              "line here; write `walkthrough.json`'s `folders` entries from it, following "
+              "`references/walkthrough-schema.md`. Unlike the dependency reference above, "
+              "this is **not** cover-everything: write an entry only for a folder that "
+              "earns one — an unclear purpose, or an orphan flag worth investigating — not "
+              "one per row in this list.")
+    ov.append("")
+    for c in folder_candidates:
+        counts = f"{c['file_count']} files"
+        if c["total_files"] != c["file_count"]:
+            counts += f" ({c['total_files']} incl. subfolders)"
+        deps = ", ".join(f"`{d['name']}`" for d in c["deps"][:6]) or "—"
+        line = f"- `{c['path']}` — {counts}, deps: {deps}"
+        if c["reach"] == "orphan":
+            line += " — ⚠ nothing in the import graph points here; confirm before writing a note"
+        ov.append(line)
     ov.append("")
     ov.append("## Hotspots (fan-in + non-cosmetic churn)")
     hot = sorted(nodes, key=lambda n: -(n["fan_in"] + n["churn"] * 2))[:12]
@@ -302,16 +345,22 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
                   "the busiest-symbol fallback the Simulate tab uses on its own.")
     ov.append("")
     ov.append("## What to produce")
-    ov.append("1. `.codemap/libraries.json` — the Learn tab's library / module "
+    ov.append("1. `.codemap/walkthrough.json` — the Learn tab's actual content: a "
+              "plain-language intro, the repo-wide category map, and prose for the "
+              "folders that earn it. Follow `references/walkthrough-schema.md`. Draw "
+              "its `folders` entries from the **Folder map** above and "
+              "`folders-derived.json`; its `categories`/glossary content is yours to "
+              "curate from the whole graph.")
+    ov.append("2. `.codemap/libraries.json` — the Learn tab's library / module "
               "reference. Follow `references/libraries-schema.md`. Annotate every "
               "entry from the **Dependency reference** above with `general` + "
               "`here` (+ optional `see` keys); start from `libraries-derived.json`.")
-    ov.append("2. `.codemap/explanations.json` — one plain-English `what` line per "
+    ov.append("3. `.codemap/explanations.json` — one plain-English `what` line per "
               "symbol, shown in the Graph inspector. Follow "
               "`references/explanations-schema.md`. Key every entry by the symbol "
               "`key:` printed in the per-module briefs. Cover at least every "
               "snippet in those briefs (hotspots + entry points).")
-    ov.append("3. `.codemap/scenarios.json` — the Simulate tab's scenario "
+    ov.append("4. `.codemap/scenarios.json` — the Simulate tab's scenario "
               "curriculum. Follow `references/scenarios-schema.md`. Turn the "
               "**Scenario index** above into one ordered, grouped list: every "
               "entry an `id` + `title` + `root` (the `key:` shown) + `group` + "
@@ -322,7 +371,7 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
               "a tree. For real branch/output fidelity record an actual run: "
               "`codemap trace --name \"<title>\" -- <command>`.")
     ov.append("")
-    ov.append("All three files are optional and fall back silently — but you were "
+    ov.append("All four files are optional and fall back silently — but you were "
               "asked for what you were asked for.")
     _write(briefs_dir / "00-overview.md", ov, written)
 

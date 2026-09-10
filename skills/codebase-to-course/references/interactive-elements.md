@@ -1,9 +1,10 @@
-# How the three files connect
+# How the files connect
 
-`codemap explore` bakes `libraries.json`, `explanations.json` and
-`scenarios.json` into `explore.html`. They are rendered by the frozen
-`codemap/site/assets/explore.js` — you write JSON, never HTML/CSS/JS. Each file
-fills one tab; the glue between them is the symbol **key**.
+`codemap explore` bakes `walkthrough.json`, `libraries.json`,
+`explanations.json`, `scenarios.json` and `glossary.json` into `explore.html`.
+They are rendered by the frozen `codemap/site/assets/explore.js` — you write
+JSON, never HTML/CSS/JS. Each file fills one tab; the glue between them is the
+symbol **key**.
 
 ## The key is the join
 
@@ -19,7 +20,7 @@ links content across tabs:
 
 A key that no longer resolves is dropped silently, never an error.
 
-## Learn tab — `libraries.json`
+## Packages tab — `libraries.json`
 
 One entry per imported package and per repo module. The renderer shows, in
 order: a **subtitle** it derives (`third-party · imported by N files`, or
@@ -28,6 +29,20 @@ bundled blurb, or a "add one" placeholder), your **In this codebase** line (or,
 if you omit `here`, the list of importing files it derives), and **See in the
 graph** (`see` keys, or derived call sites — the busiest symbols in the
 importing files).
+
+## Learn tab — `walkthrough.json`
+
+The renderer shows, in order: the **intro** (`what`, then each `sides` entry's
+`title`/`body`, then the `seam` note if present), the **category map**
+(`categories[]`, each with its `body` and `groups[]`), and the **folder
+tree** (every indexed folder, with a `folders[<path>]` entry's `title`,
+`purpose`, `read_first`, `note` and `see` shown where authored, and a bare row
+where it isn't). Its `see`/`folders[<path>].see` keys resolve exactly like
+`libraries.json`'s `see` does — same "the key is the join" mechanism above —
+except a `walkthrough.json` `see` entry may also be a bare repo-relative file
+path for something codemap doesn't index at all (a `.css` file, most often),
+which renders as plain text pointing at that file instead of a clickable graph
+row. `glossary.json` powers hover/tap tooltips on every tab, not just this one.
 
 ## Graph inspector — `explanations.json`
 

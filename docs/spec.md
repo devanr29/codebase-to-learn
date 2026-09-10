@@ -375,7 +375,14 @@ the primary way to *read* the repository. Three tabs sharing one hash router:
   inspector (fan-in/out, blast radius, entry path, source excerpt, the file's
   third-party / built-in / internal imports, and a "what this does" blurb from
   `.codemap/explanations.json` when present).
-- **Learn** — a library / module reference: every imported package (third-party
+- **Learn** — a guided project walkthrough: an Orientation landing screen, an
+  optional frontend/backend-style "parts of this app" split, an optional
+  topic-grouped "what this app is made of" category map, and one page per
+  repo folder (derived from the file tree; always present, even with zero
+  authored content, showing derived facts instead). Prose comes from
+  `.codemap/walkthrough.json` (authored by the `codebase-to-course` skill);
+  missing or malformed input falls back to a bare derived folder tree.
+- **Packages** — a library / module reference: every imported package (third-party
   + stdlib) and every top-level repo module, with what it does in general and
   its job in this codebase. Prose comes from `.codemap/libraries.json` (authored
   by the `codebase-to-course` skill) over a bundled table of common-library

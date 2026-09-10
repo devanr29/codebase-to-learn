@@ -173,6 +173,50 @@ def test_model_carries_libraries_key(fixture_impact_repo, tmp_path):
     assert json.loads(json.dumps(data["libraries"])) == data["libraries"]
 
 
+def test_model_carries_folders_walkthrough_glossary_keys(fixture_impact_repo, tmp_path):
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    data = model.build(conn, cfg)
+
+    # folders[] is always a list (derived, never authored) -- never None
+    assert "folders" in data
+    assert isinstance(data["folders"], list)
+    assert json.loads(json.dumps(data["folders"])) == data["folders"]
+    # the impact fixture is a flat `svc/` package -- one depth-1 folder
+    assert any(f["path"] == "svc" for f in data["folders"])
+
+    # walkthrough is optional, None when unauthored -- same contract as libraries
+    assert "walkthrough" in data
+    assert data["walkthrough"] is None or isinstance(data["walkthrough"], dict)
+    assert json.loads(json.dumps(data["walkthrough"])) == data["walkthrough"]
+
+    # glossary is optional too -- no authored prose anywhere in this fixture
+    # (no libraries.json, no walkthrough.json) means nothing to scan, so None
+    assert "glossary" in data
+    assert data["glossary"] is None or isinstance(data["glossary"], dict)
+    assert json.loads(json.dumps(data["glossary"])) == data["glossary"]
+
+
+def test_model_glossary_reflects_authored_prose(fixture_impact_repo, tmp_path):
+    """glossary.json's `build()` is fed exactly the strings that will render
+    through the tooltip machinery: walkthrough.json's prose and libraries.json's
+    general/here lines. Confirm the wiring actually collects them, using a term
+    that only the bundled tables (not a hand-written project override) know."""
+    cfg = config.load(fixture_impact_repo.path)
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    lf = cfg.codemap_dir / "libraries.json"
+    try:
+        lf.write_text(json.dumps({"items": {
+            "svc": {"general": "This repo's own package.",
+                    "here": "Talks to React for the frontend bits."},
+        }}), encoding="utf-8")
+        cfg2, conn2 = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+        data = model.build(conn2, cfg2)
+        assert data["glossary"] is not None
+        assert "React" in data["glossary"]["terms"]
+    finally:
+        lf.unlink(missing_ok=True)
+
+
 def test_explanations_json_absent_invalid_then_valid(fixture_impact_repo, tmp_path):
     cfg = config.load(fixture_impact_repo.path)
     cfg.codemap_dir.mkdir(exist_ok=True)
@@ -292,3 +336,31 @@ def test_emit_brief_scenario_index_orders_entry_points_by_workflow(fixture_impac
 
     body = (cfg2.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
     assert "Scenario index" in body and "order 10" in body
+
+
+def test_emit_brief_folder_map(fixture_impact_repo, tmp_path):
+    """--emit-brief lists every folders.py folder as a walkthrough.json
+    candidate, and writes folders-derived.json with the full per-folder data."""
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    data = model.build(conn, cfg)
+    cfg2 = config.load(fixture_impact_repo.path)
+    cfg2.codemap_dir.mkdir(exist_ok=True)
+    brief.emit(conn, cfg2, data)
+
+    body = (cfg2.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
+    assert "Folder map" in body and "walkthrough.json" in body
+    assert "`svc`" in body      # the fixture's one surviving folder
+
+    fd = json.loads((cfg2.codemap_dir / "briefs" / "folders-derived.json").read_text(encoding="utf-8"))
+    assert isinstance(fd["folders"], list)
+    assert fd["folders"]        # the fixture's svc/ directory has several files
+
+    svc = next(f for f in fd["folders"] if f["path"] == "svc")
+    assert svc["reach"] in ("root", "reached", "orphan")
+    assert svc["file_count"] >= 1
+    assert set(svc) >= {"path", "reach", "file_count", "total_files", "loc", "symbols", "langs", "deps"}
+
+    # the impact fixture's svc/ has an entry point (report_view / main), so it's
+    # never an orphan -- the hedge template must not appear when nothing is flagged
+    assert svc["reach"] != "orphan"
+    assert "confirm before writing a note" not in body

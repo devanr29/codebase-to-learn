@@ -11,9 +11,10 @@ Run the full `codebase-to-course` authoring workflow against the current repo.
 3. Run `codemap explore --emit-brief` to write the analysis pack under
    `.codemap/briefs/`.
 4. Invoke the `codebase-to-course` skill and follow its workflow exactly —
-   it reads the briefs and writes `.codemap/libraries.json`,
-   `.codemap/explanations.json`, and `.codemap/scenarios.json`.
-5. Run `codemap explore --open` to bake the three files into `explore.html`
+   it reads the briefs and writes `.codemap/walkthrough.json`,
+   `.codemap/libraries.json`, `.codemap/explanations.json`,
+   `.codemap/scenarios.json`, and `.codemap/glossary.json`.
+5. Run `codemap explore --open` to bake the five files into `explore.html`
    and review the result as the skill's own "Bake and review" step directs.
 
 If `$ARGUMENTS` is given, treat it as `--path <ARGUMENTS>` on every `codemap`

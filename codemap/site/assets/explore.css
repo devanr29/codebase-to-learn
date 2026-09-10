@@ -133,7 +133,7 @@ button { font-family: inherit; }
   font-size: 11px; color: var(--color-neutral-500);
 }
 .topbar .stat b { font-family: var(--font-mono); color: var(--color-text); font-weight: 500; }
-/* the brand mark, 5 tabs and 4 stat counters don't fit a phone-width topbar
+/* the brand mark, 6 tabs and 4 stat counters don't fit a phone-width topbar
    with no wrap and no scroll — at 320-375px this clipped Learn and Timeline
    off the edge entirely, with no way to reach either tab. The counters are
    the least essential thing here (they're repeated in the rail's footer),
@@ -141,15 +141,18 @@ button { font-family: inherit; }
    560px was tuned back when there were 4 tabs; a 5th (Map) pushed the real
    required width to ~825-860px (it grows with the repo's stat digit counts),
    so anything from ~561-860px — a common tablet-portrait/split-screen band —
-   still overflowed the whole page horizontally with the old threshold. Reuse
-   the 900px breakpoint already used elsewhere in this file for "tablet". */
-@media (max-width: 900px) {
+   still overflowed the whole page horizontally with the old threshold; a 6th
+   tab (Packages) pushed the required width further still, so this raises to
+   ~1040px — past the plain 900px "tablet" breakpoint used elsewhere in this
+   file, which no longer leaves quite enough room here. */
+@media (max-width: 1040px) {
   .topbar .stat, .brand .ver { display: none; }
 }
-@media (max-width: 400px) {
-  /* hiding the counters alone still wasn't enough room for all 4 tabs at a
-     320px phone width — collapse to icon-only tabs; aria-label (set in
-     explore.js) keeps each button's accessible name either way. */
+@media (max-width: 420px) {
+  /* hiding the counters alone still wasn't enough room for all 6 tabs at a
+     phone width — collapse to icon-only tabs; aria-label (set in explore.js)
+     keeps each button's accessible name either way. Raised from 400 to 420
+     alongside the 6th tab (Packages) for the same reason. */
   .tab-label { display: none; }
   .tab { padding: 6px 9px; }
 }
@@ -587,48 +590,19 @@ button { font-family: inherit; }
 .learn-inner { max-width: 720px; margin: 0 auto; }
 .learn-inner .sf { font-family: var(--font-mono); color: var(--color-accent-300); cursor: pointer; }
 .learn-inner .sf:hover { text-decoration: underline; }
+/* a `see` reference that resolved to neither a graph node nor an indexed file
+   (e.g. a .css file codemap doesn't parse) — shown so it's never silently
+   dropped, but visibly inert: no pointer, no hover-underline, muted color. */
+.sf.inert { cursor: default; color: var(--color-neutral-400); }
+.sf.inert:hover { text-decoration: none; }
 .lib-missing { color: var(--color-neutral-500); font-style: italic; }
 .lib-hint { color: var(--color-neutral-600); font-size: 12px; border-left: 2px solid var(--color-neutral-800); padding-left: 10px; }
 .module-num { font: 700 44px/1 var(--font-ui); color: rgba(145, 132, 217, 0.22); }
 .module-title { font-size: 30px; font-weight: 600; margin: 6px 0 4px; letter-spacing: -0.015em; }
 .module-sub { color: var(--color-neutral-400); font-size: 14px; margin-bottom: 8px; }
-.metaphor {
-  border-left: 3px solid var(--color-accent);
-  padding: 4px 0 4px 14px;
-  color: var(--color-accent-200);
-  font-size: 13.5px;
-  margin: 18px 0 28px;
-}
 .screen { margin: 34px 0; }
 .screen h3 { font-size: 18px; font-weight: 600; margin: 0 0 10px; }
 .screen p { color: var(--color-neutral-300); font-size: 13.5px; line-height: 1.65; margin: 0 0 12px; }
-
-.xlate { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 16px 0; }
-.xlate .lbl { font: 500 9px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin-bottom: 6px; }
-.xlate pre {
-  margin: 0; padding: 12px;
-  background: #0c0d15; border: 1px solid var(--color-neutral-800); border-radius: 8px;
-  font: 400 11.5px/1.6 var(--font-mono); color: var(--color-neutral-200);
-  white-space: pre-wrap; word-break: break-word;
-}
-.xlate .en p { font-size: 12.5px; color: var(--color-neutral-400); margin: 0 0 8px; }
-@media (max-width: 720px) { .xlate { grid-template-columns: 1fr; } }
-
-.callout {
-  display: flex; gap: 10px;
-  border: 1px solid var(--color-neutral-800);
-  border-radius: 10px; padding: 12px 14px; margin: 18px 0;
-}
-.callout i { font-size: 16px; flex: none; }
-.callout.accent { border-color: var(--color-accent-700); background: var(--color-accent-900); }
-.callout.accent i { color: var(--color-accent-300); }
-.callout .ct { font-weight: 600; font-size: 12.5px; margin-bottom: 3px; }
-.callout p { margin: 0; font-size: 12.5px; color: var(--color-neutral-300); }
-
-.pcards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 16px 0; }
-.pcard { border: 1px solid var(--color-neutral-800); border-top: 3px solid var(--color-accent-600); border-radius: 10px; padding: 12px; }
-.pcard .pt { font-weight: 600; font-size: 12.5px; margin: 6px 0 4px; }
-.pcard p { margin: 0; font-size: 11.5px; color: var(--color-neutral-400); }
 
 .steps { display: flex; flex-direction: column; gap: 10px; margin: 16px 0; }
 .step { display: grid; grid-template-columns: 30px 1fr; gap: 12px; align-items: start; border-left: 3px solid var(--color-accent-700); padding: 4px 0 4px 12px; }
@@ -666,35 +640,6 @@ button { font-family: inherit; }
 .orientation-link { margin-bottom: 10px; padding-bottom: 9px; border-bottom: 1px solid var(--color-divider); }
 .orientation-link i { margin-right: 7px; color: var(--color-neutral-500); }
 .orientation-link.active i { color: var(--color-accent-300); }
-
-.quiz { margin: 30px 0; border-top: 1px solid var(--color-divider); padding-top: 22px; }
-.quiz .qh { font: 500 10px/1 var(--font-mono); letter-spacing: 0.09em; color: var(--color-neutral-600); margin-bottom: 14px; }
-.qblock { margin-bottom: 22px; }
-.qtext { font-size: 13.5px; font-weight: 500; margin-bottom: 10px; }
-.qopt {
-  display: flex; align-items: center; gap: 9px;
-  width: 100%; text-align: left;
-  padding: 9px 11px; margin-bottom: 6px;
-  border: 1px solid var(--color-neutral-800); border-radius: 8px;
-  background: transparent; color: var(--color-neutral-300);
-  font: inherit; font-size: 12.5px; cursor: pointer;
-}
-.qopt:hover { border-color: var(--color-neutral-600); }
-.qopt .dot { width: 14px; height: 14px; border-radius: 999px; border: 1.5px solid var(--color-neutral-700); flex: none; }
-.qopt.sel { border-color: var(--color-accent); }
-.qopt.sel .dot { background: var(--color-accent); border-color: var(--color-accent); }
-.qopt.correct { border-color: #6ee7a8; color: #c9f6dd; }
-.qopt.wrong { border-color: #e88; color: #f6d5d5; }
-.qfb { font-size: 12px; padding: 9px 11px; border-radius: 8px; margin-top: 4px; display: none; }
-.qfb.show { display: block; }
-.qfb.ok { background: rgba(110, 231, 168, 0.1); color: #bdead0; }
-.qfb.no { background: rgba(232, 136, 136, 0.1); color: #f0cccc; }
-.qretry {
-  display: block; margin-top: 7px; border: 0; background: none; padding: 0;
-  font: 500 11px var(--font-mono); color: inherit; text-decoration: underline;
-  text-underline-offset: 2px; cursor: pointer; opacity: 0.85;
-}
-.qretry:hover { opacity: 1; }
 
 /* ── map tab: structure views ────────────────────────────────── */
 .map { flex: 1; min-width: 0; display: flex; flex-direction: column; }

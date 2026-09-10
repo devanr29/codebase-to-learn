@@ -391,12 +391,57 @@ def build(
 
     course = _learn.load(cfg)
 
-    # -- authored library / module descriptions (optional) — the Learn tab is
-    #    a dependency reference; explore.js falls back to the import graph + a
-    #    bundled table of well-known-library blurbs when this is absent -----
+    # -- authored library / module descriptions (optional) — the Packages tab
+    #    is a dependency reference; explore.js falls back to the import graph +
+    #    a bundled table of well-known-library blurbs when this is absent -----
     from . import libraries as _libraries
 
     libs = _libraries.load(cfg)
+
+    # -- derived folder tree for the Learn tab's walkthrough (always present;
+    #    an empty repo with no files just yields an empty list) --------------
+    from . import folders as _folders
+
+    folder_list = _folders.build(files, file_edges, entry_points)
+
+    # -- authored walkthrough content (optional) — Learn's actual content:
+    #    a plain-language intro, the category map, and per-folder prose ------
+    from . import walkthrough as _walkthrough
+
+    wt = _walkthrough.load(cfg)
+
+    # -- glossary/tooltip terms, filtered to what the authored prose actually
+    #    uses. `extra_terms` folds in walkthrough.json's own optional inline
+    #    `glossary` field -- a separate, smaller convenience next to the
+    #    dedicated `.codemap/glossary.json` file (see glossary.py::build) ----
+    from . import glossary as _glossary
+
+    _prose: list[str] = []
+    if wt:
+        intro = wt.get("intro") or {}
+        if intro.get("what"):
+            _prose.append(intro["what"])
+        for side in (intro.get("sides") or {}).values():
+            _prose.append(side.get("title") or "")
+            _prose.append(side.get("body") or "")
+        seam = intro.get("seam") or {}
+        if seam.get("note"):
+            _prose.append(seam["note"])
+        for cat in wt.get("categories") or []:
+            _prose.append(cat.get("title") or "")
+            _prose.append(cat.get("body") or "")
+            for grp in cat.get("groups") or []:
+                _prose.append(grp.get("title") or "")
+        for entry in (wt.get("folders") or {}).values():
+            _prose.append(entry.get("title") or "")
+            _prose.append(entry.get("purpose") or "")
+            _prose.append(entry.get("note") or "")
+    if libs:
+        for entry in (libs.get("items") or {}).values():
+            _prose.append(entry.get("general") or "")
+            _prose.append(entry.get("here") or "")
+    _extra_terms = (wt.get("glossary") if wt else None) or {}
+    gloss = _glossary.build(cfg, _prose, extra_terms=_extra_terms)
 
     # -- simulate scenarios (optional; Lane 1 is derived client-side) -----
     from . import simulate as _simulate
@@ -430,12 +475,15 @@ def build(
         "files": files,
         "file_edges": file_edges,
         "modules": modules,
+        "folders": folder_list,
         "entry_points": entry_points,
         "external": sorted(all_external),
         "dependencies": dependencies,
         "timeline": timeline,
         "learn": course,
         "libraries": libs,
+        "walkthrough": wt,
+        "glossary": gloss,
         "sim": sim,
     }
     return out

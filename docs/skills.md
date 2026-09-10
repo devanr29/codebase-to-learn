@@ -3,8 +3,8 @@
 `codemap explore` renders `.codemap/explore.html` from **only** the index —
 every tab works with zero authored content, falling back to what can be
 derived from the code itself. The `codebase-to-course` skill exists to make
-three of those tabs better by *authoring prose the renderer can't derive*: it
-writes three JSON files under `.codemap/`, and the renderer bakes them in
+several of those tabs better by *authoring prose the renderer can't derive*:
+it writes JSON files under `.codemap/`, and the renderer bakes them in
 verbatim on the next `codemap explore`.
 
 ```
@@ -23,14 +23,16 @@ codemap scan → index.db → codemap explore --emit-brief → .codemap/briefs/*
 The renderer never calls the skill, never calls an LLM, and never blocks on
 these files existing — this is the one rule that makes the split safe:
 
-> **All three files are optional. Missing or malformed content is not an
+> **All of these files are optional. Missing or malformed content is not an
 > error.** Each tab has a deterministic, derived-from-the-graph fallback.
 
 | File | Tab it fills | Fallback when absent |
 |---|---|---|
-| `.codemap/libraries.json` | **Learn** | a bundled table of well-known-library one-liners + the import graph |
+| `.codemap/libraries.json` | **Packages** | a bundled table of well-known-library one-liners + the import graph |
 | `.codemap/explanations.json` | **Graph** inspector | no blurb shown; everything else in the inspector (fan-in/out, blast radius, source) is unaffected |
 | `.codemap/scenarios.json` | **Simulate** | a derived scenario computed client-side in `explore.js` for the busiest few functions |
+| `.codemap/walkthrough.json` | **Learn** | a plain-language intro, an optional category map, and per-folder prose — falls back to a derived folder tree with no authored content |
+| `.codemap/glossary.json` | *(cross-cutting — every tab's prose)* | the two dictionaries bundled with `codemap` (well-known packages, common concepts) still power tooltips alone |
 
 The Map and Timeline tabs have **no** authored input at all — they're built
 entirely from the graph.
@@ -45,18 +47,20 @@ the `explore` renderer itself stays deterministic and never calls an LLM (see
 The one optional LLM stage the CLI has (`narrate.py`, gated by `[llm] enabled`
 in `config.toml`, off by default) feeds `codemap explain`'s report and is
 unrelated and untouched by any of this.
-The skill is where the judgment for Learn/Graph/Simulate content happens, and
+The skill is where the judgment for Learn/Packages/Graph/Simulate content happens, and
 it happens in whatever agent session you're already using, not behind an API
 key the CLI would have to manage.
 
 ## Authoring by hand, without Claude Code
 
-The skill is a convenience, not a requirement. All three files are plain,
+The skill is a convenience, not a requirement. These are all plain,
 documented JSON — write them yourself, or with any other tool:
 
 - [`skills/codebase-to-course/references/libraries-schema.md`](../skills/codebase-to-course/references/libraries-schema.md)
 - [`skills/codebase-to-course/references/explanations-schema.md`](../skills/codebase-to-course/references/explanations-schema.md)
 - [`skills/codebase-to-course/references/scenarios-schema.md`](../skills/codebase-to-course/references/scenarios-schema.md)
+- [`skills/codebase-to-course/references/walkthrough-schema.md`](../skills/codebase-to-course/references/walkthrough-schema.md)
+- [`skills/codebase-to-course/references/glossary-schema.md`](../skills/codebase-to-course/references/glossary-schema.md)
 
 `codemap explore --emit-brief` is useful either way — it writes
 `.codemap/briefs/` with every symbol's `key:`, pre-extracted snippets, and (for

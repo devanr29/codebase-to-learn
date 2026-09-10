@@ -460,6 +460,7 @@
     view: { x: 0, y: 0, k: 1 },
     touched: null,
     module: null,
+    pkg: null,      // Packages: current package/module slug
     flow: !reduceMotion,
     folders: new Set(),   // legend folder filter — empty = every folder shown
     pin: null,            // a click-pinned node key: spotlight it + its edges
@@ -507,15 +508,37 @@
     var prevTab = state.tab;            // read before route() below overwrites it — see
                                          // updateGraphFocus()'s fast path at the bottom
     var r = parseHash();
-    state.tab = ["graph", "learn", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "learn";
+    state.tab = ["graph", "learn", "libs", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "learn";
     if (state.tab === "graph") {
       if (r.arg && keyToI[r.arg] != null) { state.focus = keyToI[r.arg]; state.fileScope = null; }
       else if (!r.arg) state.focus = null;
     } else if (state.tab === "learn") {
-      // #/learn/<lib-or-module-slug>; no arg lands on Orientation, not the
-      // first library — "nobody understands a codebase entirely" is a better
-      // first thing to read than whichever package happened to sort first.
-      state.module = r.arg || ORIENTATION_ID;
+      // #/learn/<page-id>; no arg lands on Orientation, not the first folder —
+      // "nobody understands a codebase entirely" is a better first thing to
+      // read than whichever folder happened to sort first.
+      //
+      // Back-compat + slug-collision rule: before the Packages split, a bare
+      // #/learn/<slug> always meant a library/module slug. Now it can mean the
+      // orientation id, "parts", the category-map id, or a folder path — and a
+      // folder path can collide with an old package slug (e.g. "frontend" is
+      // both a folder and, on Packages, an internal-module entry). Folder wins
+      // on Learn, package wins on Packages: only redirect to Packages when the
+      // arg resolves to NEITHER a real Learn page NOR a folder, but DOES
+      // resolve to a real Packages slug. Anything that resolves to neither
+      // falls back to the orientation id, exactly like an empty arg always has.
+      var learnArg = r.arg;
+      if (!learnArg || learnArg === ORIENTATION_ID) {
+        state.module = ORIENTATION_ID;
+      } else if (learnArg === "parts" || learnArg === CATEGORY_MAP_ID || FOLDER_BY_PATH[learnArg]) {
+        state.module = learnArg;
+      } else if (LIB_BY_SLUG[learnArg]) {
+        state.tab = "libs";
+        state.pkg = learnArg;
+      } else {
+        state.module = ORIENTATION_ID;
+      }
+    } else if (state.tab === "libs") {
+      state.pkg = r.arg || null;   // null = the package index (first entry / a landing state)
     } else if (state.tab === "map") {
       var seg = r.arg.split("/");
       if (["layers", "trace", "mass"].indexOf(seg[0]) >= 0) state.mapView = seg[0];
@@ -558,6 +581,7 @@
       ["map", "ph ph-stack", "Map"],
       ["sim", "ph ph-play-circle", "Simulate"],
       ["learn", "ph ph-graduation-cap", "Learn"],
+      ["libs", "ph ph-package", "Packages"],
       ["timeline", "ph ph-git-commit", "Timeline"],
     ].map(function (t) {
       var active = state.tab === t[0];
@@ -1629,13 +1653,17 @@
     var totalFiles = (DATA.stats && DATA.stats.files) || 1;
 
     if (n.explain) {
+      // a symbol's own explain.terms shadows the global glossary for this card —
+      // it never merges with GLOSS. what/why share one `seen` so the same term
+      // isn't underlined twice back-to-back in the same two-paragraph card.
       var exTerms = n.explain.terms || {};
+      var exSeen = {};
       var ex = el("div", { class: "insp-explain" }, [
         el("div", { class: "lbl", text: "WHAT THIS DOES" }),
-        el("p", {}, termNodes(n.explain.what, exTerms)),
+        el("p", {}, termNodes(n.explain.what, exTerms, exSeen)),
       ]);
       if (n.explain.why)
-        ex.appendChild(el("p", { class: "why" }, termNodes(n.explain.why, exTerms)));
+        ex.appendChild(el("p", { class: "why" }, termNodes(n.explain.why, exTerms, exSeen)));
       body.appendChild(ex);
     }
 
@@ -2934,7 +2962,7 @@
     (st.libs || []).forEach(function (lib) {
       var blurb = lib.here || lib.general;
       box.appendChild(el("div", { class: "sim-narr-lib",
-        on: { click: function () { go("learn", lib.slug); } } },
+        on: { click: function () { go("libs", lib.slug); } } },
         [el("i", { class: "ph ph-package" }),
           el("b", { text: lib.name }), " — " + (blurb || "open in Learn ▸")]));
     });
@@ -3649,13 +3677,15 @@
     ]);
   }
 
-  // ---- learn tab: library / module reference -----------------------
+  // ---- packages tab: library / module reference ---------------------
   // For every external package the code imports — and every top-level module of
   // the repo itself — what it does *in general* plus how *this* codebase uses
   // it. The bundled table below covers the common ecosystem; anything it misses
   // (and every repo module) is filled by .codemap/libraries.json, authored by
   // the codebase-to-course skill. DATA.learn is still emitted but no longer
-  // rendered here.
+  // rendered here. (This used to be the Learn tab's whole content; it moved to
+  // its own "Packages" tab so Learn could become the project walkthrough —
+  // see the "learn tab: the walkthrough" section further down.)
   var LIB_BLURB = {
     // — python standard library —
     os: "Operating-system bridge — file paths, environment variables, processes.",
@@ -3755,6 +3785,10 @@
     return String(name).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "x";
   }
   var LIB_AUTHORED = (DATA.libraries && DATA.libraries.items) || {};
+  // global tooltip glossary — filtered server-side to terms that actually occur
+  // in authored prose (see codemap/site/glossary.py::build). A symbol's own
+  // explain.terms (the Graph inspector) shadows this per-symbol; the two never merge.
+  var GLOSS = (DATA.glossary && DATA.glossary.terms) || {};
 
   // ---- Simulate step -> Learn blurb (dependency cross-link) --------------
   // libraries.json's `see` list already maps a library to the call-site keys
@@ -3811,21 +3845,19 @@
   LIB_ENTRIES.forEach(function (e) { if (!LIB_BY_SLUG[e.slug]) LIB_BY_SLUG[e.slug] = e; });
   function libDescribed(e) { return !!(LIB_AUTHORED[e.name] || libBlurb(e.name)); }
 
-  // filter text for the Learn nav — module-level like simRailFilter, so
-  // typing survives renderLearnNavList() repainting just the list below it
-  var learnNavFilter = "";
-  var learnNavListEl;
+  // filter text for the Packages nav — module-level like simRailFilter, so
+  // typing survives renderPkgNavList() repainting just the list below it
+  var pkgNavFilter = "";
+  var pkgNavListEl;
   // a slug no real library/module can ever produce (libSlug never emits a
-  // leading underscore) — the Learn tab's actual landing screen, not a
-  // library entry. See renderOrientation() / learnTab().
+  // leading underscore) and no real folder path can ever collide with —
+  // the Learn tab's "Start here" landing-screen page id. See
+  // renderOrientation() / learnTab() (the Learn walkthrough, not Packages).
   var ORIENTATION_ID = "__start__";
-  function renderLearnNavList(cur) {
-    if (!learnNavListEl) return;
-    clear(learnNavListEl);
-    var q = learnNavFilter.trim().toLowerCase();
-    learnNavListEl.appendChild(el("div", { class: "mlink orientation-link" + (cur.slug === ORIENTATION_ID ? " active" : ""),
-      on: { click: function () { go("learn"); } } },
-      [el("i", { class: "ph ph-compass" }), "Start here"]));
+  function renderPkgNavList(cur) {
+    if (!pkgNavListEl) return;
+    clear(pkgNavListEl);
+    var q = pkgNavFilter.trim().toLowerCase();
     var any = false;
     LIB_SECTIONS.forEach(function (sec) {
       var items = LIB_ENTRIES.filter(function (e) { return e.section === sec.key; });
@@ -3834,17 +3866,17 @@
       });
       if (!items.length) return;
       any = true;
-      learnNavListEl.appendChild(el("div", { class: "lib-navsec", text: sec.label + " · " + items.length }));
+      pkgNavListEl.appendChild(el("div", { class: "lib-navsec", text: sec.label + " · " + items.length }));
       items.forEach(function (e) {
-        learnNavListEl.appendChild(el("div", { class: "mlink" + (e.slug === cur.slug ? " active" : ""),
+        pkgNavListEl.appendChild(el("div", { class: "mlink" + (e.slug === cur.slug ? " active" : ""),
           title: libDescribed(e) ? null : "no description yet",
-          on: { click: function () { go("learn", e.slug); } } },
+          on: { click: function () { go("libs", e.slug); } } },
           [libDescribed(e) ? null : el("span", { class: "lib-dot", text: "○ " }), e.name]));
       });
     });
     if (!any)
-      learnNavListEl.appendChild(el("div", { class: "sim-rail-empty",
-        text: "No library matches “" + learnNavFilter + "”." }));
+      pkgNavListEl.appendChild(el("div", { class: "sim-rail-empty",
+        text: "No library matches “" + pkgNavFilter + "”." }));
   }
   // ── Orientation — the Learn tab's actual landing screen ──────────────────
   // Everything below is copy, not computation: it reuses LIB_ENTRIES (already
@@ -3862,6 +3894,7 @@
     ]);
   }
   function renderOrientation() {
+    var pageSeen = {};   // one dedupe set for every glossary term shown on this page
     var wrap = el("div", {}, [
       el("div", { class: "module-num", text: "0" }),
       el("div", { class: "module-title", text: "Start here" }),
@@ -3885,7 +3918,8 @@
           el("div", { class: "orient-col-h", text: "What exists — the floor plan" }),
           orientLink("graph", null, "Graph", "every file and function, and what calls what"),
           orientLink("map", null, "Map", "the shape of the whole system, layer by layer"),
-          orientLink("learn", null, "Learn", "what every dependency and module actually does"),
+          orientLink("learn", null, "Learn", "what this project is and how its parts fit together"),
+          orientLink("libs", null, "Packages", "what every dependency and module actually does"),
         ]),
         el("div", { class: "orient-col" }, [
           el("div", { class: "orient-col-h", text: "What happens — the walk" }),
@@ -3921,8 +3955,12 @@
     ]);
     wrap.appendChild(moves);
 
-    var mods = LIB_ENTRIES.filter(function (e) { return e.section === "module"; });
-    if (mods.length) {
+    // "read the map before the words" — a quick tour of the repo's own
+    // top-level folders. This used to read LIB_ENTRIES/LIB_AUTHORED (Packages
+    // data); now that Learn owns the walkthrough, it reads DATA.folders (the
+    // derived folder tree) + any authored purpose from .codemap/walkthrough.json.
+    var topFolders = (DATA.folders || []).filter(function (f) { return f.depth === 1; });
+    if (topFolders.length) {
       var tour = el("div", { class: "screen" }, [
         el("h3", { text: "Read the map before the words" }),
         el("p", { text: "Folder names carry more information per second of reading than any " +
@@ -3930,17 +3968,18 @@
           "folders are for:" }),
       ]);
       var list = el("div", { class: "steps" });
-      mods.forEach(function (e) {
-        var authored = LIB_AUTHORED[e.name] || {};
-        var blurb = authored.here || authored.general;
+      topFolders.forEach(function (f) {
+        var wtFolder = (WT.folders && WT.folders[f.path]) || {};
+        var blurb = wtFolder.purpose || ((f.deps && f.deps.length)
+          ? "Uses: " + f.deps.slice(0, 6).map(function (d) { return d.name; }).join(", ") + "."
+          : null);
         list.appendChild(el("div", { class: "step orient-mod",
-          on: { click: function () { go("learn", e.slug); } } }, [
+          on: { click: function () { go("learn", f.path); } } }, [
           el("div", { class: "sn", text: "→" }),
           el("div", {}, [
-            el("span", { class: "sf", text: e.name + "/" }),
-            el("span", { class: "orient-mod-n", text: "  " + e.files + " file" + (e.files === 1 ? "" : "s") +
-              " · " + e.symbols + " symbols" }),
-            blurb ? el("p", { class: "orient-mod-blurb", text: blurb }) : null,
+            el("span", { class: "sf", text: f.name + "/" }),
+            el("span", { class: "orient-mod-n", text: "  " + f.total_files + " file" + (f.total_files === 1 ? "" : "s") }),
+            blurb ? el("p", { class: "orient-mod-blurb" }, proseNodes(blurb, GLOSS, pageSeen)) : null,
           ]),
         ]));
       });
@@ -3951,30 +3990,30 @@
     return wrap;
   }
 
-  function learnTab() {
+  function packagesTab() {
     if (!LIB_ENTRIES.length)
       return el("div", { class: "learn", style: "display:flex" }, [
         el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" }, [
           el("div", { class: "module-title", text: "Nothing to describe" }),
           el("p", { class: "module-sub", text: "This graph imports no external packages and has no modules." }),
         ])])]);
-    var isOrientation = state.module === ORIENTATION_ID;
-    var cur = isOrientation ? null : (LIB_BY_SLUG[state.module] || LIB_ENTRIES[0]);
-    if (cur) state.module = cur.slug;
-    var navCur = cur || { slug: ORIENTATION_ID };
+    // Packages is pure reference — no orientation screen of its own. No/unknown
+    // slug just falls back to the first entry, same as the pre-split Learn tab did.
+    var cur = LIB_BY_SLUG[state.pkg] || LIB_ENTRIES[0];
+    state.pkg = cur.slug;
     var nav = el("div", { class: "learn-nav" }, [el("div", { class: "lk", text: "LIBRARIES · " + LIB_ENTRIES.length })]);
     // matches the Simulate rail's own threshold for when a flat list is long
     // enough that scanning it beats typing a filter — same idiom, same number.
     if (LIB_ENTRIES.length > 12)
       nav.appendChild(el("input", { class: "sim-rail-search", type: "search",
-        placeholder: "Filter " + LIB_ENTRIES.length + " libraries…", value: learnNavFilter,
-        on: { input: function (e) { learnNavFilter = e.target.value; renderLearnNavList(navCur); } } }));
-    learnNavListEl = el("div", { class: "learn-nav-list" });
-    nav.appendChild(learnNavListEl);
-    renderLearnNavList(navCur);
+        placeholder: "Filter " + LIB_ENTRIES.length + " libraries…", value: pkgNavFilter,
+        on: { input: function (e) { pkgNavFilter = e.target.value; renderPkgNavList(cur); } } }));
+    pkgNavListEl = el("div", { class: "learn-nav-list" });
+    nav.appendChild(pkgNavListEl);
+    renderPkgNavList(cur);
     return el("div", { class: "learn", style: "display:flex" }, [nav,
       el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" },
-        [isOrientation ? renderOrientation() : renderLibEntry(cur)])])]);
+        [renderLibEntry(cur)])])]);
   }
   function libImportingFiles(e) {
     if (e.scope === "internal") {
@@ -4009,6 +4048,9 @@
     return p;
   }
   function renderLibEntry(e) {
+    var pageSeen = {};   // one dedupe set for every glossary term shown on this page —
+                          // glossary.py scans libraries.json's general/here into DATA.glossary
+                          // too ("the Packages tab deserves tooltips too"), so wire it in here.
     var authored = LIB_AUTHORED[e.name] || {};
     var general = authored.general || libBlurb(e.name);
     var wrap = el("div", {}, [
@@ -4021,14 +4063,14 @@
 
     var g = el("div", { class: "screen" }, [el("h3", { text: "In general" })]);
     g.appendChild(general
-      ? el("p", { text: general })
+      ? el("p", {}, proseNodes(general, GLOSS, pageSeen))
       : el("p", { class: "lib-missing", text: "No description bundled for “" + e.name +
           "”. Add a `general` line to .codemap/libraries.json." }));
     wrap.appendChild(g);
 
     var h = el("div", { class: "screen" }, [el("h3", { text: "In this codebase" })]);
     if (authored.here) {
-      h.appendChild(el("p", { text: authored.here }));
+      h.appendChild(el("p", {}, proseNodes(authored.here, GLOSS, pageSeen)));
     } else {
       var files = libImportingFiles(e);
       if (files.length)
@@ -4057,21 +4099,356 @@
     }
     return wrap;
   }
-  // split body text on glossary terms, returning an array of text nodes / .term spans
-  function termNodes(text, glossary) {
-    var terms = Object.keys(glossary).filter(Boolean);
-    if (!terms.length) return [document.createTextNode(text)];
-    var re = new RegExp("\\b(" + terms.map(function (t) {
-      return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    }).join("|") + ")\\b");
-    var out = [], rest = String(text), m;
-    while ((m = rest.match(re))) {
-      if (m.index > 0) out.push(document.createTextNode(rest.slice(0, m.index)));
-      out.push(el("span", { class: "term", tabindex: "0", "data-def": glossary[m[1]] || "",
-        "aria-label": m[1] + ": " + (glossary[m[1]] || ""), text: m[1] }));
-      rest = rest.slice(m.index + m[1].length);
+
+  // ---- learn tab: the walkthrough -----------------------------------
+  // Learn's actual content: a plain-language intro to the project, a category
+  // map grouping references by topic (authored once, reused everywhere a
+  // folder needs to cite the same reference), and one page per surviving
+  // folder in DATA.folders. All of it is optional — an unauthored repo still
+  // gets a full walkthrough built purely from the derived folder tree.
+  var WT = DATA.walkthrough || {};
+  var FOLDER_BY_PATH = {};
+  (DATA.folders || []).forEach(function (f) { FOLDER_BY_PATH[f.path] = f; });
+  // a page id no real folder path can ever produce (folders.py never emits a
+  // path wrapped in double underscores) — the "what this app is made of"
+  // category-map screen. Deliberately NOT the bare string "map": that collides
+  // with state.mapView / the Map tab's own vocabulary, and nothing stops a
+  // real repo from having a folder literally named "map".
+  var CATEGORY_MAP_ID = "__categories__";
+
+  // Resolve one `see` key (from walkthrough.json's categories/folders/seam) to
+  // how it should render — reused for the category map, the seam, and every
+  // folder's own references. Three shapes, tried in order:
+  //   1. a real symbol key (data.nodes[].key)     -> clickable, jumps to Graph
+  //   2. a path that IS an indexed file (FILES[]) -> clickable, jumps to that
+  //                                                   file's first symbol
+  //   3. anything else (e.g. a .css file — codemap doesn't parse CSS, so it
+  //      has no node and no FILES[] entry either)  -> plain inert text, never
+  //                                                   dropped; this is what
+  //                                                   makes an unindexed file
+  //                                                   referenceable at all.
+  function resolveSeeKey(k) {
+    try {
+      if (keyToI[k] != null) return { kind: "node", node: N[keyToI[k]] };
+      if (fileByPath[k]) return { kind: "file", file: fileByPath[k] };
+    } catch (e) { /* fall through to plain text below */ }
+    return { kind: "text", text: k };
+  }
+  // resolveSeeKey() -> one clickable/inert span, same click idiom libFileLinks
+  // already uses (jump to the file's first symbol; nothing to jump to -> plain).
+  function seeKeyEl(k) {
+    var r = resolveSeeKey(k);
+    if (r.kind === "node")
+      return el("span", { class: "sf", text: r.node.qual + "  (" + r.node.file + ")",
+        on: { click: function () { go("graph", r.node.key); } } });
+    if (r.kind === "file") {
+      if (r.file.symbols && r.file.symbols.length)
+        return el("span", { class: "sf",
+          on: { click: function () { go("graph", N[r.file.symbols[0]].key); } }, text: r.file.path });
+      return el("span", { class: "sf inert", text: r.file.path });
     }
-    if (rest) out.push(document.createTextNode(rest));
+    return el("span", { class: "sf inert", text: r.text });
+  }
+  // render a normalized see-list ([{group, keys}] — see walkthrough.py's
+  // _norm_see) as one or more labelled step lists. `group: null` (the flat-
+  // array form) renders with no sub-heading.
+  function renderSeeGroups(groups) {
+    var wrap = el("div", {});
+    (groups || []).forEach(function (g) {
+      if (g.group) wrap.appendChild(el("div", { class: "orient-col-h", text: g.group }));
+      var steps = el("div", { class: "steps" });
+      (g.keys || []).forEach(function (k) {
+        steps.appendChild(el("div", { class: "step" }, [
+          el("div", { class: "sn", text: "→" }),
+          el("div", {}, [seeKeyEl(k)]),
+        ]));
+      });
+      wrap.appendChild(steps);
+    });
+    return wrap;
+  }
+  // the file/module path a `see` key ultimately refers to, for the "does this
+  // reference fall under this folder" test below — resolved, not the raw key,
+  // since a category's `see` entries are usually symbol keys (`path::symbol`),
+  // not bare paths.
+  function seeKeyPath(k) {
+    var r = resolveSeeKey(k);
+    return r.kind === "node" ? r.node.file : r.kind === "file" ? r.file.path : k;
+  }
+  function keyUnderFolder(k, folderPath) {
+    var p = seeKeyPath(k);
+    if (folderPath === "(root)") return p.indexOf("/") < 0;   // a root-level file has no "/" at all
+    return p === folderPath || p.indexOf(folderPath + "/") === 0;
+  }
+  // A folder that reuses the shared taxonomy (walkthrough.folders[path].categories,
+  // a list of category ids) instead of authoring its own `see` — the "derive,
+  // never repeat" rule: pull out just the groups (and, within a group, just the
+  // keys) that actually resolve under this folder's path, labelled by category.
+  function folderCategoryGroups(folder, wtFolder) {
+    var out = [];
+    var cats = WT.categories || [];
+    (wtFolder.categories || []).forEach(function (catId) {
+      var cat = null;
+      for (var i = 0; i < cats.length; i++) if (cats[i].id === catId) { cat = cats[i]; break; }
+      if (!cat) return;
+      (cat.groups || []).forEach(function (g) {
+        var matched = [];
+        (g.see || []).forEach(function (se) {
+          var keys = (se.keys || []).filter(function (k) { return keyUnderFolder(k, folder.path); });
+          if (keys.length) matched.push({ group: se.group, keys: keys });
+        });
+        if (matched.length) out.push({ title: cat.title + " — " + g.title, groups: matched });
+      });
+    });
+    return out;
+  }
+
+  var walkNavFilter = "";
+  var walkNavListEl;
+  // Learn's rail: the three fixed screens (only the ones that actually have
+  // something to show), then every surviving folder, indented by depth.
+  // DATA.folders is already sorted path-ascending with "(root)" first, and a
+  // parent path is always a string-prefix of its children, so it's already in
+  // parent-before-child order — no re-sort needed here.
+  function renderWalkthroughNavList(curId) {
+    if (!walkNavListEl) return;
+    clear(walkNavListEl);
+    walkNavListEl.appendChild(el("div", { class: "mlink orientation-link" + (curId === ORIENTATION_ID ? " active" : ""),
+      on: { click: function () { go("learn"); } } },
+      [el("i", { class: "ph ph-compass" }), "Start here"]));
+    if (WT.intro && WT.intro.sides && Object.keys(WT.intro.sides).length)
+      walkNavListEl.appendChild(el("div", { class: "mlink" + (curId === "parts" ? " active" : ""),
+        on: { click: function () { go("learn", "parts"); } } }, ["The parts of this app"]));
+    if (WT.categories && WT.categories.length)
+      walkNavListEl.appendChild(el("div", { class: "mlink" + (curId === CATEGORY_MAP_ID ? " active" : ""),
+        on: { click: function () { go("learn", CATEGORY_MAP_ID); } } }, ["What this app is made of"]));
+
+    var folders = DATA.folders || [];
+    if (!folders.length) return;
+    walkNavListEl.appendChild(el("div", { class: "lib-navsec", text: "FOLDERS · " + folders.length }));
+    var q = walkNavFilter.trim().toLowerCase();
+    var shown = q ? folders.filter(function (f) {
+      return f.path.toLowerCase().indexOf(q) >= 0 || f.name.toLowerCase().indexOf(q) >= 0;
+    }) : folders;
+    if (!shown.length) {
+      walkNavListEl.appendChild(el("div", { class: "sim-rail-empty",
+        text: "No folder matches “" + walkNavFilter + "”." }));
+      return;
+    }
+    shown.forEach(function (f) {
+      walkNavListEl.appendChild(el("div", {
+        class: "mlink" + (curId === f.path ? " active" : ""),
+        style: "padding-left:" + (9 + Math.max(0, f.depth - 1) * 14) + "px",
+        title: f.reach === "orphan" ? "nothing imports this — check its page" : null,
+        on: { click: function () { go("learn", f.path); } },
+      }, [f.reach === "orphan" ? el("span", { class: "lib-dot", text: "○ " }) : null, f.name]));
+    });
+  }
+
+  function renderParts() {
+    var pageSeen = {};   // one dedupe set for every glossary term shown on this page
+    var intro = WT.intro || {};
+    var wrap = el("div", {}, [
+      el("div", { class: "module-num", text: "1" }),
+      el("div", { class: "module-title", text: "The parts of this app" }),
+    ]);
+    if (intro.what)
+      wrap.appendChild(el("div", { class: "screen" }, [el("p", {}, proseNodes(intro.what, GLOSS, pageSeen))]));
+
+    var sides = intro.sides || {};
+    Object.keys(sides).forEach(function (key) {
+      var side = sides[key];
+      var title = side.title || (key.charAt(0).toUpperCase() + key.slice(1));
+      var screen = el("div", { class: "screen orient-split" }, [el("h3", {}, proseNodes(title, GLOSS, pageSeen))]);
+      if (side.body) screen.appendChild(el("p", {}, proseNodes(side.body, GLOSS, pageSeen)));
+      if (side.root && FOLDER_BY_PATH[side.root])
+        screen.appendChild(orientLink("learn", side.root, "Open " + FOLDER_BY_PATH[side.root].name));
+      wrap.appendChild(screen);
+    });
+
+    var seam = intro.seam;
+    if (seam && (seam.note || (seam.see && seam.see.length))) {
+      var seamScreen = el("div", { class: "screen" }, [el("h3", { text: "Where they meet" })]);
+      if (seam.note) seamScreen.appendChild(el("p", {}, proseNodes(seam.note, GLOSS, pageSeen)));
+      if (seam.see && seam.see.length) seamScreen.appendChild(renderSeeGroups(seam.see));
+      wrap.appendChild(seamScreen);
+    }
+    return wrap;
+  }
+
+  function renderCategoryMap() {
+    var pageSeen = {};   // one dedupe set for every glossary term shown on this page
+    var cats = WT.categories || [];
+    var wrap = el("div", {}, [
+      el("div", { class: "module-num", text: "2" }),
+      el("div", { class: "module-title", text: "What this app is made of" }),
+    ]);
+    cats.forEach(function (cat) {
+      var screen = el("div", { class: "screen" }, [el("h3", { text: cat.title })]);
+      if (cat.body) screen.appendChild(el("p", {}, proseNodes(cat.body, GLOSS, pageSeen)));
+      (cat.groups || []).forEach(function (g) {
+        screen.appendChild(el("div", { class: "orient-col-h" }, proseNodes(g.title, GLOSS, pageSeen)));
+        screen.appendChild(renderSeeGroups(g.see));
+      });
+      wrap.appendChild(screen);
+    });
+    return wrap;
+  }
+
+  function renderFolderEntry(folder) {
+    var pageSeen = {};   // one dedupe set for every glossary term shown on this page
+    var wtFolder = (WT.folders && WT.folders[folder.path]) || {};
+    var wrap = el("div", {}, [
+      el("div", { class: "module-num", text: String(folder.depth) }),
+      el("div", { class: "module-title", text: folder.name }),
+      el("div", { class: "module-sub", text: folder.file_count + " file" + (folder.file_count === 1 ? "" : "s") +
+        " · " + folder.symbol_count + " symbol" + (folder.symbol_count === 1 ? "" : "s") }),
+    ]);
+
+    var purposeScreen = el("div", { class: "screen" }, [el("h3", { text: "What this is for" })]);
+    if (wtFolder.purpose) {
+      purposeScreen.appendChild(el("p", {}, proseNodes(wtFolder.purpose, GLOSS, pageSeen)));
+    } else {
+      var depNames = (folder.deps || []).map(function (d) { return d.name; });
+      var sentence = folder.file_count + " file" + (folder.file_count === 1 ? "" : "s") +
+        (folder.langs && folder.langs.length ? " (" + folder.langs.join(", ") + ")" : "") +
+        (depNames.length ? ", using: " + depNames.slice(0, 8).join(", ") + (depNames.length > 8 ? "…" : "") : "") + ".";
+      purposeScreen.appendChild(el("p", { class: "lib-missing" }, proseNodes(sentence, GLOSS, pageSeen)));
+    }
+    wrap.appendChild(purposeScreen);
+
+    if (wtFolder.read_first)
+      wrap.appendChild(el("div", { class: "screen" }, [
+        el("h3", { text: "Start reading here" }),
+        el("p", {}, [seeKeyEl(wtFolder.read_first)]),
+      ]));
+
+    // an authored note always wins over the raw derived orphan hedge; never both.
+    var noteText = wtFolder.note || (folder.reach === "orphan" ? folder.orphan_reason : null);
+    if (noteText) wrap.appendChild(el("p", { class: "lib-hint" }, proseNodes(noteText, GLOSS, pageSeen)));
+
+    var refScreen = el("div", { class: "screen" }, [el("h3", { text: "See in the graph" })]);
+    var haveRefs = false;
+    if (wtFolder.see && wtFolder.see.length) {
+      refScreen.appendChild(renderSeeGroups(wtFolder.see));
+      haveRefs = true;
+    } else if (wtFolder.categories && wtFolder.categories.length) {
+      var catGroups = folderCategoryGroups(folder, wtFolder);
+      catGroups.forEach(function (cg) {
+        refScreen.appendChild(el("div", { class: "orient-col-h" }, proseNodes(cg.title, GLOSS, pageSeen)));
+        refScreen.appendChild(renderSeeGroups(cg.groups));
+      });
+      haveRefs = catGroups.length > 0;
+    }
+    if (!haveRefs) {
+      var filePaths = (folder.files || []).map(function (fi) { return FILES[fi] && FILES[fi].path; }).filter(Boolean);
+      if (filePaths.length) { refScreen.appendChild(libFileLinks("Files: ", filePaths)); haveRefs = true; }
+    }
+    if (haveRefs) wrap.appendChild(refScreen);
+
+    return wrap;
+  }
+
+  function learnTab() {
+    var id = state.module;
+    var body;
+    if (id === ORIENTATION_ID || !id) {
+      body = renderOrientation();
+    } else if (FOLDER_BY_PATH[id]) {
+      // a real folder always wins over a reserved page-id string — same
+      // "folder wins" precedent as the #/learn/<pkg-slug> redirect rule in
+      // route(). CATEGORY_MAP_ID is a double-underscore sentinel no real
+      // folder path could ever produce, so this only actually changes
+      // behavior for a repo with a top-level folder literally named "parts";
+      // checking both this way keeps the dispatch consistent either way.
+      body = renderFolderEntry(FOLDER_BY_PATH[id]);
+    } else if (id === "parts" && WT.intro && WT.intro.sides && Object.keys(WT.intro.sides).length) {
+      body = renderParts();
+    } else if (id === CATEGORY_MAP_ID && WT.categories && WT.categories.length) {
+      body = renderCategoryMap();
+    } else {
+      body = renderOrientation();   // unknown/unavailable id -> don't crash, land somewhere sane
+    }
+
+    var nav = el("div", { class: "learn-nav" }, [el("div", { class: "lk", text: "WALKTHROUGH" })]);
+    var folders = DATA.folders || [];
+    // matches the Simulate rail's/Packages nav's own threshold for when a flat
+    // list is long enough that scanning it beats typing a filter.
+    if (folders.length > 12)
+      nav.appendChild(el("input", { class: "sim-rail-search", type: "search",
+        placeholder: "Filter " + folders.length + " folders…", value: walkNavFilter,
+        on: { input: function (e) { walkNavFilter = e.target.value; renderWalkthroughNavList(id); } } }));
+    walkNavListEl = el("div", { class: "learn-nav-list" });
+    nav.appendChild(walkNavListEl);
+    renderWalkthroughNavList(id);
+
+    return el("div", { class: "learn", style: "display:flex" }, [nav,
+      el("div", { class: "learn-body" }, [el("div", { class: "learn-inner" }, [body])])]);
+  }
+
+  // Split body text on glossary terms, returning an array of text nodes / .term
+  // spans. `seen` (optional, an object the caller keeps across every termNodes/
+  // proseNodes call on one rendered page) dedupes ACROSS calls — a term already
+  // underlined once anywhere on the page is left as plain text everywhere else on
+  // it. WITHIN one call, at most one term gets wrapped: the loop below skips past
+  // any match already in `seen` looking for a fresh one, then stops as soon as it
+  // wraps one — it does not keep hunting for every remaining occurrence in the
+  // string (the earlier bug: the old while-loop re-matched after every slice, so
+  // one call could wrap the same term half a dozen times over a whole paragraph).
+  function termNodes(text, glossary, seen) {
+    seen = seen || {};
+    var str = String(text == null ? "" : text);
+    try {
+      // longest-first: "environment variable" must be tried before "environment"
+      // or "variable" ever get the chance to claim part of that phrase first —
+      // Object.keys() is insertion order, which is not length order.
+      var terms = Object.keys(glossary).filter(Boolean)
+        .sort(function (a, b) { return b.length - a.length; });
+      if (!terms.length) return [document.createTextNode(str)];
+      var re = new RegExp("\\b(" + terms.map(function (t) {
+        return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }).join("|") + ")\\b");
+      var out = [], rest = str, m, wrapped = false;
+      while (!wrapped) {
+        m = rest.match(re);
+        if (!m) break;
+        var term = m[1];
+        if (seen[term]) {
+          // already shown elsewhere on this page — keep this occurrence plain,
+          // slide past it, and keep looking for a fresh term later in the string
+          var skipTo = m.index + term.length;
+          out.push(document.createTextNode(rest.slice(0, skipTo)));
+          rest = rest.slice(skipTo);
+          continue;
+        }
+        seen[term] = true;
+        if (m.index > 0) out.push(document.createTextNode(rest.slice(0, m.index)));
+        out.push(el("span", { class: "term", tabindex: "0", "data-def": glossary[term] || "",
+          "aria-label": term + ": " + (glossary[term] || ""), text: term }));
+        rest = rest.slice(m.index + term.length);
+        wrapped = true;   // one wrap per call, by design — see the comment above
+      }
+      if (rest) out.push(document.createTextNode(rest));
+      return out.length ? out : [document.createTextNode(str)];
+    } catch (e) {
+      // a malformed alternation (or anything else here) must never blank the
+      // whole page — render() has no other error boundary, so this one matters.
+      return [document.createTextNode(str)];
+    }
+  }
+  // termNodes() plus codeify()'s backtick-fenced `code span` splitting: prose
+  // is codeified first, then term-matched only on the resulting plain-text
+  // pieces, leaving every <code> node untouched. This is what makes backticking
+  // a real identifier (the skill's own habit, per content-philosophy.md) actually
+  // suppress a false tooltip match inside it, e.g. a backticked `App.state` never
+  // lights up "state" even though the raw text contains that exact substring.
+  function proseNodes(text, glossary, seen) {
+    seen = seen || {};
+    var out = [];
+    codeify(text).forEach(function (node) {
+      if (node.nodeType === 3) termNodes(node.nodeValue, glossary, seen).forEach(function (n) { out.push(n); });
+      else out.push(node);
+    });
     return out;
   }
   // ---- glossary tooltip (fixed to body so overflow:hidden can't clip it) --
@@ -4145,6 +4522,8 @@
       frag.appendChild(el("main", { class: "view" }, [simTab()]));
     else if (state.tab === "timeline")
       frag.appendChild(el("main", { class: "view" }, [timelineTab()]));
+    else if (state.tab === "libs")
+      frag.appendChild(el("main", { class: "view" }, [packagesTab()]));
     else
       frag.appendChild(el("main", { class: "view" }, [learnTab()]));
     APP.appendChild(frag);

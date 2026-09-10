@@ -1,0 +1,1281 @@
+{
+  "title": "Bundled package & tool glossary",
+  "description": "Definitions for every well-known package, tool, language and platform this glossary knows about, merged from a general programming-terms reference and a dependencies/libraries reference, plus a small bundled table of Python-stdlib one-liners.",
+  "version": "1.0",
+  "items": {
+    "python": {
+      "display": "Python",
+      "definition": "A high-level, interpreted, dynamically typed programming language known for readable syntax and multi-paradigm support.",
+      "explanation": "Dominant in data science, AI, automation, scripting, and backend services. Significant indentation enforces visual structure, and a large standard library plus PyPI ecosystem cover most problem domains without external tooling."
+    },
+    "pip": {
+      "display": "pip",
+      "definition": "The standard package installer for Python, resolving and installing distributions from PyPI or other indexes.",
+      "explanation": "Reads requirements files and package metadata to install dependencies into an environment. Its resolver is backtracking but not lock-file based by default, so reproducibility requires pinned requirements or a separate tool."
+    },
+    "venv": {
+      "display": "venv",
+      "definition": "Tools that create isolated Python environments with their own interpreter link and site-packages directory.",
+      "explanation": "Prevents dependency conflicts between projects by keeping each project's packages separate from the system interpreter. venv ships with the standard library; virtualenv is the faster third-party predecessor."
+    },
+    "virtualenv": {
+      "display": "virtualenv",
+      "definition": "Tools that create isolated Python environments with their own interpreter link and site-packages directory.",
+      "explanation": "Prevents dependency conflicts between projects by keeping each project's packages separate from the system interpreter. venv ships with the standard library; virtualenv is the faster third-party predecessor."
+    },
+    "poetry": {
+      "display": "Poetry",
+      "definition": "A dependency management and packaging tool for Python using pyproject.toml and a lock file.",
+      "explanation": "Replaces the pip plus setup.py plus requirements.txt combination with a single declarative manifest, deterministic lock file, and built-in build and publish commands."
+    },
+    "uv": {
+      "display": "uv",
+      "definition": "A fast Rust-based Python package installer and resolver that also manages virtual environments and interpreter versions.",
+      "explanation": "Acts as a drop-in replacement for pip, pip-tools, and venv with an order-of-magnitude speed improvement, driven by a parallel resolver and aggressive caching."
+    },
+    "numpy": {
+      "display": "NumPy",
+      "definition": "A fundamental library for scientific computing in Python providing N-dimensional arrays and fast mathematical routines.",
+      "explanation": "Provides memory-efficient contiguous array objects (ndarray) and vectorized math operations that bypass Python's interpreter loop for C-speed calculations."
+    },
+    "pandas": {
+      "display": "Pandas",
+      "definition": "A data manipulation and analysis library providing labeled tabular structures — the DataFrame and Series.",
+      "explanation": "Handles cleaning, filtering, joining, grouping, reshaping, and time-series operations, with readers and writers for CSV, Excel, SQL, JSON, and Parquet. Operates in memory, so datasets larger than RAM need chunking or a different engine."
+    },
+    "polars": {
+      "display": "Polars",
+      "definition": "A DataFrame library written in Rust with a lazy query engine and Apache Arrow memory layout.",
+      "explanation": "Offers a Pandas-like API with multi-threaded execution and query optimization, handling larger-than-memory workloads through streaming. Increasingly chosen where Pandas becomes a bottleneck."
+    },
+    "scipy": {
+      "display": "SciPy",
+      "definition": "A library of scientific and technical computing routines layered on NumPy arrays.",
+      "explanation": "Supplies optimization, integration, interpolation, signal and image processing, linear algebra, sparse matrices, and statistical distributions — the algorithms that sit above raw array manipulation."
+    },
+    "matplotlib": {
+      "display": "Matplotlib",
+      "definition": "A plotting library producing static, animated, and interactive figures in Python.",
+      "explanation": "Provides low-level control over every element of a figure, which makes it verbose for quick charts but capable of publication-quality output. Most other Python plotting libraries either wrap it or were written to avoid it."
+    },
+    "seaborn": {
+      "display": "Seaborn",
+      "definition": "A statistical visualization library built on Matplotlib with a dataset-oriented API.",
+      "explanation": "Produces common statistical plots — distributions, regressions, categorical comparisons, correlation heatmaps — in a single call from a DataFrame, with sensible default styling."
+    },
+    "plotly": {
+      "display": "Plotly",
+      "definition": "An interactive graphing library rendering charts to JavaScript-backed HTML output.",
+      "explanation": "Generates zoomable, hoverable charts embeddable in notebooks and web pages, and underpins the Dash framework for analytical dashboards."
+    },
+    "requests": {
+      "display": "Requests",
+      "definition": "A synchronous HTTP client library for Python with a deliberately simple API.",
+      "explanation": "Handles sessions, connection pooling, redirects, cookies, and TLS verification behind a small surface. The long-standing default for calling REST APIs from Python scripts."
+    },
+    "httpx": {
+      "display": "httpx",
+      "definition": "An HTTP client supporting both synchronous and asynchronous requests, with HTTP/2 support.",
+      "explanation": "Mirrors the Requests API while adding async/await, connection pooling across event loops, and HTTP/2 — the usual choice inside asynchronous services."
+    },
+    "pydantic": {
+      "display": "Pydantic",
+      "definition": "A data validation and settings management library powered by Python type hints.",
+      "explanation": "Enforces type safety at runtime, parses incoming complex JSON payloads into clean Python objects, raises detailed validation errors, and serializes output structures."
+    },
+    "sqlalchemy": {
+      "display": "SQLAlchemy",
+      "definition": "A SQL toolkit and object-relational mapper for Python, usable at either the Core or ORM level.",
+      "explanation": "Core provides a composable SQL expression language; the ORM maps classes to tables with identity mapping and unit-of-work flushing. The layered design lets you drop to raw SQL where the abstraction would cost too much."
+    },
+    "celery": {
+      "display": "Celery",
+      "definition": "A distributed task queue for running work asynchronously outside the request cycle.",
+      "explanation": "Workers consume tasks from a broker, supporting retries, scheduling, chaining, and result storage. Standard for background jobs — email sending, report generation, periodic maintenance — in Python web stacks."
+    },
+    "ruff": {
+      "display": "Ruff",
+      "definition": "An extremely fast Python linter and code formatter implemented in Rust.",
+      "explanation": "Reimplements hundreds of rules from Flake8, isort, pydocstyle, and others in a single binary, running fast enough to lint on every keystroke. Increasingly replaces the multi-tool Python linting stack."
+    },
+    "pytest": {
+      "display": "pytest",
+      "definition": "A testing framework for Python using plain assert statements and a fixture-based dependency system.",
+      "explanation": "Provides fixtures for setup and teardown, parameterization for table-driven tests, and detailed assertion introspection on failure. Its plugin ecosystem covers coverage, mocking, async, and parallel execution."
+    },
+    "jupyter": {
+      "display": "Jupyter",
+      "definition": "A browser-based notebook environment interleaving executable code, output, and narrative text.",
+      "explanation": "Runs code through language kernels and persists results alongside the source in a JSON document. Excellent for exploration and communication; its hidden execution order makes it a poor fit for production code paths."
+    },
+    "javascript": {
+      "display": "JavaScript",
+      "definition": "The core lightweight, interpreted or JIT-compiled programming language of the web platform.",
+      "explanation": "Powers interactive behavior in web browsers, server backends via Node.js/Bun/Deno, desktop apps via Electron, and mobile apps via React Native."
+    },
+    "typescript": {
+      "display": "TypeScript",
+      "definition": "A statically typed superset of JavaScript that compiles to plain JavaScript.",
+      "explanation": "Adds interfaces, generics, enums, and structural type checking that run entirely at build time, catching whole classes of error before execution. Types are erased at compile time and provide no runtime guarantee."
+    },
+    "node.js": {
+      "display": "Node.js",
+      "definition": "An open-source, cross-platform JavaScript runtime built on Google Chrome's V8 JavaScript engine.",
+      "explanation": "Uses an event-driven, non-blocking asynchronous I/O model to run JavaScript code outside web browsers for high-concurrency server applications."
+    },
+    "deno": {
+      "display": "Deno",
+      "definition": "A secure JavaScript, TypeScript, and WebAssembly runtime built on Rust and V8 engine.",
+      "explanation": "Enforces strict secure defaults (restricting file, network, and environment access unless explicitly allowed), uses URL-based module loading, and natively supports TypeScript."
+    },
+    "npm": {
+      "display": "npm",
+      "definition": "The default package manager and registry for Node.js, driven by package.json and package-lock.json.",
+      "explanation": "Installs a dependency tree into node_modules and records exact resolved versions in a lock file. Its workspaces feature supports monorepos without a separate tool."
+    },
+    "pnpm": {
+      "display": "pnpm",
+      "definition": "A Node package manager using a content-addressable store with hard links to avoid duplicate installs.",
+      "explanation": "Stores each package version once on disk and links it into projects, cutting install time and disk use substantially. Its strict node_modules layout prevents accidental reliance on undeclared dependencies."
+    },
+    "vite": {
+      "display": "Vite",
+      "definition": "A next-generation frontend build tool and dev server created by Evan You.",
+      "explanation": "Uses native ES modules in browsers for lightning-fast dev server cold starts and Hot Module Replacement (HMR), and leverages Rollup/Esbuild for optimized production builds."
+    },
+    "webpack": {
+      "display": "webpack",
+      "definition": "A highly configurable static module bundler for modern JavaScript applications.",
+      "explanation": "Recursively constructs a dependency graph of an application's modules (JS, CSS, images) and bundles them into optimized static assets using loaders and plugins."
+    },
+    "esbuild": {
+      "display": "esbuild",
+      "definition": "An extremely fast JavaScript/TypeScript bundler and minifier written in Go.",
+      "explanation": "Executes build steps 10x–100x faster than legacy bundlers by leveraging parallel multi-core Go execution and efficient memory alignment."
+    },
+    "babel": {
+      "display": "Babel",
+      "definition": "A JavaScript compiler that converts modern syntax into versions supported by older environments.",
+      "explanation": "Uses configurable presets and plugins to transform syntax and inject polyfills based on a declared browser target. Also serves as the plugin platform for JSX and experimental syntax proposals."
+    },
+    "eslint": {
+      "display": "ESLint",
+      "definition": "A pluggable static analysis tool for identifying problematic patterns in JavaScript and TypeScript.",
+      "explanation": "Enforces correctness and style rules through configurable rule sets, with typed rules available via the TypeScript parser. Most framework ecosystems publish an official shared config."
+    },
+    "prettier": {
+      "display": "Prettier",
+      "definition": "An opinionated code formatter that reprints source from its AST in a canonical style.",
+      "explanation": "Removes formatting from code review entirely by offering almost no configuration. Typically run on save and enforced in CI alongside a linter handling correctness rules."
+    },
+    "react": {
+      "display": "React",
+      "definition": "A declarative, component-based frontend library for building modern user interfaces.",
+      "explanation": "Uses a Virtual DOM to compute minimal DOM updates, component state management, unidirectional data flow, and JSX syntax to render responsive web UIs."
+    },
+    "next.js": {
+      "display": "Next.js",
+      "definition": "A production-grade React framework built by Vercel for hybrid web applications.",
+      "explanation": "Provides Server-Side Rendering (SSR), Static Site Generation (SSG), Incremental Static Regeneration (ISR), file-system routing, Server Actions, and automatic image/font optimization."
+    },
+    "vue.js": {
+      "display": "Vue.js",
+      "definition": "A progressive, approachable JavaScript framework for building reactive user interfaces.",
+      "explanation": "Features a reactive data model using ES6 Proxies, single-file components (`.vue`), dynamic template compilation, and an intuitive component system."
+    },
+    "angular": {
+      "display": "Angular",
+      "definition": "A platform and full-featured framework built on TypeScript by Google for enterprise web apps.",
+      "explanation": "Includes built-in dependency injection, two-way data binding, form validation modules, routing, HTTP client utilities, signals, and RxJS reactive streams."
+    },
+    "svelte": {
+      "display": "Svelte",
+      "definition": "A component framework that compiles user interfaces into lean vanilla JavaScript during build time.",
+      "explanation": "Eliminates the virtual DOM completely by updating DOM nodes directly when application state changes, producing tiny production bundle sizes."
+    },
+    "sveltekit": {
+      "display": "SvelteKit",
+      "definition": "The official application framework for Svelte for building web applications of all sizes.",
+      "explanation": "Handles routing, server-side rendering, API endpoints, static pre-rendering, and asset bundling powered by Vite."
+    },
+    "tailwind css": {
+      "display": "Tailwind CSS",
+      "definition": "A utility-first CSS framework composing styles from small single-purpose classes in markup.",
+      "explanation": "Replaces hand-written stylesheets with constrained design tokens applied inline, and strips unused classes at build time so output stays small. Markup becomes verbose in exchange for eliminating naming and cascade problems."
+    },
+    "tanstack query": {
+      "display": "TanStack Query",
+      "definition": "An asynchronous state management library for managing server state, caching, and data fetching.",
+      "explanation": "Automates background data re-fetching, stale-while-revalidate caching strategies, pagination, optimistic updates, and query invalidation across frontend frameworks."
+    },
+    "redux": {
+      "display": "Redux",
+      "definition": "Libraries for managing shared client-side application state outside the component tree.",
+      "explanation": "Redux uses a single immutable store updated by pure reducers with strong devtools and time-travel debugging; Zustand offers the same centralization through a far smaller hook-based API. Both address state that many distant components need."
+    },
+    "zustand": {
+      "display": "Zustand",
+      "definition": "Libraries for managing shared client-side application state outside the component tree.",
+      "explanation": "Redux uses a single immutable store updated by pure reducers with strong devtools and time-travel debugging; Zustand offers the same centralization through a far smaller hook-based API. Both address state that many distant components need."
+    },
+    "d3.js": {
+      "display": "D3.js",
+      "definition": "A data-driven document manipulation library that binds arbitrary data to the DOM.",
+      "explanation": "Utilizes HTML, SVG, and CSS to construct custom interactive data visualizations, choropleth maps, force-directed network graphs, and hierarchy diagrams."
+    },
+    "three.js": {
+      "display": "Three.js",
+      "definition": "A JavaScript library for rendering 3D graphics in the browser through WebGL.",
+      "explanation": "Abstracts WebGL into scenes, cameras, meshes, materials, and lights, with loaders for common 3D asset formats. Used for product configurators, data visualization, and browser games."
+    },
+    "fastapi": {
+      "display": "FastAPI",
+      "definition": "A modern Python web framework for building APIs using type hints, with automatic validation and documentation.",
+      "explanation": "Derives request parsing, response serialization, and OpenAPI documentation from function signatures via Pydantic. Built on ASGI, so it handles high-concurrency I/O without a thread per request."
+    },
+    "django": {
+      "display": "Django",
+      "definition": "A batteries-included Python web framework covering ORM, admin interface, authentication, and templating.",
+      "explanation": "Provides an opinionated full stack so common application needs require no third-party assembly. Its automatic admin site and migration system make it fast for content-driven and internal applications."
+    },
+    "flask": {
+      "display": "Flask",
+      "definition": "A minimal Python web framework providing routing and request handling with everything else left to extensions.",
+      "explanation": "Small enough to read in an afternoon and flexible enough for anything from a single endpoint to a full application. The lack of built-in structure means larger projects must impose their own conventions."
+    },
+    "express.js": {
+      "display": "Express.js",
+      "definition": "A minimal and unopinionated Node.js web framework built around middleware chains.",
+      "explanation": "Composes request handling from ordered middleware functions, each able to modify the request, respond, or pass control onward. The long-standing default for Node HTTP services."
+    },
+    "nestjs": {
+      "display": "NestJS",
+      "definition": "A structured, enterprise-grade TypeScript server-side framework inspired by Angular architecture.",
+      "explanation": "Encourages scalable microservice and monolith design using dependency injection, modules, controllers, decorators, and providers, running on top of Express or Fastify."
+    },
+    "spring boot": {
+      "display": "Spring Boot",
+      "definition": "An opinionated extension of Spring designed to bootstrap production-ready microservices rapidly.",
+      "explanation": "Provides embedded web servers (Tomcat/Jetty), auto-configuration recipes, executable JAR packaging, and production monitoring endpoints (Actuator)."
+    },
+    "asp.net core": {
+      "display": "ASP.NET Core",
+      "definition": "A cross-platform framework for building web applications and APIs on the .NET runtime.",
+      "explanation": "Uses a middleware pipeline, built-in dependency injection, and a high-performance HTTP server (Kestrel). Minimal APIs allow endpoints to be declared in a few lines without controllers."
+    },
+    "ruby on rails": {
+      "display": "Ruby on Rails",
+      "definition": "A full-stack Ruby framework built on convention over configuration and an integrated ORM.",
+      "explanation": "Generates a working application skeleton with routing, Active Record models, migrations, and views, prioritizing developer velocity. Conventions reduce decisions but constrain deviation from the expected structure."
+    },
+    "laravel": {
+      "display": "Laravel",
+      "definition": "A PHP framework providing routing, ORM, queues, templating, and authentication in one package.",
+      "explanation": "Eloquent ORM, Blade templates, and a strong CLI (Artisan) cover most application needs, with an ecosystem of first-party packages for auth, admin panels, and deployment."
+    },
+    "rust": {
+      "display": "Rust",
+      "definition": "A systems programming language focusing on safety, speed, and concurrency without a garbage collector.",
+      "explanation": "Enforces memory safety and race-condition prevention at compile-time using a strict ownership and borrowing model."
+    },
+    "cmake": {
+      "display": "CMake",
+      "definition": "A cross-platform tool that generates native build files from a declarative project description.",
+      "explanation": "Produces Makefiles, Ninja files, or IDE projects from CMakeLists.txt, handling dependency discovery and platform differences. Effectively the standard for portable C and C++ builds."
+    },
+    "java": {
+      "display": "Java",
+      "definition": "A statically typed, object-oriented language compiled to bytecode that runs on the Java Virtual Machine.",
+      "explanation": "Write-once-run-anywhere portability, mature tooling, and a vast library ecosystem keep it dominant in enterprise backends and Android. The JVM's JIT compiler makes long-running services competitive with native code."
+    },
+    "kotlin": {
+      "display": "Kotlin",
+      "definition": "The official language for Android application development, running on the Android runtime.",
+      "explanation": "Paired with Jetpack Compose for declarative UI and coroutines for background work. Google's default recommendation over Java for new Android projects."
+    },
+    "maven": {
+      "display": "Maven",
+      "definition": "Build automation and dependency management tools for JVM projects.",
+      "explanation": "Maven uses declarative XML with a fixed lifecycle; Gradle uses a Groovy or Kotlin DSL with incremental builds and a build cache. Both resolve transitive dependencies from central repositories."
+    },
+    "gradle": {
+      "display": "Gradle",
+      "definition": "Build automation and dependency management tools for JVM projects.",
+      "explanation": "Maven uses declarative XML with a fixed lifecycle; Gradle uses a Groovy or Kotlin DSL with incremental builds and a build cache. Both resolve transitive dependencies from central repositories."
+    },
+    "entity framework core": {
+      "display": "Entity Framework Core",
+      "definition": "A lightweight, extensible, cross-platform ORM for .NET applications.",
+      "explanation": "Enables developers to query and manipulate relational database data using strongly typed LINQ queries and auto-generates schema migrations."
+    },
+    "swift": {
+      "display": "Swift",
+      "definition": "Apple's statically typed language for iOS, macOS, watchOS, and tvOS development.",
+      "explanation": "Uses automatic reference counting instead of tracing garbage collection, with optionals enforcing explicit handling of absent values. SwiftUI provides a declarative UI layer over the older UIKit."
+    },
+    "android": {
+      "display": "Android",
+      "definition": "The official language for Android application development, running on the Android runtime.",
+      "explanation": "Paired with Jetpack Compose for declarative UI and coroutines for background work. Google's default recommendation over Java for new Android projects."
+    },
+    "flutter": {
+      "display": "Flutter",
+      "definition": "A cross-platform framework from Google rendering its own widgets to a canvas from a single Dart codebase.",
+      "explanation": "Draws every pixel itself rather than wrapping platform controls, so the UI is identical across targets. Compiles ahead-of-time to native code for release builds."
+    },
+    "react native": {
+      "display": "React Native",
+      "definition": "A framework for building native mobile applications using React and JavaScript.",
+      "explanation": "Renders real platform components driven by JavaScript, so the result looks native rather than drawn. Shares logic with web React codebases; heavy native integration still requires platform code."
+    },
+    "electron": {
+      "display": "Electron",
+      "definition": "A framework for building cross-platform desktop applications with web technologies, bundling Chromium and Node.js.",
+      "explanation": "Lets web codebases ship as desktop apps with filesystem and OS access. The bundled browser engine makes binaries large and memory use high compared with native toolkits."
+    },
+    "postgresql": {
+      "display": "PostgreSQL",
+      "definition": "An advanced, open-source object-relational database emphasizing extensibility and SQL compliance.",
+      "explanation": "Supports complex queries, foreign keys, ACID transactions, JSONB indexing, custom extensions (like PostGIS), and high-availability replication."
+    },
+    "mysql": {
+      "display": "MySQL",
+      "definition": "A widely deployed open-source relational database, with MariaDB as its community-driven fork.",
+      "explanation": "Long the default for web applications through the LAMP stack, with InnoDB providing transactional storage and row-level locking. Replication is mature and simple to operate."
+    },
+    "mariadb": {
+      "display": "MariaDB",
+      "definition": "A widely deployed open-source relational database, with MariaDB as its community-driven fork.",
+      "explanation": "Long the default for web applications through the LAMP stack, with InnoDB providing transactional storage and row-level locking. Replication is mature and simple to operate."
+    },
+    "sqlite": {
+      "display": "SQLite",
+      "definition": "A self-contained, serverless, zero-configuration embedded SQL database engine.",
+      "explanation": "Reads and writes directly to single disk files without a background server daemon, widely used in mobile devices, browsers, and desktop software."
+    },
+    "mongodb": {
+      "display": "MongoDB",
+      "definition": "A document-oriented NoSQL database storing flexible BSON documents in collections.",
+      "explanation": "Schema flexibility suits evolving data shapes and nested structures, with horizontal scaling through sharding. Cross-document consistency requires care, since the model encourages denormalization."
+    },
+    "redis": {
+      "display": "Redis",
+      "definition": "An open-source in-memory data structure store used as a database, cache, and message broker.",
+      "explanation": "Delivers sub-millisecond data access speed by keeping strings, hashes, lists, sets, sorted sets, and streams entirely in RAM with configurable disk persistence."
+    },
+    "elasticsearch": {
+      "display": "Elasticsearch",
+      "definition": "A distributed search engine built on Lucene, providing full-text search and aggregations over JSON documents.",
+      "explanation": "Inverted indexes deliver fast relevance-ranked text search, while aggregations support analytics over the same data. Widely used for log storage and observability alongside Kibana or OpenSearch Dashboards."
+    },
+    "opensearch": {
+      "display": "OpenSearch",
+      "definition": "A distributed search engine built on Lucene, providing full-text search and aggregations over JSON documents.",
+      "explanation": "Inverted indexes deliver fast relevance-ranked text search, while aggregations support analytics over the same data. Widely used for log storage and observability alongside Kibana or OpenSearch Dashboards."
+    },
+    "clickhouse": {
+      "display": "ClickHouse",
+      "definition": "A column-oriented database designed for real-time analytical queries over very large datasets.",
+      "explanation": "Stores data by column with heavy compression and vectorized execution, delivering interactive aggregations across billions of rows. Optimized for append-heavy analytical workloads rather than transactional updates."
+    },
+    "cassandra": {
+      "display": "Cassandra",
+      "definition": "A distributed NoSQL database offering linear scalability and no single point of failure.",
+      "explanation": "Uses a masterless ring with tunable consistency per query, favoring availability and partition tolerance. Data must be modeled around known query patterns, since ad-hoc queries are not supported."
+    },
+    "duckdb": {
+      "display": "DuckDB",
+      "definition": "An in-process columnar analytical database, often described as SQLite for analytics.",
+      "explanation": "Runs vectorized OLAP queries directly against Parquet, CSV, and Arrow data without a server, making it excellent for local analysis and embedded analytics inside applications."
+    },
+    "neo4j": {
+      "display": "Neo4j",
+      "definition": "A native graph database storing data as nodes and relationships, queried with the Cypher language.",
+      "explanation": "Traverses connected data in constant time per hop, making it suited to fraud detection, recommendations, network topology, and identity graphs where joins would dominate a relational query."
+    },
+    "alembic": {
+      "display": "Alembic",
+      "definition": "Tools that version-control database schema changes as ordered, repeatable migration scripts.",
+      "explanation": "Track which migrations have been applied so environments converge deterministically. Alembic pairs with SQLAlchemy; Flyway and Liquibase are the JVM-ecosystem equivalents."
+    },
+    "flyway": {
+      "display": "Flyway",
+      "definition": "Tools that version-control database schema changes as ordered, repeatable migration scripts.",
+      "explanation": "Track which migrations have been applied so environments converge deterministically. Alembic pairs with SQLAlchemy; Flyway and Liquibase are the JVM-ecosystem equivalents."
+    },
+    "liquibase": {
+      "display": "Liquibase",
+      "definition": "Tools that version-control database schema changes as ordered, repeatable migration scripts.",
+      "explanation": "Track which migrations have been applied so environments converge deterministically. Alembic pairs with SQLAlchemy; Flyway and Liquibase are the JVM-ecosystem equivalents."
+    },
+    "apache spark": {
+      "display": "Apache Spark",
+      "definition": "A unified analytics engine for large-scale data processing across a cluster, with batch and streaming APIs.",
+      "explanation": "Executes a DAG of transformations in memory across partitions, exposing DataFrame, SQL, and MLlib interfaces. PySpark makes the same engine available from Python."
+    },
+    "apache airflow": {
+      "display": "Apache Airflow",
+      "definition": "A platform for authoring, scheduling, and monitoring data workflows defined as Python DAGs.",
+      "explanation": "Expresses pipelines as task dependency graphs with retries, backfills, and SLA monitoring. Suited to scheduled batch orchestration rather than low-latency event processing."
+    },
+    "dbt": {
+      "display": "dbt",
+      "definition": "A tool for defining warehouse transformations as version-controlled SQL models with tests and documentation.",
+      "explanation": "Compiles templated SQL into dependency-ordered DDL executed inside the warehouse, bringing software engineering practice — modularity, testing, lineage — to the transformation layer."
+    },
+    "apache kafka": {
+      "display": "Apache Kafka",
+      "definition": "A distributed append-only commit log for publishing and subscribing to streams of records.",
+      "explanation": "Retains messages independently of consumption, so consumers track their own offsets and can replay history. The backbone of event-driven architectures and real-time data pipelines."
+    },
+    "apache arrow": {
+      "display": "Apache Arrow",
+      "definition": "A language-independent columnar memory format for flat and hierarchical data.",
+      "explanation": "Allows systems to share data without serialization, so a DataFrame can move between Python, Rust, and a database engine at near-zero copy cost. Underpins Polars, DuckDB, and modern Pandas internals."
+    },
+    "apache parquet": {
+      "display": "Apache Parquet",
+      "definition": "A columnar on-disk file format with per-column compression and encoding.",
+      "explanation": "Stores data by column so analytical queries read only the fields they need, with predicate pushdown skipping irrelevant row groups. The default format for data lakes."
+    },
+    "snowflake": {
+      "display": "Snowflake",
+      "definition": "Fully managed analytical warehouses separating storage from elastic compute.",
+      "explanation": "Scale query compute independently of stored data and bill per query or per compute-second. Remove cluster administration entirely, at the cost of vendor-specific SQL dialects and pricing models."
+    },
+    "bigquery": {
+      "display": "BigQuery",
+      "definition": "Fully managed analytical warehouses separating storage from elastic compute.",
+      "explanation": "Scale query compute independently of stored data and bill per query or per compute-second. Remove cluster administration entirely, at the cost of vendor-specific SQL dialects and pricing models."
+    },
+    "databricks": {
+      "display": "Databricks",
+      "definition": "A managed Spark platform with a transactional storage layer bringing ACID guarantees to data lakes.",
+      "explanation": "Delta Lake adds a transaction log over Parquet files, enabling upserts, time travel, and schema enforcement on object storage — the lakehouse model combining warehouse semantics with lake economics."
+    },
+    "delta lake": {
+      "display": "Delta Lake",
+      "definition": "A managed Spark platform with a transactional storage layer bringing ACID guarantees to data lakes.",
+      "explanation": "Delta Lake adds a transaction log over Parquet files, enabling upserts, time travel, and schema enforcement on object storage — the lakehouse model combining warehouse semantics with lake economics."
+    },
+    "scikit-learn": {
+      "display": "scikit-learn",
+      "definition": "A Python library of classical machine learning algorithms with a consistent estimator API.",
+      "explanation": "Covers regression, classification, clustering, dimensionality reduction, preprocessing, and model selection behind a uniform fit/predict/transform interface. Pipelines chain preprocessing and models to prevent data leakage."
+    },
+    "pytorch": {
+      "display": "PyTorch",
+      "definition": "A deep learning framework with dynamic computation graphs and Pythonic tensor operations.",
+      "explanation": "Builds the graph as code runs, making debugging and dynamic architectures straightforward. Dominant in research and increasingly in production through TorchScript and torch.compile."
+    },
+    "tensorflow": {
+      "display": "TensorFlow",
+      "definition": "A deep learning platform with a static-graph heritage, paired with the high-level Keras API.",
+      "explanation": "Strong deployment story through TensorFlow Serving, TFLite for mobile, and TensorFlow.js for browsers. Keras provides a concise layer-stacking API over the execution engine."
+    },
+    "keras": {
+      "display": "Keras",
+      "definition": "A high-level, human-centric neural network API designed for fast experimentation.",
+      "explanation": "Provides modular abstractions for building deep neural networks with sequential or functional APIs, running seamlessly on top of backends like TensorFlow, PyTorch, or JAX."
+    },
+    "xgboost": {
+      "display": "XGBoost",
+      "definition": "Optimized gradient-boosted decision tree implementations for tabular prediction tasks.",
+      "explanation": "Consistently outperform neural networks on structured tabular data with far less tuning and compute. LightGBM's histogram-based splitting is faster on large feature sets; XGBoost has broader deployment tooling."
+    },
+    "lightgbm": {
+      "display": "LightGBM",
+      "definition": "Optimized gradient-boosted decision tree implementations for tabular prediction tasks.",
+      "explanation": "Consistently outperform neural networks on structured tabular data with far less tuning and compute. LightGBM's histogram-based splitting is faster on large feature sets; XGBoost has broader deployment tooling."
+    },
+    "hugging face transformers": {
+      "display": "Hugging Face Transformers",
+      "definition": "A library providing pretrained transformer models and a unified interface for loading, fine-tuning, and inference.",
+      "explanation": "Offers thousands of pretrained checkpoints for text, vision, and audio through a consistent API, with tokenizers, training loops, and pipelines included. The standard entry point for applied NLP."
+    },
+    "mlflow": {
+      "display": "MLflow",
+      "definition": "A platform for tracking experiments, packaging models, and managing a model registry.",
+      "explanation": "Logs parameters, metrics, and artifacts per run so results are reproducible and comparable, then promotes chosen models through registry stages toward deployment."
+    },
+    "onnx": {
+      "display": "ONNX",
+      "definition": "An open format for representing trained models and a cross-platform engine for executing them.",
+      "explanation": "Lets a model trained in one framework run in another environment with hardware-specific acceleration, decoupling training choices from deployment targets."
+    },
+    "onnx runtime": {
+      "display": "ONNX Runtime",
+      "definition": "An open format for representing trained models and a cross-platform engine for executing them.",
+      "explanation": "Lets a model trained in one framework run in another environment with hardware-specific acceleration, decoupling training choices from deployment targets."
+    },
+    "langchain": {
+      "display": "LangChain",
+      "definition": "A framework for developing applications powered by Large Language Models (LLMs).",
+      "explanation": "Facilitates prompt engineering, context management, memory retention, document parsing, vector store retriever integrations, and multi-step autonomous agent tools."
+    },
+    "llamaindex": {
+      "display": "LlamaIndex",
+      "definition": "A data framework specialized in ingesting, structuring, and indexing custom domain data for LLMs.",
+      "explanation": "Simplifies Retrieval-Augmented Generation (RAG) by offering data connectors, vector index structures, query engines, and agent abstractions."
+    },
+    "anthropic sdk": {
+      "display": "Anthropic SDK",
+      "definition": "An official client library for calling Claude models through the Anthropic API.",
+      "explanation": "Handles authentication, streaming responses, tool use, and message construction, with typed request and response models across Python and TypeScript."
+    },
+    "openai sdk": {
+      "display": "OpenAI SDK",
+      "definition": "An official client library for the OpenAI API covering chat completions, embeddings, and audio.",
+      "explanation": "Provides typed clients with streaming, function calling, and structured output support. Its request shape has become a de facto interface reimplemented by many self-hosted servers."
+    },
+    "vllm": {
+      "display": "vLLM",
+      "definition": "A fast, low-latency LLM inference and serving engine powered by PagedAttention.",
+      "explanation": "Optimizes GPU key-value (KV) cache memory management, dramatically increasing batching concurrency and throughput for LLM API deployments."
+    },
+    "ollama": {
+      "display": "Ollama",
+      "definition": "An open-source tool for running, managing, and serving large language models locally.",
+      "explanation": "Packages open-weights AI models (Llama, Mistral, Gemma) into ModelFiles and serves them behind a local REST API endpoint."
+    },
+    "pinecone": {
+      "display": "Pinecone",
+      "definition": "Specialized vector databases engineered to store and query high-dimensional vector embeddings.",
+      "explanation": "Executes approximate nearest-neighbor (ANN) similarity searches (cosine similarity, Euclidean distance) over LLM embeddings for AI semantic search and RAG applications."
+    },
+    "weaviate": {
+      "display": "Weaviate",
+      "definition": "Databases that index high-dimensional embeddings for approximate nearest-neighbor similarity search.",
+      "explanation": "Enable semantic retrieval over documents by comparing embedding vectors rather than keywords. They differ mainly in hosting model, filtering capability, and index algorithms; Chroma targets local prototyping while Pinecone is fully managed."
+    },
+    "qdrant": {
+      "display": "Qdrant",
+      "definition": "Databases that index high-dimensional embeddings for approximate nearest-neighbor similarity search.",
+      "explanation": "Enable semantic retrieval over documents by comparing embedding vectors rather than keywords. They differ mainly in hosting model, filtering capability, and index algorithms; Chroma targets local prototyping while Pinecone is fully managed."
+    },
+    "chroma": {
+      "display": "Chroma",
+      "definition": "Databases that index high-dimensional embeddings for approximate nearest-neighbor similarity search.",
+      "explanation": "Enable semantic retrieval over documents by comparing embedding vectors rather than keywords. They differ mainly in hosting model, filtering capability, and index algorithms; Chroma targets local prototyping while Pinecone is fully managed."
+    },
+    "sentence-transformers": {
+      "display": "sentence-transformers",
+      "definition": "A library for computing dense vector representations of sentences, paragraphs, and images.",
+      "explanation": "Wraps transformer models fine-tuned for semantic similarity, producing embeddings suitable for retrieval, clustering, and deduplication with a single encode call."
+    },
+    "model context protocol": {
+      "display": "Model Context Protocol",
+      "definition": "An open protocol standardizing how applications expose tools, resources, and prompts to language models.",
+      "explanation": "Replaces bespoke per-integration glue with a common client-server interface, so one connector works across any compatible host application."
+    },
+    "mcp": {
+      "display": "MCP",
+      "definition": "An open protocol standardizing how applications expose tools, resources, and prompts to language models.",
+      "explanation": "Replaces bespoke per-integration glue with a common client-server interface, so one connector works across any compatible host application."
+    },
+    "docker": {
+      "display": "Docker",
+      "definition": "A platform that package applications and dependencies into standardized containers.",
+      "explanation": "Leverages Linux kernel namespaces and cgroups to isolate processes into standalone, lightweight containers that execute identically across environments."
+    },
+    "kubernetes": {
+      "display": "Kubernetes",
+      "definition": "An open-source platform for automating deployment, scaling, and management of containerized workloads.",
+      "explanation": "Manages clusters of host compute nodes, handling automated scheduling, self-healing container restarts, load balancing, secret distribution, and rolling updates."
+    },
+    "helm": {
+      "display": "Helm",
+      "definition": "The package manager for Kubernetes enabling application management through Helm Charts.",
+      "explanation": "Packages complex Kubernetes manifests into version-controlled, configurable charts to streamline multi-resource deployment and rollback workflows."
+    },
+    "terraform": {
+      "display": "Terraform",
+      "definition": "An open-source Infrastructure as Code tool created by HashiCorp.",
+      "explanation": "Defines multi-cloud infrastructure resources (AWS, GCP, Azure) in declarative HCL (HashiCorp Configuration Language) files, tracking infrastructure states and planning diff updates."
+    },
+    "opentofu": {
+      "display": "OpenTofu",
+      "definition": "Declarative tools for provisioning infrastructure across cloud providers using a configuration language and state file.",
+      "explanation": "Compute a plan by diffing declared configuration against recorded state, then apply only the differences. State file handling and locking are the main operational concerns in team use."
+    },
+    "ansible": {
+      "display": "Ansible",
+      "definition": "An agentless automation engine for configuration management, app deployment, and task execution.",
+      "explanation": "Executes declarative YAML Playbooks over SSH or WinRM connections without requiring target agent software installations."
+    },
+    "podman": {
+      "display": "Podman",
+      "definition": "A daemonless container engine compatible with the Docker CLI, capable of running containers rootless.",
+      "explanation": "Runs each container as a child process of the invoking user instead of through a privileged daemon, reducing attack surface. Pods group containers similarly to Kubernetes."
+    },
+    "argo cd": {
+      "display": "Argo CD",
+      "definition": "A Kubernetes controller that continuously reconciles cluster state with manifests declared in Git.",
+      "explanation": "Makes Git the single source of truth for deployments, showing drift and enabling rollback by reverting a commit. Removes the need for CI systems to hold cluster credentials."
+    },
+    "nginx": {
+      "display": "NGINX",
+      "definition": "A high-performance HTTP web server, reverse proxy, and load balancer.",
+      "explanation": "Uses an asynchronous event-driven architecture to serve static assets, terminate SSL/TLS connections, route HTTP/gRPC requests, and balance server workloads with minimal RAM consumption."
+    },
+    "haproxy": {
+      "display": "HAProxy",
+      "definition": "A reliable TCP and HTTP load balancer and proxy with detailed health checking and traffic control.",
+      "explanation": "Offers fine-grained backend health checks, connection queuing, and layer 4 or layer 7 routing, with a rich runtime statistics interface. Common in front of application clusters where NGINX's proxying is insufficient."
+    },
+    "git": {
+      "display": "Git",
+      "definition": "A distributed version control system tracking content changes through a graph of immutable commits.",
+      "explanation": "Every clone holds the full history, so branching, merging, and inspection work offline. Content-addressed storage means identical content is stored once regardless of path or branch."
+    },
+    "github actions": {
+      "display": "GitHub Actions",
+      "definition": "A CI/CD system running YAML-defined workflows triggered by repository events.",
+      "explanation": "Runs jobs on hosted or self-hosted runners with a large marketplace of reusable actions, keeping pipeline definitions beside the code they build."
+    },
+    "gitlab ci": {
+      "display": "GitLab CI",
+      "definition": "GitLab's integrated pipeline system configured through a .gitlab-ci.yml file.",
+      "explanation": "Defines stages and jobs executed by runners, with built-in container registry, environments, and review apps. Tightly integrated with GitLab's merge request workflow."
+    },
+    "jenkins": {
+      "display": "Jenkins",
+      "definition": "A self-hosted extensible automation server for building continuous integration and delivery pipelines.",
+      "explanation": "Its plugin ecosystem integrates with almost any tool, and declarative pipelines can be stored in a Jenkinsfile. Flexibility comes with meaningful maintenance and plugin-compatibility overhead."
+    },
+    "pre-commit": {
+      "display": "pre-commit",
+      "definition": "A framework for managing and running checks automatically before commits are created.",
+      "explanation": "Installs language-agnostic hooks defined in a config file, running linters, formatters, and secret scanners locally so problems are caught before they reach CI."
+    },
+    "amazon web services": {
+      "display": "Amazon Web Services",
+      "definition": "The largest cloud provider, offering compute, storage, networking, database, and managed application services.",
+      "explanation": "Core building blocks include EC2 for virtual machines, S3 for object storage, RDS for managed databases, Lambda for serverless functions, and VPC for network isolation. Breadth is its strength and its learning curve."
+    },
+    "aws": {
+      "display": "AWS",
+      "definition": "The largest cloud provider, offering compute, storage, networking, database, and managed application services.",
+      "explanation": "Core building blocks include EC2 for virtual machines, S3 for object storage, RDS for managed databases, Lambda for serverless functions, and VPC for network isolation. Breadth is its strength and its learning curve."
+    },
+    "microsoft azure": {
+      "display": "Microsoft Azure",
+      "definition": "Microsoft's cloud platform with deep integration into Windows, Active Directory, and enterprise tooling.",
+      "explanation": "Strong in hybrid deployments and identity through Entra ID, with managed Kubernetes, App Service, and first-class .NET support."
+    },
+    "google cloud platform": {
+      "display": "Google Cloud Platform",
+      "definition": "Google's cloud platform, noted for data analytics, Kubernetes, and machine learning services.",
+      "explanation": "BigQuery, GKE, and Vertex AI are its distinguishing services, backed by Google's global network. Generally regarded as the strongest data and ML offering of the three major providers."
+    },
+    "gcp": {
+      "display": "GCP",
+      "definition": "Google's cloud platform, noted for data analytics, Kubernetes, and machine learning services.",
+      "explanation": "BigQuery, GKE, and Vertex AI are its distinguishing services, backed by Google's global network. Generally regarded as the strongest data and ML offering of the three major providers."
+    },
+    "cloudflare": {
+      "display": "Cloudflare",
+      "definition": "A global edge network providing CDN, DNS, DDoS protection, and edge compute through Workers.",
+      "explanation": "Terminates connections close to users for caching and security filtering, and runs code at the edge with near-zero cold start via V8 isolates rather than containers."
+    },
+    "vercel": {
+      "display": "Vercel",
+      "definition": "Managed platforms for deploying frontend and full-stack JavaScript applications from a Git repository.",
+      "explanation": "Provide preview deployments per branch, edge functions, and automatic CDN distribution, removing build and hosting configuration for framework-based projects."
+    },
+    "netlify": {
+      "display": "Netlify",
+      "definition": "Managed platforms for deploying frontend and full-stack JavaScript applications from a Git repository.",
+      "explanation": "Provide preview deployments per branch, edge functions, and automatic CDN distribution, removing build and hosting configuration for framework-based projects."
+    },
+    "netmiko": {
+      "display": "Netmiko",
+      "definition": "A Python library simplifying SSH connections and command execution across multi-vendor network devices.",
+      "explanation": "Wraps Paramiko with per-vendor handling of prompts, paging, and configuration modes, so the same script works across Cisco, Juniper, Arista, and F5 platforms."
+    },
+    "napalm": {
+      "display": "NAPALM",
+      "definition": "A Python library providing a unified API for retrieving state and applying configuration across network vendors.",
+      "explanation": "Normalizes vendor differences into common getters and a config replace/merge workflow with commit and rollback, so automation logic is written once rather than per platform."
+    },
+    "nornir": {
+      "display": "Nornir",
+      "definition": "A Python automation framework providing inventory, concurrency, and task execution without a DSL.",
+      "explanation": "Keeps automation in plain Python while supplying the inventory management and threaded execution that Ansible provides, which makes testing and debugging far easier."
+    },
+    "f5 as3": {
+      "display": "F5 AS3",
+      "definition": "A declarative JSON interface for configuring application services on F5 BIG-IP systems.",
+      "explanation": "Describes the desired end state of virtual servers, pools, monitors, and profiles in a single declaration, which the extension reconciles atomically — replacing imperative tmsh or iControl sequences."
+    },
+    "application services 3": {
+      "display": "Application Services 3",
+      "definition": "A declarative JSON interface for configuring application services on F5 BIG-IP systems.",
+      "explanation": "Describes the desired end state of virtual servers, pools, monitors, and profiles in a single declaration, which the extension reconciles atomically — replacing imperative tmsh or iControl sequences."
+    },
+    "f5 icontrol rest": {
+      "display": "F5 iControl REST",
+      "definition": "The REST API exposing configuration and operational state of F5 BIG-IP systems.",
+      "explanation": "Provides direct CRUD access to individual configuration objects and statistics, suitable for inventory collection, targeted changes, and integration with external tooling."
+    },
+    "scapy": {
+      "display": "Scapy",
+      "definition": "A Python library for crafting, sending, capturing, and dissecting network packets at any layer.",
+      "explanation": "Builds arbitrary protocol stacks programmatically, making it valuable for protocol testing, security research, and reproducing traffic conditions that are hard to trigger otherwise."
+    },
+    "netbox": {
+      "display": "NetBox",
+      "definition": "A tool for documenting and modeling network infrastructure — devices, IPAM, circuits, and racks.",
+      "explanation": "Acts as the authoritative inventory that automation reads from, so configuration is generated from intended state rather than discovered from devices."
+    },
+    "paramiko": {
+      "display": "Paramiko",
+      "definition": "A pure-Python implementation of the SSHv2 protocol for client and server connections.",
+      "explanation": "Provides programmatic SSH sessions, command execution, and SFTP transfers. Most higher-level network automation libraries build on it."
+    },
+    "playwright": {
+      "display": "Playwright",
+      "definition": "A framework for reliable end-to-end testing across Chromium, Firefox, and WebKit.",
+      "explanation": "Auto-waits for elements to be actionable, which removes most flaky-test sleeps, and supports tracing, network interception, and parallel execution across browsers."
+    },
+    "jest": {
+      "display": "Jest",
+      "definition": "Test runners for JavaScript and TypeScript with built-in assertions, mocking, and coverage.",
+      "explanation": "Jest is the long-standing default in the Node ecosystem; Vitest offers a compatible API running on Vite's transform pipeline for much faster startup in Vite projects."
+    },
+    "vitest": {
+      "display": "Vitest",
+      "definition": "A blazing fast unit test framework powered natively by Vite's configuration pipeline.",
+      "explanation": "Provides Jest-compatible assertion APIs, instant watch-mode hot reloading, native TypeScript/JSX execution, and multi-thread worker isolation."
+    },
+    "junit": {
+      "display": "JUnit",
+      "definition": "The standard unit testing framework for Java and other JVM languages.",
+      "explanation": "Annotation-driven test discovery with lifecycle hooks, parameterized tests, and extensions. JUnit 5's modular platform supports multiple test engines in one run."
+    },
+    "locust": {
+      "display": "Locust",
+      "definition": "Tools for simulating concurrent user load and measuring system behavior under pressure.",
+      "explanation": "Locust defines user behavior in Python and scales through distributed workers; k6 uses JavaScript scripts with a Go runtime and integrates cleanly into CI thresholds."
+    },
+    "owasp zap": {
+      "display": "OWASP ZAP",
+      "definition": "An open-source dynamic application security testing proxy for finding web vulnerabilities.",
+      "explanation": "Intercepts traffic to map an application and actively probes for injection, misconfiguration, and authentication issues. Usable interactively or headless in a pipeline."
+    },
+    "trivy": {
+      "display": "Trivy",
+      "definition": "A scanner for container images, filesystems, and IaC configurations, checking dependencies against vulnerability databases.",
+      "explanation": "Detects known CVEs in OS packages and language dependencies, plus misconfigurations in Terraform and Kubernetes manifests, fast enough to run on every build."
+    },
+    "snyk": {
+      "display": "Snyk",
+      "definition": "Tools that monitor project dependencies for known vulnerabilities and open upgrade pull requests.",
+      "explanation": "Continuously compare the dependency manifest against advisory databases and propose the minimal version bump that resolves each issue, keeping remediation in the normal review flow."
+    },
+    "dependabot": {
+      "display": "Dependabot",
+      "definition": "Tools that monitor project dependencies for known vulnerabilities and open upgrade pull requests.",
+      "explanation": "Continuously compare the dependency manifest against advisory databases and propose the minimal version bump that resolves each issue, keeping remediation in the normal review flow."
+    },
+    "hashicorp vault": {
+      "display": "HashiCorp Vault",
+      "definition": "A system for storing, generating, and controlling access to secrets with audit logging and leasing.",
+      "explanation": "Issues short-lived dynamic credentials rather than distributing static ones, so a leaked secret expires quickly. Supports encryption as a service and fine-grained policy control."
+    },
+    "prometheus": {
+      "display": "Prometheus",
+      "definition": "An open-source time-series database and monitoring toolkit.",
+      "explanation": "Collects numerical metrics by periodically scraping HTTP endpoints, storing data in custom time-series formats, and executing queries via PromQL."
+    },
+    "grafana": {
+      "display": "Grafana",
+      "definition": "An open-source visualization dashboard platform for metrics, logs, and traces.",
+      "explanation": "Queries and visualizes real-time metrics data from Prometheus, PostgreSQL, Elasticsearch, InfluxDB, and Loki into customizable dynamic dashboards."
+    },
+    "opentelemetry": {
+      "display": "OpenTelemetry",
+      "definition": "A vendor-neutral standard and set of SDKs for generating traces, metrics, and logs.",
+      "explanation": "Provides one instrumentation API across languages, with a collector that processes and exports telemetry to any compatible backend — decoupling application instrumentation from the chosen vendor."
+    },
+    "grafana loki": {
+      "display": "Grafana Loki",
+      "definition": "A log aggregation system indexing only labels rather than full log content.",
+      "explanation": "Stores compressed log chunks in object storage and indexes metadata, making it far cheaper than full-text log systems where queries are usually scoped by service and time."
+    },
+    "rabbitmq": {
+      "display": "RabbitMQ",
+      "definition": "A message broker implementing exchange and queue routing semantics with delivery acknowledgements.",
+      "explanation": "Routes messages by binding rules to queues, supporting work distribution, request/reply, and dead-letter handling. Better suited to task queues than to the replayable event log Kafka provides."
+    },
+    "grpc": {
+      "display": "gRPC",
+      "definition": "A high-performance remote procedure call framework using HTTP/2 transport and Protocol Buffers.",
+      "explanation": "Generates typed client and server stubs from a service definition, supporting streaming in both directions. Efficient for internal service-to-service calls; browser use requires a proxy layer."
+    },
+    "json": {
+      "display": "JSON",
+      "definition": "A lightweight text-based format for structured data using objects, arrays, strings, numbers, booleans, and null.",
+      "explanation": "The default interchange format for web APIs and configuration. Human-readable and universally supported, at the cost of verbosity and no native date, binary, or comment support."
+    },
+    "yaml": {
+      "display": "YAML",
+      "definition": "A human-readable data serialization format widely used for configuration files.",
+      "explanation": "Whitespace-significant and less noisy than JSON for hand-edited configuration, but its implicit type coercion and indentation sensitivity produce a well-known class of subtle errors."
+    },
+    "protocol buffers": {
+      "display": "Protocol Buffers",
+      "definition": "A compact binary serialization format with a schema definition and generated language bindings.",
+      "explanation": "Encodes data using field numbers rather than names, producing small payloads and fast parsing, with a defined path for backward-compatible schema evolution."
+    },
+    "opencv": {
+      "display": "OpenCV",
+      "definition": "A real-time computer vision and image processing library for image analysis, video tracking, and pattern recognition.",
+      "explanation": "Contains over 2,500 optimized algorithms for object detection, facial recognition, camera calibration, optical flow, and deep neural network inference."
+    },
+    "beautifulsoup": {
+      "display": "BeautifulSoup",
+      "definition": "A Python library designed for parsing HTML and XML documents to extract structured data from web pages.",
+      "explanation": "Navigates HTML DOM trees smoothly, converting messy markup into clean Python objects with robust search functions by class, tag, or attribute."
+    },
+    "scrapy": {
+      "display": "Scrapy",
+      "definition": "An asynchronous, high-level web crawling and web scraping framework for extracting structured data from websites at scale.",
+      "explanation": "Includes spider creation, request routing, middleware processing, pipelines for data clean-up, and automated concurrent downloading."
+    },
+    "streamlit": {
+      "display": "Streamlit",
+      "definition": "An open-source framework enabling data scientists to build interactive web applications directly from Python scripts.",
+      "explanation": "Automatically renders user interfaces from python variables, widgets, charts, and tables without needing HTML, CSS, or JavaScript code."
+    },
+    "selenium": {
+      "display": "Selenium",
+      "definition": "A portable software-testing framework for web applications that automates real browser operations.",
+      "explanation": "Drives web browsers (Chrome, Firefox, Edge, Safari) programmatically to emulate user clicks, form submissions, page navigation, dynamic AJAX loading, and end-to-end UI testing."
+    },
+    "transformers": {
+      "display": "Transformers",
+      "definition": "Hugging Face's state-of-the-art library providing pre-trained models for Natural Language Processing, computer vision, and audio tasks.",
+      "explanation": "Offers unified APIs to download, fine-tune, evaluate, and infer with thousands of state-of-the-art architectures like BERT, GPT, Llama, Whisper, and ViT."
+    },
+    "yarn": {
+      "display": "Yarn",
+      "definition": "A fast, secure, and reliable package manager for JavaScript dependencies created by Meta.",
+      "explanation": "Introduced lockfile determinism (`yarn.lock`), parallel package downloading, offline caching, and Plug'n'Play (PnP) dependency resolution to replace `node_modules` bloat."
+    },
+    "remix": {
+      "display": "Remix",
+      "definition": "A full-stack React web framework focused on web standards, nested routing, and progressive enhancement.",
+      "explanation": "Utilizes browser-native forms and HTTP caching, dynamically fetching data parallelized through nested route loaders and mutations."
+    },
+    "nuxt.js": {
+      "display": "Nuxt.js",
+      "definition": "An intuitive, full-stack meta-framework for building Vue.js web applications.",
+      "explanation": "Offers file-based auto-routing, auto-imported components, server-side rendering, static site generation, and modular plugin integrations powered by Nitro engine."
+    },
+    "solidjs": {
+      "display": "SolidJS",
+      "definition": "A declarative JavaScript library for crafting user interfaces using fine-grained reactivity.",
+      "explanation": "Uses JSX templates compiled down to real DOM nodes without a Virtual DOM, executing state update signals once for maximum UI rendering performance."
+    },
+    "astro": {
+      "display": "Astro",
+      "definition": "An all-in-one web framework designed for content-focused websites utilizing 'Islands Architecture'.",
+      "explanation": "Ships zero client-side JavaScript by default by pre-rendering HTML on the server, while allowing developers to hydrate interactive UI components (React, Vue, Svelte) on demand."
+    },
+    "htmx": {
+      "display": "HTMX",
+      "definition": "A lightweight library giving direct access to AJAX, CSS Transitions, WebSockets, and Server-Sent Events directly in HTML.",
+      "explanation": "Enables building modern UI interactions using plain HTML attributes (`hx-get`, `hx-target`, `hx-swap`) without writing custom JavaScript code."
+    },
+    "mobx": {
+      "display": "MobX",
+      "definition": "A transparent, battle-tested state management library applying functional reactive programming.",
+      "explanation": "Automatically tracks state dependencies through observable data objects, updating UI views automatically whenever underlying observable properties change."
+    },
+    "axios": {
+      "display": "Axios",
+      "definition": "A popular promise-based HTTP client for the browser and Node.js environments.",
+      "explanation": "Simplifies HTTP requests with automatic JSON parsing, request/response interceptors, request cancellation via AbortController, and client-side XSRF protection."
+    },
+    "react router": {
+      "display": "React Router",
+      "definition": "The standard routing library for React single-page applications.",
+      "explanation": "Enables client-side routing, nested views, URL parameters, navigation guards, and data loading abstractions without full browser page refreshes."
+    },
+    "cypress": {
+      "display": "Cypress",
+      "definition": "A developer-centric frontend testing tool for end-to-end (E2E) and component testing in real browsers.",
+      "explanation": "Runs directly inside the browser event loop alongside application code, offering DOM time-travel debugging, real-time command logs, and automated DOM snapshotting."
+    },
+    "socket.io": {
+      "display": "Socket.IO",
+      "definition": "An event-driven bidirectional communication library for real-time web applications.",
+      "explanation": "Establishes persistent low-latency channels between web clients and Node.js backends with automatic HTTP long-polling fallback, reconnection handling, and room broadcasting."
+    },
+    "spring framework": {
+      "display": "Spring Framework",
+      "definition": "The foundational enterprise infrastructure framework for Java applications.",
+      "explanation": "Provides Inversion of Control (IoC) container dependency injection, Aspect-Oriented Programming (AOP), transaction management, and unified data access abstractions."
+    },
+    "spring security": {
+      "display": "Spring Security",
+      "definition": "A powerful, customizable authentication and access control framework for enterprise Java applications.",
+      "explanation": "Protects against CSRF attacks, session fixation, and clickjacking while offering declarative role-based access control, OAuth2, SAML, and JWT authentication."
+    },
+    "hibernate": {
+      "display": "Hibernate",
+      "definition": "An enterprise object/relational mapping framework implementing the Jakarta Persistence API (JPA).",
+      "explanation": "Maps Java domain classes to relational database tables, managing SQL generation, caching levels, transactions, and object retrieval queries (HQL/JPQL)."
+    },
+    "log4j": {
+      "display": "Log4j",
+      "definition": "A widely used Java-based logging framework for configurable application event logging.",
+      "explanation": "Controls runtime log output formatting, severity level filtering (TRACE to FATAL), and multi-destination log routing (console, files, Syslog, Kafka)."
+    },
+    "blazor": {
+      "display": "Blazor",
+      "definition": "A feature of ASP.NET Core for building interactive web UIs using C# instead of JavaScript.",
+      "explanation": "Executes C# code directly in browsers via WebAssembly (Blazor WebAssembly) or on the server with real-time UI synchronization via SignalR (Blazor Server)."
+    },
+    "golang": {
+      "display": "Golang",
+      "definition": "A statically typed, compiled programming language designed at Google for simplicity and concurrency.",
+      "explanation": "Features fast compile times, lightweight concurrency via goroutines and channels, garbage collection, and structural typing for cloud infrastructure."
+    },
+    "echo": {
+      "display": "Echo",
+      "definition": "A minimalist, high-performance Go web application framework.",
+      "explanation": "Features optimized HTTP routing, middleware chaining, data binding, rendering abstractions, and automated TLS certificate issuance via Let's Encrypt."
+    },
+    "gorm": {
+      "display": "GORM",
+      "definition": "A developer-friendly ORM library for the Go programming language.",
+      "explanation": "Includes features like association loading, hook callbacks, auto database migrations, composite primary keys, context-aware querying, and database pooling."
+    },
+    "cobra": {
+      "display": "Cobra",
+      "definition": "A library for creating powerful, modern command-line interface (CLI) applications in Go.",
+      "explanation": "Powers popular cloud tools like Kubernetes (`kubectl`), Hugo, GitHub CLI, and Docker CLI by standardizing POSIX-compliant flags and subcommand routing."
+    },
+    "actix web": {
+      "display": "Actix Web",
+      "definition": "A pragmatic, blazingly fast web framework for Rust.",
+      "explanation": "Built on top of the Actor pattern model and Tokio runtime, providing multi-threading request handlers, middleware pipelines, WebSockets, and high-throughput routing."
+    },
+    "axum": {
+      "display": "Axum",
+      "definition": "A modular, ergonomic web application framework built by the Tokio team for Rust.",
+      "explanation": "Leverages Tower middleware ecosystem, Hyper HTTP library, and type-safe extractors to build asynchronous APIs with minimal boilerplate."
+    },
+    "tokio": {
+      "display": "Tokio",
+      "definition": "An event-driven, non-blocking asynchronous runtime for writing network applications in Rust.",
+      "explanation": "Provides a multi-threaded task scheduler, asynchronous I/O primitives, timers, channels, and synchronization primitives powering the majority of Rust network servers."
+    },
+    "serde": {
+      "display": "Serde",
+      "definition": "A generic, high-performance serialization framework for Rust data structures.",
+      "explanation": "Uses Rust's macro system to generate compile-time code for converting Rust structs to/from JSON, YAML, TOML, Postcard, and MessagePack formats without runtime reflection overhead."
+    },
+    "chromadb": {
+      "display": "ChromaDB",
+      "definition": "Specialized vector databases engineered to store and query high-dimensional vector embeddings.",
+      "explanation": "Executes approximate nearest-neighbor (ANN) similarity searches (cosine similarity, Euclidean distance) over LLM embeddings for AI semantic search and RAG applications."
+    },
+    "prisma": {
+      "display": "Prisma",
+      "definition": "A next-generation, type-safe ORM for Node.js and TypeScript.",
+      "explanation": "Defines models in a declarative schema (`schema.prisma`), generating fully typed database client APIs and executing database migrations."
+    },
+    "crewai": {
+      "display": "CrewAI",
+      "definition": "A framework for building autonomous multi-agent systems.",
+      "explanation": "Enables developers to define AI agents with specific roles, goals, tools, and background stories that collaborate sequentially or hierarchically to solve complex workflows."
+    },
+    "library": {
+      "display": "Library",
+      "definition": "A reusable collection of code routines, functions, or classes called on demand by application code.",
+      "explanation": "The developer retains control of application flow, explicitly invoking specific functions inside the library when needed."
+    },
+    "framework": {
+      "display": "Framework",
+      "definition": "A structural foundation that dictates application architecture and execution flow through Inversion of Control (IoC).",
+      "explanation": "The framework controls the program execution loop, invoking custom code modules written by the developer at designated lifecycle events."
+    },
+    "dependency": {
+      "display": "Dependency",
+      "definition": "An external software package, library, or module required by an application to execute correctly.",
+      "explanation": "Dependencies reduce repetitive coding by importing verified third-party functionality, managed through lockfiles and package manifests."
+    },
+    "retrieval-augmented generation": {
+      "display": "Retrieval-Augmented Generation",
+      "definition": "An AI pattern that retrieves relevant domain facts from vector stores and injects them into LLM context prompts.",
+      "explanation": "Prevents LLM hallucinations and enables language models to answer questions accurately based on dynamic enterprise data without fine-tuning weights."
+    },
+    "rag": {
+      "display": "RAG",
+      "definition": "An AI pattern that retrieves relevant domain facts from vector stores and injects them into LLM context prompts.",
+      "explanation": "Prevents LLM hallucinations and enables language models to answer questions accurately based on dynamic enterprise data without fine-tuning weights."
+    },
+    "microservice": {
+      "display": "Microservice",
+      "definition": "An architectural style decomposing an application into small, loosely coupled, independently deployable services.",
+      "explanation": "Each service owns its domain logic and database schema, communicating with other services over lightweight network APIs (HTTP REST, gRPC)."
+    },
+    "serverless": {
+      "display": "Serverless",
+      "definition": "A cloud execution model where developers execute event-driven code without configuring host servers.",
+      "explanation": "Cloud infrastructure dynamically provisions, scales, and shuts down compute resources per event trigger, billing strictly for execution duration."
+    },
+    "faas": {
+      "display": "FaaS",
+      "definition": "A cloud execution model where developers execute event-driven code without configuring host servers.",
+      "explanation": "Cloud infrastructure dynamically provisions, scales, and shuts down compute resources per event trigger, billing strictly for execution duration."
+    },
+    "sys": {
+      "display": "sys",
+      "definition": "Interpreter internals — argv, stdin/stdout, the import path, exit codes."
+    },
+    "pathlib": {
+      "display": "pathlib",
+      "definition": "Object-oriented file paths — join, glob, read and write files."
+    },
+    "subprocess": {
+      "display": "subprocess",
+      "definition": "Run external commands as child processes and capture their output."
+    },
+    "datetime": {
+      "display": "datetime",
+      "definition": "Dates, times, durations and timezone-aware timestamps."
+    },
+    "collections": {
+      "display": "collections",
+      "definition": "Extra container types — Counter, defaultdict, deque, namedtuple."
+    },
+    "itertools": {
+      "display": "itertools",
+      "definition": "Lazy iterator building blocks — chain, groupby, product, combinations."
+    },
+    "functools": {
+      "display": "functools",
+      "definition": "Tools for functions — caching (lru_cache), partial, reduce, wraps."
+    },
+    "typing": {
+      "display": "typing",
+      "definition": "Type hints — Optional, Union, generics; no runtime effect on its own."
+    },
+    "dataclasses": {
+      "display": "dataclasses",
+      "definition": "Generate __init__/__repr__/__eq__ for plain data-holding classes."
+    },
+    "enum": {
+      "display": "enum",
+      "definition": "Named constant sets — Enum, IntEnum, auto()."
+    },
+    "abc": {
+      "display": "abc",
+      "definition": "Abstract base classes — declare interfaces subclasses must implement."
+    },
+    "asyncio": {
+      "display": "asyncio",
+      "definition": "Async/await event loop for concurrent I/O without threads."
+    },
+    "sqlite3": {
+      "display": "sqlite3",
+      "definition": "Built-in client for SQLite, a serverless file-based SQL database."
+    },
+    "logging": {
+      "display": "logging",
+      "definition": "Structured application logging with levels, handlers and formatters."
+    },
+    "argparse": {
+      "display": "argparse",
+      "definition": "Parse command-line arguments into a typed namespace, with --help."
+    },
+    "hashlib": {
+      "display": "hashlib",
+      "definition": "Cryptographic hashes — sha256, md5, blake2 — of bytes."
+    },
+    "tomllib": {
+      "display": "tomllib",
+      "definition": "Parse TOML config files (read-only; Python 3.11+)."
+    },
+    "csv": {
+      "display": "csv",
+      "definition": "Read and write comma-separated-value tables."
+    },
+    "math": {
+      "display": "math",
+      "definition": "Floating-point math — sqrt, floor, trig, constants."
+    },
+    "random": {
+      "display": "random",
+      "definition": "Pseudo-random numbers, choices, shuffles and samples."
+    },
+    "time": {
+      "display": "time",
+      "definition": "Clock access, sleeping, and Unix-timestamp arithmetic."
+    },
+    "contextlib": {
+      "display": "contextlib",
+      "definition": "Helpers for `with` blocks — contextmanager, suppress, ExitStack."
+    },
+    "tempfile": {
+      "display": "tempfile",
+      "definition": "Create temporary files and directories that clean themselves up."
+    },
+    "shutil": {
+      "display": "shutil",
+      "definition": "High-level file operations — copy, move, rmtree, disk usage."
+    },
+    "glob": {
+      "display": "glob",
+      "definition": "Expand shell-style wildcard patterns into lists of paths."
+    },
+    "warnings": {
+      "display": "warnings",
+      "definition": "Emit and filter non-fatal warnings."
+    },
+    "traceback": {
+      "display": "traceback",
+      "definition": "Format and print exception stack traces."
+    },
+    "inspect": {
+      "display": "inspect",
+      "definition": "Read live objects — signatures, source, the call stack."
+    },
+    "importlib": {
+      "display": "importlib",
+      "definition": "Import modules by name at runtime; reload them."
+    },
+    "threading": {
+      "display": "threading",
+      "definition": "Run code on OS threads; locks, events, thread-local storage."
+    },
+    "multiprocessing": {
+      "display": "multiprocessing",
+      "definition": "Run code in separate processes to use multiple CPU cores."
+    },
+    "uuid": {
+      "display": "uuid",
+      "definition": "Generate universally-unique identifiers (UUID1/UUID4)."
+    },
+    "base64": {
+      "display": "base64",
+      "definition": "Encode and decode binary data as ASCII text."
+    },
+    "copy": {
+      "display": "copy",
+      "definition": "Shallow and deep copies of arbitrary objects."
+    },
+    "textwrap": {
+      "display": "textwrap",
+      "definition": "Wrap, fill, indent and dedent blocks of text."
+    },
+    "urllib": {
+      "display": "urllib",
+      "definition": "URL parsing and basic HTTP requests from the standard library."
+    },
+    "http": {
+      "display": "http",
+      "definition": "Standard-library HTTP client and server primitives."
+    },
+    "socket": {
+      "display": "socket",
+      "definition": "Low-level TCP/UDP network sockets."
+    },
+    "unittest": {
+      "display": "unittest",
+      "definition": "The standard-library test framework — TestCase, assertions, mocks."
+    },
+    "networkx": {
+      "display": "networkx",
+      "definition": "Graphs as data — build nodes and edges, then run algorithms (paths, cycles, centrality)."
+    },
+    "tree_sitter": {
+      "display": "tree_sitter",
+      "definition": "Incremental parser that turns source code into a concrete syntax tree."
+    },
+    "pathspec": {
+      "display": "pathspec",
+      "definition": "Match paths against .gitignore-style pattern lists."
+    },
+    "anthropic": {
+      "display": "anthropic",
+      "definition": "Official client for Anthropic's Claude API."
+    },
+    "openai": {
+      "display": "openai",
+      "definition": "Official client for OpenAI's API."
+    },
+    "aiohttp": {
+      "display": "aiohttp",
+      "definition": "Async HTTP client and server built on asyncio."
+    },
+    "starlette": {
+      "display": "starlette",
+      "definition": "The lightweight ASGI toolkit FastAPI is built on."
+    },
+    "click": {
+      "display": "click",
+      "definition": "Build command-line interfaces from decorated functions."
+    },
+    "rich": {
+      "display": "rich",
+      "definition": "Render colored text, tables, progress bars and tracebacks in the terminal."
+    },
+    "typer": {
+      "display": "typer",
+      "definition": "Build CLIs from type hints, powered by Click."
+    },
+    "jinja2": {
+      "display": "jinja2",
+      "definition": "Text templating — HTML and more — with a sandboxed expression language."
+    },
+    "boto3": {
+      "display": "boto3",
+      "definition": "AWS SDK for Python."
+    },
+    "uvicorn": {
+      "display": "uvicorn",
+      "definition": "ASGI web server used to run FastAPI/Starlette apps."
+    },
+    "gunicorn": {
+      "display": "gunicorn",
+      "definition": "Production WSGI server that manages worker processes."
+    },
+    "react-dom": {
+      "display": "react-dom",
+      "definition": "Render React component trees into the browser DOM."
+    },
+    "vue": {
+      "display": "vue",
+      "definition": "Progressive UI framework — reactive state, single-file components."
+    },
+    "next": {
+      "display": "next",
+      "definition": "React meta-framework — file-based routing, server rendering, API routes."
+    },
+    "express": {
+      "display": "express",
+      "definition": "Minimal Node.js HTTP framework — middleware and routes."
+    },
+    "lodash": {
+      "display": "lodash",
+      "definition": "Utility belt — data manipulation helpers for arrays, objects, functions."
+    },
+    "zod": {
+      "display": "zod",
+      "definition": "TypeScript-first schema validation with inferred types."
+    },
+    "tailwindcss": {
+      "display": "tailwindcss",
+      "definition": "Utility-first CSS — compose designs from small class names."
+    },
+    "three": {
+      "display": "three",
+      "definition": "3D graphics in the browser via WebGL."
+    }
+  }
+}
