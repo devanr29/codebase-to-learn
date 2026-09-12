@@ -132,6 +132,27 @@ def load(root: Path | str) -> Config:
     return cfg
 
 
+def _ensure_gitignore_entry(root: Path) -> None:
+    """If the project has a .gitignore, make sure it ignores .codemap/.
+
+    Skipped entirely when no .gitignore exists — we never create one.
+    """
+    gitignore_path = root / ".gitignore"
+    if not gitignore_path.exists():
+        return
+
+    text = gitignore_path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    if any(line.strip().rstrip("/") == CODEMAP_DIR.rstrip("/") for line in lines):
+        return
+
+    needs_newline = len(text) > 0 and not text.endswith("\n")
+    with gitignore_path.open("a", encoding="utf-8") as f:
+        if needs_newline:
+            f.write("\n")
+        f.write(f"{CODEMAP_DIR}/\n")
+
+
 def init(root: Path | str) -> Config:
     """Create ``.codemap/`` and write the config template if absent."""
     cfg = load(root)
@@ -139,4 +160,5 @@ def init(root: Path | str) -> Config:
     cfg.changes_dir.mkdir(parents=True, exist_ok=True)
     if not cfg.config_path.exists():
         cfg.config_path.write_text(_TEMPLATE, encoding="utf-8")
+    _ensure_gitignore_entry(cfg.root)
     return load(root)

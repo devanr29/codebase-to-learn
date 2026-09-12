@@ -3,4 +3,4 @@
 The graph is not the deliverable. The graph exists so that a diff can be explained.
 """
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
