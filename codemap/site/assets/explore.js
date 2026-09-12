@@ -3239,7 +3239,7 @@
                               // on filter / group toggle so the search field keeps focus
   function simRailRow(sc) {
     var active = state.simScenario === sc.id;
-    var text = [el("span", { class: "sim-scenario-title", text: sc.title })];
+    var text = [el("span", { class: "sim-scenario-title", title: sc.title, text: sc.title })];
     if (sc.summary) text.push(el("span", { class: "sim-scenario-sub", text: sc.summary }));
     return el("div", { class: "sim-scenario" + (active ? " active" : ""),
       on: { click: function () { go("sim", sc.id + "/0"); } } }, [
