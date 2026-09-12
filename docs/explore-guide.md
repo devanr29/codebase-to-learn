@@ -261,7 +261,12 @@ when one exists:
   grouping a file tree can't show on its own; each group links into the graph.
 - **One page per folder** — every folder `codemap` derives from the file tree
   gets a page, indented by depth in the rail, whether or not anyone authored a
-  word about it. With no authored entry, a folder's page shows what can be
+  word about it. This only covers folders holding at least one file in an
+  indexed language; a folder containing exclusively unindexed file types
+  (Markdown-only docs, a data-only directory, a skill folder that's just a
+  `SKILL.md`) never enters the file tree at all, so it never becomes a
+  folder page and is skipped entirely, authored or not — there's no derived
+  row to attach prose to. With no authored entry, a folder's page shows what can be
   derived: file and symbol counts, languages, and its direct dependencies. An
   authored `walkthrough.json` entry replaces that with real prose — what the
   folder is actually *for*, an optional "start reading here" file, a caveat,

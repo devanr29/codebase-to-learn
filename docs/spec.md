@@ -378,8 +378,11 @@ the primary way to *read* the repository. Three tabs sharing one hash router:
 - **Learn** — a guided project walkthrough: an Orientation landing screen, an
   optional frontend/backend-style "parts of this app" split, an optional
   topic-grouped "what this app is made of" category map, and one page per
-  repo folder (derived from the file tree; always present, even with zero
-  authored content, showing derived facts instead). Prose comes from
+  repo folder that contains at least one indexed file (derived from the file
+  tree; always present for such folders, even with zero authored content,
+  showing derived facts instead — a folder holding only unindexed file types,
+  such as Markdown-only docs or a data-only directory, has no indexed file to
+  derive it from and gets no page at all). Prose comes from
   `.codemap/walkthrough.json` (authored by the `codebase-to-course` skill);
   missing or malformed input falls back to a bare derived folder tree.
 - **Packages** — a library / module reference: every imported package (third-party

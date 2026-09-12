@@ -76,6 +76,11 @@ calls an LLM.
   Python/TypeScript/JavaScript.
 - Go and Rust methods show up with a flat name, not `Type.method` — see
   [`docs/spec.md`](docs/spec.md) §14.
+- A folder that contains no file in an indexed language (docs-only, data-only,
+  a Markdown-only skill directory) never enters the index, so it gets no row
+  in the Map tab's treemap, no folder page in Learn, and no entry in the
+  folder brief the `codebase-to-course` skill reads from — there's nothing to
+  derive it from. Nothing breaks; that folder is just invisible to the tool.
 - Impact analysis is structural only; it can't tell you whether a change is
   *correct*.
 - Intent marked `inferred` is a guess, not a record.
