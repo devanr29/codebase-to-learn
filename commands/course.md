@@ -1,5 +1,5 @@
 ---
-description: Author the Learn/Graph/Simulate content for this repo's explore.html, end to end.
+description: Author the Learn/Packages/Graph/Simulate/Architecture content for this repo's explore.html, end to end.
 ---
 
 Run the full `codebase-to-course` authoring workflow against the current repo.
@@ -13,8 +13,9 @@ Run the full `codebase-to-course` authoring workflow against the current repo.
 4. Invoke the `codebase-to-course` skill and follow its workflow exactly —
    it reads the briefs and writes `.codemap/walkthrough.json`,
    `.codemap/libraries.json`, `.codemap/explanations.json`,
-   `.codemap/scenarios.json`, and `.codemap/glossary.json`.
-5. Run `codemap explore --open` to bake the five files into `explore.html`
+   `.codemap/scenarios.json`, `.codemap/glossary.json`, and (corrections
+   only, when needed) `.codemap/architecture.json`.
+5. Run `codemap explore --open` to bake those files into `explore.html`
    and review the result as the skill's own "Bake and review" step directs.
 
 If `$ARGUMENTS` is given, treat it as `--path <ARGUMENTS>` on every `codemap`

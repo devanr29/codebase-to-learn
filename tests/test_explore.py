@@ -196,6 +196,23 @@ def test_model_carries_folders_walkthrough_glossary_keys(fixture_impact_repo, tm
     assert json.loads(json.dumps(data["glossary"])) == data["glossary"]
 
 
+def test_model_carries_architecture_and_page_renders_it(fixture_impact_repo, tmp_path):
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    data = model.build(conn, cfg)
+
+    arch = data["architecture"]                  # always present -- derived, never None
+    assert json.loads(json.dumps(arch)) == arch
+    assert [layer["id"] for layer in arch["layers"]][:5] == ["entry", "views", "api", "logic", "data"]
+    assert arch["components"]
+    placed = {fi for c in arch["components"] for fi in c["files"] + c["extra_files"]}
+    assert placed == {f["fi"] for f in data["files"]}       # every file lands somewhere
+    ids = {c["id"] for c in arch["components"]}
+    assert all(link["s"] in ids and link["t"] in ids for link in arch["links"])
+
+    html = render.render(data)
+    assert "archTab" in html
+
+
 def test_model_glossary_reflects_authored_prose(fixture_impact_repo, tmp_path):
     """glossary.json's `build()` is fed exactly the strings that will render
     through the tooltip machinery: walkthrough.json's prose and libraries.json's
@@ -364,3 +381,25 @@ def test_emit_brief_folder_map(fixture_impact_repo, tmp_path):
     # never an orphan -- the hedge template must not appear when nothing is flagged
     assert svc["reach"] != "orphan"
     assert "confirm before writing a note" not in body
+
+
+def test_emit_brief_architecture_section(fixture_impact_repo, tmp_path):
+    """--emit-brief lists the derived Architecture diagram by layer for
+    architecture.json corrections, and writes architecture-derived.json with
+    each component's file paths spelled out."""
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    data = model.build(conn, cfg)
+    cfg2 = config.load(fixture_impact_repo.path)
+    cfg2.codemap_dir.mkdir(exist_ok=True)
+    brief.emit(conn, cfg2, data)
+
+    body = (cfg2.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
+    assert "## Architecture" in body and "architecture.json" in body
+    assert "references/architecture-schema.md" in body
+
+    ad = json.loads((cfg2.codemap_dir / "briefs" / "architecture-derived.json").read_text(encoding="utf-8"))
+    assert ad["components"]
+    paths = {f["path"] for f in data["files"]}
+    for c in ad["components"]:
+        assert c["file_paths"] and set(c["file_paths"]) <= paths
+        assert f"`{c['path']}`" in body         # every component is listed for review

@@ -242,6 +242,25 @@ def _emit_folders_derived(briefs_dir, data: dict, written: list[str]) -> list[di
     return candidates
 
 
+def _emit_architecture_derived(briefs_dir, data: dict, written: list[str]) -> dict:
+    """``.codemap/briefs/architecture-derived.json`` — the Architecture tab's
+    derived model (``architecture.py``), with each component's file paths spelled
+    out so the skill can see what it would be renaming or moving without
+    cross-referencing ``fi`` indices. Returns the model for the overview."""
+    import json as _json
+
+    arch = data.get("architecture") or {}
+    files = data["files"]
+    comps = [
+        {**c, "file_paths": [files[fi]["path"] for fi in c["files"]]}
+        for c in arch.get("components") or []
+    ]
+    path = briefs_dir / "architecture-derived.json"
+    path.write_text(_json.dumps({**arch, "components": comps}, indent=2), encoding="utf-8")
+    written.append(str(path))
+    return arch
+
+
 def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     briefs_dir = cfg.codemap_dir / "briefs"
     briefs_dir.mkdir(parents=True, exist_ok=True)
@@ -256,6 +275,7 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     library_candidates = _emit_libraries_derived(briefs_dir, data, written)
     scenario_candidates = _emit_scenarios_derived(briefs_dir, data, written)
     folder_candidates = _emit_folders_derived(briefs_dir, data, written)
+    arch = _emit_architecture_derived(briefs_dir, data, written)
 
     # ---- 00-overview -------------------------------------------------
     ov = ["# Codebase analysis pack", ""]
@@ -344,6 +364,48 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
         ov.append("- no entry points detected — see `scenarios-derived.json` for "
                   "the busiest-symbol fallback the Simulate tab uses on its own.")
     ov.append("")
+    ov.append("## Architecture (corrections for `architecture.json`)")
+    ov.append("The Architecture tab draws this repo as a layered diagram — routes & entry → "
+              "views / API → logic → data, a side panel of shared code — derived from folder "
+              "names, entry points and imports. It already works with nothing authored. "
+              "`architecture.json` is for **corrections only**: a human `title` for a box "
+              "named after a folder, a `layer` for a box marked ⚠ below (or one you can see "
+              "is wrong), a one-line `body` for the parts that matter, and any data store or "
+              "outside service the code reaches without importing a client for it. "
+              "`architecture-derived.json` has every component's files and evidence. Follow "
+              "`references/architecture-schema.md`.")
+    ov.append("")
+    if arch.get("stack"):
+        ov.append("Stack: " + " · ".join(arch["stack"]))
+        ov.append("")
+    comps_by_id = {c["id"]: c for c in arch.get("components") or []}
+    for layer in arch.get("layers") or []:
+        if not layer["components"]:
+            continue
+        ov.append(f"- **{layer['title']}** (`{layer['id']}`)")
+        for cid in layer["components"]:
+            c = comps_by_id[cid]
+            tech = ", ".join(t["label"] for t in c["tech"][:3])
+            flag = " — ⚠ best guess, confirm or correct" if c["confidence"] == "weak" and not c["authored"] else ""
+            ov.append(f"  - `{c['path']}` \"{c['title']}\"" + (f" [{tech}]" if tech else "") +
+                      f" — {'; '.join(c['evidence'][:3])}{flag}")
+    ups = [link for link in arch.get("links") or [] if link["dir"] == "up"]
+    if ups:
+        ov.append("")
+        ov.append("Wrong-way imports (a lower layer importing a higher one — either a real "
+                  "shortcut worth a `body` note, or a sign one side is in the wrong layer):")
+        for link in ups[:20]:
+            ov.append(f"- `{comps_by_id[link['s']]['path']}` → `{comps_by_id[link['t']]['path']}` ({link['n']})")
+    reached = [(kind, item) for kind in ("stores", "services") for item in arch.get(kind) or []]
+    if reached:
+        ov.append("")
+        ov.append("Data stores and outside services found:")
+        for kind, item in reached:
+            how = f"via {', '.join(item['via'])}" if item["via"] else "not imported anywhere"
+            if item.get("declared_in"):
+                how += f"; declared in {', '.join(item['declared_in'])}"
+            ov.append(f"- {kind[:-1]} `{item['id']}` {item['label']} — {how}")
+    ov.append("")
     ov.append("## What to produce")
     ov.append("1. `.codemap/walkthrough.json` — the Learn tab's actual content: a "
               "plain-language intro, the repo-wide category map, and prose for the "
@@ -370,8 +432,12 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
               "narrating/trimming `scenarios-derived.json` rather than rebuilding "
               "a tree. For real branch/output fidelity record an actual run: "
               "`codemap trace --name \"<title>\" -- <command>`.")
+    ov.append("5. `.codemap/architecture.json` — corrections for the Architecture tab "
+              "only, from the **Architecture** section above. Follow "
+              "`references/architecture-schema.md`. Skip it entirely if every box is "
+              "already in the right layer with a name a newcomer would understand.")
     ov.append("")
-    ov.append("All four files are optional and fall back silently — but you were "
+    ov.append("All five files are optional and fall back silently — but you were "
               "asked for what you were asked for.")
     _write(briefs_dir / "00-overview.md", ov, written)
 

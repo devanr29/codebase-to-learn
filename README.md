@@ -48,11 +48,12 @@ Full walkthrough of the rendered page: [`docs/explore-guide.md`](docs/explore-gu
 More install options (uv, from source, Windows notes, the plugin):
 [`docs/install.md`](docs/install.md).
 
-## The six tabs
+## The seven tabs
 
 | Tab | Answers | |
 |---|---|---|
 | **Graph** | What calls what — source tree, a neural-style code graph, focus any symbol to see its callers/callees, blast radius, and source. | ![Graph tab](docs/images/graph.png) |
+| **Architecture** | What the system is made of — layers from routes down to data, the tech each part is built on, and the databases and outside services it talks to. | ![Architecture tab](docs/images/architecture.png) |
 | **Map** | What shape is the system, and where — dependency layers, a subway-map run trace, a treemap of the whole repo. | ![Map tab, Layers view](docs/images/map-layers.png) |
 | **Simulate** | What happens when it *runs* — a transport-controlled animation of one call-by-call scenario, with a scrollable trace log. | ![Simulate tab](docs/images/simulate.png) |
 | **Learn** | A guided tour of the codebase — what its parts are, how they fit together, and what each folder is for. | _walkthrough — see [`docs/explore-guide.md`](docs/explore-guide.md)_ |

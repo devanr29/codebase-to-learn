@@ -220,6 +220,10 @@
   content: "\e466";
 }
 
+.ph.ph-tree-structure:before {
+  content: "\e67c";
+}
+
 .ph.ph-user:before {
   content: "\e4c2";
 }
@@ -441,6 +445,10 @@
 
 .ph-fill.ph-stack:before {
   content: "\e466";
+}
+
+.ph-fill.ph-tree-structure:before {
+  content: "\e67c";
 }
 
 .ph-fill.ph-user:before {

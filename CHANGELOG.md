@@ -4,6 +4,33 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Architecture tab** — a layered architecture diagram of the indexed repo,
+  in the style of a hand-drawn system picture: who drives the app (Internet,
+  Terminal, a user's screen, a scheduler) → **Routes & entry** → **Views & UI**
+  / **API** → **Logic** → **Data & models**, with a side panel for shared code
+  and tests. Each box names the tech it's built on (Flask, React, SQLAlchemy,
+  …); databases, caches, search engines and queues are drawn as cylinders and
+  outside services (Stripe, OpenAI, AWS, …) as clouds, detected from imports
+  plus `docker-compose` images and `package.json` / `requirements.txt` /
+  `pyproject.toml` / `go.mod` dependencies. Arrows show which layers import
+  which; wrong-way and layer-skipping imports are flagged. Hover to light up an
+  item's connections; click for why it was placed there (every scoring reason
+  is shown), its files, entry points and links into Graph, Packages, Simulate
+  and Learn. Derived by the new `codemap/site/architecture.py` from a bundled
+  `architecture-catalog.json`; no authoring needed.
+- Optional `.codemap/architecture.json` — corrections for that diagram (box
+  names, misplaced parts, stores/services the imports don't reveal), authored
+  by the `codebase-to-course` skill from a new **Architecture** section in
+  `--emit-brief`'s overview and `architecture-derived.json`. Schema:
+  `skills/codebase-to-course/references/architecture-schema.md`.
+
+### Fixed
+- Topbar no longer scrolls the page sideways between ~421px and ~650px wide:
+  tabs collapse to icons below 780px, and the counters hide below 1100px.
+
 ## [0.2.2] — 2026-09-12
 
 ### Added

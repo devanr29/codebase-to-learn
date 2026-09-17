@@ -14,14 +14,16 @@ description: >-
   .codemap/explanations.json (a one-line plain-English blurb per symbol, shown
   in the Graph inspector), .codemap/scenarios.json (the Simulate tab's scenario
   curriculum — every workflow of the app as an ordered, grouped entry, steps
-  derived or hand-narrated), and .codemap/glossary.json (project-specific term
-  definitions that power hover/tap tooltips everywhere else) — all baked into
-  the page by `codemap explore`.
+  derived or hand-narrated), .codemap/glossary.json (project-specific term
+  definitions that power hover/tap tooltips everywhere else), and
+  .codemap/architecture.json (corrections to the Architecture tab's layered
+  diagram — human names, misplaced parts, databases and services the imports
+  don't reveal) — all baked into the page by `codemap explore`.
 ---
 
 # codebase-to-course
 
-Writes five JSON files under `.codemap/` that the deterministic `codemap
+Writes six JSON files under `.codemap/` that the deterministic `codemap
 explore` renderer bakes into `explore.html`. It never generates a standalone
 site and never edits the renderer.
 
@@ -38,6 +40,7 @@ before continuing).
 | `explanations.json` | **Graph** inspector | one plain-English `what` line per symbol |
 | `scenarios.json` | **Simulate** | the workflow curriculum — one entry per real run of the app |
 | `glossary.json` | tooltips, every tab | project-specific term definitions, for gaps the two bundled dictionaries don't cover |
+| `architecture.json` | **Architecture** | corrections only — human box names, parts in the wrong layer, stores/services the imports don't show |
 
 ## Audience
 
@@ -59,17 +62,21 @@ the thing is *for*.
    `.codemap/briefs/00-overview.md` now carries a **Dependency reference**
    (every import + every module, with importing files), a **Folder reference**
    (every folder candidate, with file counts, direct dependencies, and an
-   advisory "nothing imports this" flag where applicable), and a **Scenario
-   index** (every entry point with a suggested workflow group + order).
+   advisory "nothing imports this" flag where applicable), a **Scenario
+   index** (every entry point with a suggested workflow group + order), and an
+   **Architecture** section (every derived component by layer, with its
+   evidence, best guesses and wrong-way imports flagged).
    Per-module briefs carry verbatim pre-extracted snippets and each symbol's
-   `key:`. Two derived packs sit alongside: `libraries-derived.json`,
-   `scenarios-derived.json`.
+   `key:`. Derived packs sit alongside: `libraries-derived.json`,
+   `scenarios-derived.json`, `folders-derived.json`,
+   `architecture-derived.json`.
 
 2. **Read `00-overview.md`**, then the per-module briefs, plus
    `references/content-philosophy.md` and `references/gotchas.md` (always) and
    the schema files for whatever you're about to write: `references/walkthrough-schema.md`,
    `references/glossary-schema.md`, `references/libraries-schema.md`,
-   `references/explanations-schema.md`, `references/scenarios-schema.md`.
+   `references/explanations-schema.md`, `references/scenarios-schema.md`,
+   `references/architecture-schema.md`.
 
 3. **Write `.codemap/walkthrough.json`** — the Learn tab, now a project
    walkthrough. Follow `references/walkthrough-schema.md`.
@@ -153,7 +160,21 @@ the thing is *for*.
    all just text a person typed" actually clicks. Only ever point at a plain
    string literal already sitting in the excerpt; never suggest touching logic.
 
-7. **Bake and review.**
+7. **Correct `.codemap/architecture.json`** — the Architecture tab, following
+   `references/architecture-schema.md`. The tab already draws the whole diagram
+   from folder names, entry points and imports; write only corrections, from
+   the brief's **Architecture** section:
+   - every box marked **⚠ best guess** — confirm it with a `title` (and its
+     `layer`) or move it;
+   - every **wrong-way import** — fix whichever side is in the wrong layer, or
+     note the shortcut in a `body`;
+   - a human `title` for boxes still named after a bare folder (`services`,
+     `utils`) where the folder name alone wouldn't tell a newcomer what it does;
+   - any database, queue or outside service the code reaches without importing
+     a client for it (an ORM URL, a plain HTTP call).
+   Skip the file entirely when nothing needs correcting.
+
+8. **Bake and review.**
    ```
    codemap explore --open
    ```
@@ -168,12 +189,16 @@ the thing is *for*.
    explanation, and hover a glossed term to confirm the tooltip fires.
    Simulate tab: the rail groups your scenarios in workflow order —
    spot-check the grouping, then play each hero scenario through once.
+   Architecture tab: no dashed "best guess" box left that you meant to
+   confirm, every box name reads as what that part does, and the wrong-way
+   import list holds only shortcuts you've explained.
 
 ## Non-negotiables
 
 - `.codemap/walkthrough.json`, `.codemap/libraries.json`,
-  `.codemap/explanations.json`, `.codemap/scenarios.json` and
-  `.codemap/glossary.json` are the only files you write. Never edit
+  `.codemap/explanations.json`, `.codemap/scenarios.json`,
+  `.codemap/glossary.json` and `.codemap/architecture.json` are the only files
+  you write. Never edit
   `explore.css` / `explore.js` / the renderer, and never hand-write a file
   under `.codemap/traces/` — that directory is `codemap trace`'s output only.
 - `see` keys (libraries.json, walkthrough.json), and every key in

@@ -468,6 +468,8 @@
     traceRoot: null,      // Map/trace: node index of the traced call root
     traceStep: null,      // Map/trace: BFS depth the step wave has reached (null = all)
     hideTests: false,     // Map/layers: drop tests/** and collapse empty bands
+    archSel: null,        // Architecture: selected item key (component id, or store:/service:/actor:<id>)
+    archShowTests: false, // Architecture: include the tests side panel
     mobileRail: false,    // narrow viewport: source tree shown as an overlay, not a column
     mobileInsp: false,    // narrow viewport: inspector shown as an overlay, not a column
     folderScope: "",      // legend: folder path currently drilled into ("" = repo root)
@@ -508,7 +510,7 @@
     var prevTab = state.tab;            // read before route() below overwrites it — see
                                          // updateGraphFocus()'s fast path at the bottom
     var r = parseHash();
-    state.tab = ["graph", "learn", "libs", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "learn";
+    state.tab = ["graph", "arch", "learn", "libs", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "learn";
     if (state.tab === "graph") {
       if (r.arg && keyToI[r.arg] != null) { state.focus = keyToI[r.arg]; state.fileScope = null; }
       else if (!r.arg) state.focus = null;
@@ -537,6 +539,10 @@
       } else {
         state.module = ORIENTATION_ID;
       }
+    } else if (state.tab === "arch") {
+      // #/arch/<item key>; a deep link to a test component turns the tests panel on
+      state.archSel = r.arg || null;
+      if (state.archSel && A_COMP[state.archSel] && A_COMP[state.archSel].layer === "tests") state.archShowTests = true;
     } else if (state.tab === "libs") {
       state.pkg = r.arg || null;   // null = the package index (first entry / a landing state)
     } else if (state.tab === "map") {
@@ -578,6 +584,7 @@
     var s = DATA.stats || {};
     var tabs = [
       ["graph", "ph ph-graph", "Graph"],
+      ["arch", "ph ph-tree-structure", "Architecture"],
       ["map", "ph ph-stack", "Map"],
       ["sim", "ph ph-play-circle", "Simulate"],
       ["learn", "ph ph-graduation-cap", "Learn"],
@@ -2521,6 +2528,724 @@
 
   function lgRow(sw, txt) { return el("div", { class: "row" }, [sw, txt]); }
 
+  // ---- architecture tab ---------------------------------------------
+  // The hand-drawn architecture diagram most READMEs never get: layers stacked
+  // top to bottom (routes & entry → views / API → logic → data), each a band of
+  // component boxes labelled with the tech they're built on, data stores as
+  // cylinders, outside services and whoever drives the app as clouds, and a
+  // side panel of shared code with dashed links into the layers that use it.
+  // Every placement comes from DATA.architecture (codemap/site/architecture.py
+  // scores each file and ships the evidence) — nothing is guessed here, this
+  // section only lays it out once per render and wires hover/click. Like Map it
+  // scrolls instead of pan/zooming; hover only rewrites classes and repaints
+  // one small highlight layer, never the scene.
+  var ARCH = DATA.architecture || {};
+  var A_COMPS = ARCH.components || [];
+  var A_STORES = ARCH.stores || [];
+  var A_SERVICES = ARCH.services || [];
+  var A_ACTORS = ARCH.actors || [];
+  var A_LINKS = ARCH.links || [];
+  var A_COMP = {}, A_LAYER = {};
+  A_COMPS.forEach(function (c) { A_COMP[c.id] = c; });
+  (ARCH.layers || []).forEach(function (l) { A_LAYER[l.id] = l; });
+  // hues from GROUP_HUES (already CVD-checked on this canvas), in CKAN's order
+  // of routes pink → views green → API amber → logic blue → models orange. The
+  // band title always repeats the layer in words, so colour is never the only cue.
+  var A_HUE = { entry: "#d55181", views: "#199e70", api: "#c98500", logic: "#3987e5",
+                data: "#d95926", shared: GROUP_OTHER, tests: GROUP_OTHER };
+  var A_SERVICE_HUE = "#9085e9", A_ACTOR_HUE = "#b2b6ca", A_UP_HUE = "#e66767";
+  var A_BOX_W = 140, A_BOX_H = 48, A_GAP = 12, A_BAND_PAD = 14, A_BAND_HEAD = 32,
+      A_ROW_GAP = 52, A_MAIN_W = 700, A_SIDE_W = 184, A_SIDE_GAP = 54, A_PAD = 20,
+      A_CLOUD_W = 150, A_CLOUD_H = 64, A_CYL_W = 118, A_CYL_H = 66, A_UP_MAX = 12;
+  var EP_BY_NODE = {};
+  (DATA.entry_points || []).forEach(function (ep) {
+    if (ep.node != null) (EP_BY_NODE[ep.node] = EP_BY_NODE[ep.node] || []).push(ep);
+  });
+
+  function archFindById(list, id) {
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return null;
+  }
+  // item keys: a component's own id ("<layer>:<path>"), or store:/service:/actor:<id>
+  function archItem(key) {
+    if (!key) return null;
+    if (A_COMP[key]) return { kind: "comp", obj: A_COMP[key] };
+    var i = key.indexOf(":"), kind = key.slice(0, i), id = key.slice(i + 1);
+    var list = kind === "store" ? A_STORES : kind === "service" ? A_SERVICES : kind === "actor" ? A_ACTORS : null;
+    var obj = list && archFindById(list, id);
+    return obj ? { kind: kind, obj: obj } : null;
+  }
+  function archRelated(key) {
+    var rel = new Set([key]);
+    var it = archItem(key);
+    if (!it) return rel;
+    if (it.kind === "comp") {
+      A_LINKS.forEach(function (l) {
+        if (l.s === key) rel.add(l.t);
+        if (l.t === key) rel.add(l.s);
+      });
+      (it.obj.stores || []).forEach(function (s) { rel.add("store:" + s); });
+      (it.obj.services || []).forEach(function (s) { rel.add("service:" + s); });
+      A_ACTORS.forEach(function (a) { if (a.components.indexOf(key) >= 0) rel.add("actor:" + a.id); });
+    } else {
+      (it.obj.components || []).forEach(function (c) { rel.add(c); });
+    }
+    return rel;
+  }
+  function archHueOf(key) {
+    var it = archItem(key);
+    if (!it) return GROUP_OTHER;
+    if (it.kind === "comp") return A_HUE[it.obj.layer] || GROUP_OTHER;
+    return it.kind === "store" ? A_HUE.data : it.kind === "service" ? A_SERVICE_HUE : A_ACTOR_HUE;
+  }
+  function archLight(hex) { return lerpHex(hex, "#ffffff", 0.35); }
+
+  // ── shapes ──
+  function archCloudPath(x, y, w, h) {
+    var b = y + h * 0.84;
+    return "M " + (x + w * 0.2) + " " + b +
+      " C " + (x - w * 0.03) + " " + b + " " + (x - w * 0.02) + " " + (y + h * 0.4) + " " + (x + w * 0.2) + " " + (y + h * 0.44) +
+      " C " + (x + w * 0.18) + " " + (y + h * 0.06) + " " + (x + w * 0.5) + " " + (y - h * 0.04) + " " + (x + w * 0.58) + " " + (y + h * 0.24) +
+      " C " + (x + w * 0.72) + " " + (y + h * 0.0) + " " + (x + w * 1.0) + " " + (y + h * 0.16) + " " + (x + w * 0.86) + " " + (y + h * 0.46) +
+      " C " + (x + w * 1.05) + " " + (y + h * 0.5) + " " + (x + w * 1.03) + " " + b + " " + (x + w * 0.8) + " " + b + " Z";
+  }
+  function archCylBody(x, y, w, h, ry) {
+    return "M " + x + " " + (y + ry) + " L " + x + " " + (y + h - ry) +
+      " A " + (w / 2) + " " + ry + " 0 0 0 " + (x + w) + " " + (y + h - ry) +
+      " L " + (x + w) + " " + (y + ry) + " Z";
+  }
+  // a CKAN-style hollow block arrow on the vertical, tip at y2
+  function archBlockArrow(x, y1, y2) {
+    var dir = y2 > y1 ? 1 : -1, sw = 5, hw = 11, yh = y2 - 11 * dir;
+    return "M " + (x - sw) + " " + y1 + " L " + (x - sw) + " " + yh + " L " + (x - hw) + " " + yh +
+      " L " + x + " " + y2 + " L " + (x + hw) + " " + yh + " L " + (x + sw) + " " + yh +
+      " L " + (x + sw) + " " + y1 + " Z";
+  }
+  function archArrowPair(x, yTop, yBot, title) {
+    var g = el("g", { class: "arch-arrow" }, title ? [el("title", { text: title })] : []);
+    g.appendChild(el("path", { d: archBlockArrow(x - 12, yTop, yBot) }));   // calls in
+    g.appendChild(el("path", { d: archBlockArrow(x + 12, yBot, yTop) }));   // results back
+    return g;
+  }
+
+  function archTab() {
+    if (!A_COMPS.length)
+      return el("div", { class: "map" }, [el("div", { class: "map-empty", text: "Nothing indexed to draw yet." })]);
+    if (state.archSel && !archItem(state.archSel)) state.archSel = null;   // stale deep link after a re-scan
+
+    var showTests = state.archShowTests;
+    function visible(key) {
+      var c = A_COMP[key];
+      return !c || c.layer !== "tests" || showTests;
+    }
+    var byLayer = {};
+    A_COMPS.forEach(function (c) {
+      if (visible(c.id)) (byLayer[c.layer] = byLayer[c.layer] || []).push(c);
+    });
+
+    var pos = {};      // item key -> {x, y, w, h, cx, cy}
+    var rowOf = {};    // component id -> index into rows (main-column band rows only)
+    var rows = [];     // {kind, top, bottom, bands: [{layer, x, w}]}
+    var sideComps = (byLayer.shared || []).concat(byLayer.tests || []);
+    var hasSide = sideComps.length > 0;
+    var x0 = A_PAD + (hasSide ? A_SIDE_W + A_SIDE_GAP : 0);
+    var y = A_PAD;
+
+    // ── layout: actors row ──
+    if (A_ACTORS.length) {
+      var aw = A_ACTORS.length * A_CLOUD_W + (A_ACTORS.length - 1) * 28;
+      var ax = x0 + (A_MAIN_W - aw) / 2;
+      A_ACTORS.forEach(function (a, k) {
+        var x = ax + k * (A_CLOUD_W + 28);
+        pos["actor:" + a.id] = { x: x, y: y, w: A_CLOUD_W, h: A_CLOUD_H, cx: x + A_CLOUD_W / 2, cy: y + A_CLOUD_H / 2 };
+      });
+      rows.push({ kind: "actors", top: y, bottom: y + A_CLOUD_H * 0.84 });
+      y += A_CLOUD_H + A_ROW_GAP - 10;
+    }
+
+    // ── layout: band rows ──
+    function flowRows(n, itemW, innerW) {
+      var per = Math.max(1, Math.floor((innerW + A_GAP) / (itemW + A_GAP)));
+      return { per: per, rows: Math.ceil(n / per) };
+    }
+    function place(keys, itemW, itemH, bx, bw, top) {
+      var fr = flowRows(keys.length, itemW, bw - A_BAND_PAD * 2);
+      keys.forEach(function (key, k) {
+        var r = Math.floor(k / fr.per), inRow = Math.min(fr.per, keys.length - r * fr.per);
+        var rowW = inRow * itemW + (inRow - 1) * A_GAP;
+        var x = bx + (bw - rowW) / 2 + (k - r * fr.per) * (itemW + A_GAP);
+        var yy = top + r * (itemH + A_GAP);
+        pos[key] = { x: x, y: yy, w: itemW, h: itemH, cx: x + itemW / 2, cy: yy + itemH / 2 };
+      });
+      return fr.rows ? fr.rows * (itemH + A_GAP) - A_GAP : 0;
+    }
+    var storesShown = A_STORES.slice();
+    [["entry"], ["views", "api"], ["logic"], ["data"]].forEach(function (spec) {
+      var present = spec.filter(function (l) {
+        return (byLayer[l] || []).length || (l === "data" && storesShown.length);
+      });
+      if (!present.length) return;
+      var widths;
+      if (present.length === 1) widths = [A_MAIN_W];
+      else {
+        var na = (byLayer[present[0]] || []).length, nb = (byLayer[present[1]] || []).length;
+        var share = Math.max(0.38, Math.min(0.62, na / (na + nb)));
+        widths = [(A_MAIN_W - 18) * share, (A_MAIN_W - 18) * (1 - share)];
+      }
+      var rowIdx = rows.length, bands = [], rowH = 0, bx = x0;
+      present.forEach(function (layer, k) {
+        var bw = widths[k];
+        var comps = (byLayer[layer] || []).map(function (c) { rowOf[c.id] = rowIdx; return c.id; });
+        var top = y + A_BAND_HEAD;
+        var storeKeys = layer === "data" ? storesShown.map(function (s) { return "store:" + s.id; }) : [];
+        var oneRowW = comps.length * (A_BOX_W + A_GAP) + storeKeys.length * (A_CYL_W + A_GAP) - A_GAP;
+        if (storeKeys.length && oneRowW <= bw - A_BAND_PAD * 2) {
+          // CKAN's Models band: boxes and database cylinders side by side on one row
+          var rx = bx + (bw - oneRowW) / 2;
+          comps.forEach(function (key) {
+            var yy = top + (A_CYL_H - A_BOX_H) / 2;
+            pos[key] = { x: rx, y: yy, w: A_BOX_W, h: A_BOX_H, cx: rx + A_BOX_W / 2, cy: yy + A_BOX_H / 2 };
+            rx += A_BOX_W + A_GAP;
+          });
+          storeKeys.forEach(function (key) {
+            pos[key] = { x: rx, y: top, w: A_CYL_W, h: A_CYL_H, cx: rx + A_CYL_W / 2, cy: top + A_CYL_H / 2 };
+            rx += A_CYL_W + A_GAP;
+          });
+          rowH = Math.max(rowH, A_BAND_HEAD + A_CYL_H + A_BAND_PAD);
+          bands.push({ layer: layer, x: bx, w: bw });
+          bx += bw + 18;
+          return;
+        }
+        var boxesH = place(comps, A_BOX_W, A_BOX_H, bx, bw, top);
+        var h = A_BAND_HEAD + boxesH;
+        if (storeKeys.length) {
+          var sTop = top + boxesH + (boxesH ? 16 : 4);
+          var cylH = place(storeKeys, A_CYL_W, A_CYL_H, bx, bw, sTop);
+          h += (boxesH ? 16 : 4) + cylH;
+        }
+        h += A_BAND_PAD;
+        rowH = Math.max(rowH, h);
+        bands.push({ layer: layer, x: bx, w: bw });
+        bx += bw + 18;
+      });
+      rows.push({ kind: "band", top: y, bottom: y + rowH, bands: bands });
+      y += rowH + A_ROW_GAP;
+    });
+
+    // ── layout: outside services ──
+    var servicesTop = null;
+    if (A_SERVICES.length) {
+      servicesTop = y + 14;
+      var perS = Math.max(1, Math.floor((A_MAIN_W + 18) / (A_CLOUD_W + 18)));
+      A_SERVICES.forEach(function (s, k) {
+        var r = Math.floor(k / perS), inRow = Math.min(perS, A_SERVICES.length - r * perS);
+        var rowW = inRow * A_CLOUD_W + (inRow - 1) * 18;
+        var x = x0 + (A_MAIN_W - rowW) / 2 + (k - r * perS) * (A_CLOUD_W + 18);
+        var yy = servicesTop + r * (A_CLOUD_H + 12);
+        pos["service:" + s.id] = { x: x, y: yy, w: A_CLOUD_W, h: A_CLOUD_H, cx: x + A_CLOUD_W / 2, cy: yy + A_CLOUD_H / 2 };
+      });
+      var sRows = Math.ceil(A_SERVICES.length / perS);
+      rows.push({ kind: "services", top: servicesTop, bottom: servicesTop + sRows * (A_CLOUD_H + 12) });
+      y = servicesTop + sRows * (A_CLOUD_H + 12) + A_ROW_GAP;
+    }
+    var mainBottom = y - A_ROW_GAP;
+
+    // ── layout: side panel ──
+    var side = null;
+    if (hasSide) {
+      var sTop0 = rows.length && rows[0].kind === "actors" && rows[1] ? rows[1].top : A_PAD;
+      var sy = sTop0 + 14, sections = [];
+      [["shared", byLayer.shared || []], ["tests", byLayer.tests || []]].forEach(function (pair) {
+        if (!pair[1].length) return;
+        sections.push({ layer: pair[0], y: sy });
+        sy += 26;
+        pair[1].forEach(function (c) {
+          var bx2 = A_PAD + 12, bw2 = A_SIDE_W - 24;
+          pos[c.id] = { x: bx2, y: sy, w: bw2, h: A_BOX_H, cx: bx2 + bw2 / 2, cy: sy + A_BOX_H / 2 };
+          sy += A_BOX_H + 10;
+        });
+        sy += 10;
+      });
+      side = { top: sTop0, bottom: sy, sections: sections };
+    }
+
+    // ── links that don't fit the neighbour-to-neighbour picture ──
+    var pairAgg = {}, skipAgg = {}, ups = [], sideLayers = {};
+    A_LINKS.forEach(function (l) {
+      if (!visible(l.s) || !visible(l.t) || !pos[l.s] || !pos[l.t]) return;
+      if (l.dir === "side") {
+        var other = A_COMP[l.s].layer === "shared" || A_COMP[l.s].layer === "tests" ? l.t : l.s;
+        var ol = A_COMP[other].layer;
+        if (ol !== "shared" && ol !== "tests") sideLayers[ol] = (sideLayers[ol] || 0) + l.n;
+      } else if (l.dir === "up") {
+        ups.push(l);
+      } else if (l.dir === "down") {
+        var rs = rowOf[l.s], rt = rowOf[l.t];
+        if (rt === rs + 1) {
+          var pk = rs + "|" + l.s + "|" + l.t;
+          pairAgg[pk] = (pairAgg[pk] || 0) + l.n;
+        } else if (rt > rs + 1) {
+          var sk = rs + "|" + rt;
+          skipAgg[sk] = (skipAgg[sk] || 0) + l.n;
+        }
+      }
+    });
+    var skipKeys = Object.keys(skipAgg).sort();
+    var farActors = A_ACTORS.filter(function (a) {
+      return a.components.every(function (cid) { return rowOf[cid] == null || rowOf[cid] > 1; }) &&
+        a.components.some(function (cid) { return rowOf[cid] != null; });
+    }).length;
+    var gutterN = skipKeys.length + farActors;
+    var W = x0 + A_MAIN_W + (gutterN ? 22 + gutterN * 10 : 0) + A_PAD;
+    var H = Math.max(mainBottom, side ? side.bottom : 0) + A_PAD;
+
+    var svg = el("svg", { class: "arch", width: W, height: H, viewBox: "0 0 " + W + " " + H,
+      role: "img", "aria-label": "Architecture diagram: " + (ARCH.stack || []).join(", ") });
+    var gBands = el("g"), gArrows = el("g", { class: "arch-arrows" }), gHi = el("g", { class: "arch-hi", fill: "none" }),
+        gItems = el("g");
+    svg.appendChild(gBands); svg.appendChild(gArrows); svg.appendChild(gHi); svg.appendChild(gItems);
+
+    function layerTitle(id) { return (A_LAYER[id] && A_LAYER[id].title) || id; }
+
+    // ── bands ──
+    rows.forEach(function (row) {
+      if (row.kind === "services") {
+        gBands.appendChild(el("text", { x: x0, y: row.top - 6, class: "arch-lk", text: "OUTSIDE SERVICES" }));
+        return;
+      }
+      if (row.kind !== "band") return;
+      row.bands.forEach(function (b) {
+        var hue = A_HUE[b.layer] || GROUP_OTHER, n = (byLayer[b.layer] || []).length;
+        gBands.appendChild(el("rect", { x: b.x, y: row.top, width: b.w, height: row.bottom - row.top, rx: 10,
+          fill: hexA(hue, 0.09), stroke: hexA(hue, 0.5), "stroke-width": 1.2 }));
+        gBands.appendChild(el("text", { x: b.x + 14, y: row.top + 21, class: "arch-lt", fill: archLight(hue),
+          text: fitText(layerTitle(b.layer), b.w - 90, 8.2) }, [el("title", { text: (A_LAYER[b.layer] || {}).body || "" })]));
+        if (n)
+          gBands.appendChild(el("text", { x: b.x + b.w - 14, y: row.top + 20, "text-anchor": "end", class: "arch-lc",
+            text: n + (n === 1 ? " part" : " parts") }));
+      });
+    });
+    if (side) {
+      gBands.appendChild(el("rect", { x: A_PAD, y: side.top, width: A_SIDE_W, height: side.bottom - side.top, rx: 10,
+        fill: hexA(GROUP_OTHER, 0.07), stroke: hexA(GROUP_OTHER, 0.4), "stroke-width": 1.2 }));
+      side.sections.forEach(function (s) {
+        gBands.appendChild(el("text", { x: A_PAD + 12, y: s.y + 12, class: "arch-lt small", fill: archLight(GROUP_OTHER),
+          text: fitText(layerTitle(s.layer), A_SIDE_W - 24, 7.2) }, [el("title", { text: (A_LAYER[s.layer] || {}).body || "" })]));
+      });
+    }
+
+    // ── neighbour arrows: actors → first band, band → next band ──
+    var gutterK = skipKeys.length;
+    A_ACTORS.forEach(function (a) {
+      var p = pos["actor:" + a.id], best = null;
+      a.components.forEach(function (cid) { if (rowOf[cid] != null && (best == null || rowOf[cid] < best)) best = rowOf[cid]; });
+      if (!p || best == null) return;
+      var title = a.label + " → " + layerTitle(rows[best].bands[0].layer) + " · " + a.entries + " entry point" + (a.entries === 1 ? "" : "s");
+      if (best === 1) {
+        gArrows.appendChild(archArrowPair(p.cx, p.y + p.h * 0.84 + 4, rows[best].top - 4, title));
+        return;
+      }
+      // the layer it drives isn't the next one down: go around the bands, not through them
+      var gx = x0 + A_MAIN_W + 14 + (gutterK++) * 10, yb = rows[best].top + 26;
+      gArrows.appendChild(el("g", { class: "arch-skip actor" }, [
+        el("title", { text: title }),
+        el("path", { d: "M " + (p.x + p.w * 0.97) + " " + p.cy + " H " + gx + " V " + yb + " H " + (x0 + A_MAIN_W + 6) }),
+        el("path", { class: "head", d: "M " + (x0 + A_MAIN_W + 1) + " " + yb + " l 7 -4 v 8 z" }),
+      ]));
+    });
+    var byRow = {};
+    Object.keys(pairAgg).forEach(function (k) {
+      var parts = k.split("|");
+      (byRow[parts[0]] = byRow[parts[0]] || []).push({ s: parts[1], t: parts[2], n: pairAgg[k] });
+    });
+    Object.keys(byRow).forEach(function (r) {
+      var list = byRow[r].sort(function (a, b) { return b.n - a.n || (a.s < b.s ? -1 : 1); });
+      var total = list.reduce(function (s, p) { return s + p.n; }, 0), xs = [];
+      list.forEach(function (p) {
+        if (xs.length >= 2) return;
+        var x = Math.max(x0 + 30, Math.min(x0 + A_MAIN_W - 30, (pos[p.s].cx + pos[p.t].cx) / 2));
+        if (xs.some(function (o) { return Math.abs(o - x) < 70; })) return;
+        xs.push(x);
+        gArrows.appendChild(archArrowPair(x, rows[+r].bottom + 4, rows[+r + 1].top - 4,
+          A_COMP[p.s].title + " → " + A_COMP[p.t].title + " · " + p.n + " import" + (p.n === 1 ? "" : "s") +
+          (total > p.n ? " (" + total + " between these layers)" : "")));
+      });
+    });
+
+    // ── skip-a-layer connectors down the right gutter ──
+    skipKeys.forEach(function (k, idx) {
+      var parts = k.split("|"), ra = rows[+parts[0]], rb = rows[+parts[1]];
+      var gx = x0 + A_MAIN_W + 14 + idx * 10;
+      var ya = (ra.top + ra.bottom) / 2, yb = (rb.top + rb.bottom) / 2 + idx * 4;
+      var from = layerTitle(ra.bands[ra.bands.length - 1].layer), to = layerTitle(rb.bands[0].layer);
+      gArrows.appendChild(el("g", { class: "arch-skip" }, [
+        el("title", { text: skipAgg[k] + " import" + (skipAgg[k] === 1 ? "" : "s") + " skip a layer: " + from + " → " + to }),
+        el("path", { d: "M " + (x0 + A_MAIN_W) + " " + ya + " H " + gx + " V " + yb + " H " + (x0 + A_MAIN_W + 6) }),
+        el("path", { class: "head", d: "M " + (x0 + A_MAIN_W + 1) + " " + yb + " l 7 -4 v 8 z" }),
+      ]));
+    });
+
+    // ── side panel's dashed fan into the layers it serves ──
+    if (side) {
+      var axs = A_PAD + A_SIDE_W, ays = (side.top + side.bottom) / 2;
+      rows.forEach(function (row) {
+        if (row.kind !== "band") return;
+        row.bands.forEach(function (b, k) {
+          if (!sideLayers[b.layer] || k > 0) return;
+          gArrows.appendChild(el("path", { class: "arch-side-line",
+            d: "M " + axs + " " + ays + " L " + b.x + " " + ((row.top + row.bottom) / 2) }, [
+            el("title", { text: layerTitle(b.layer) + " ⇄ shared code · " + sideLayers[b.layer] + " imports" })]));
+        });
+        // a second band in the same row (API beside Views) gets its line to its own left edge
+        if (row.bands[1] && sideLayers[row.bands[1].layer] && !sideLayers[row.bands[0].layer])
+          gArrows.appendChild(el("path", { class: "arch-side-line",
+            d: "M " + axs + " " + ays + " L " + row.bands[1].x + " " + (row.top + 16) }));
+      });
+    }
+
+    // ── services hang off the bottom of the diagram ──
+    A_SERVICES.forEach(function (s) {
+      var p = pos["service:" + s.id];
+      var lastBand = null;
+      rows.forEach(function (r) { if (r.kind === "band") lastBand = r; });
+      if (!p || !lastBand || !s.components.length) return;
+      gArrows.appendChild(el("path", { class: "arch-svc-line", d: "M " + p.cx + " " + (lastBand.bottom + 4) + " V " + (p.y + 4) }));
+    });
+
+    // ── wrong-way imports, drawn on top of everything neighbourly ──
+    ups.slice(0, A_UP_MAX).forEach(function (l) {
+      var a = pos[l.s], b = pos[l.t];
+      var y1 = a.y, y2 = b.y + b.h, mx = (a.cx + b.cx) / 2, my = (y1 + y2) / 2;
+      gArrows.appendChild(el("g", { class: "arch-up" }, [
+        el("title", { text: A_COMP[l.s].title + " (" + layerTitle(A_COMP[l.s].layer) + ") imports " + A_COMP[l.t].title +
+          " (" + layerTitle(A_COMP[l.t].layer) + ") — a lower layer reaching up" }),
+        el("path", { d: "M " + a.cx + " " + y1 + " C " + a.cx + " " + (y1 - 40) + " " + b.cx + " " + (y2 + 40) + " " + b.cx + " " + y2 }),
+        el("circle", { cx: mx, cy: my, r: 7 }),
+        el("text", { x: mx, y: my + 3.5, "text-anchor": "middle", text: "!" }),
+      ]));
+    });
+
+    // ── items ──
+    var itemEls = {}, itemBase = {};
+    function wire(key, g, base) {
+      itemEls[key] = g;
+      itemBase[key] = base;
+      g.addEventListener("mouseenter", function () { paint(key); });
+      g.addEventListener("mouseleave", function () { paint(null); });
+      g.addEventListener("focus", function () { paint(key); });
+      g.addEventListener("blur", function () { paint(null); });
+      gItems.appendChild(g);
+    }
+    function select(key) { return function () { go("arch", key); }; }
+
+    A_COMPS.forEach(function (c) {
+      var p = pos[c.id];
+      if (!p || !visible(c.id)) return;
+      var hue = A_HUE[c.layer] || GROUP_OTHER;
+      var weak = c.confidence === "weak" && !c.authored;
+      var sub = c.tech.length
+        ? c.tech.slice(0, 3).map(function (t) { return t.label; }).join(" · ")
+        : (c.kind === "file" ? "" : c.files.length + (c.files.length === 1 ? " file · " : " files · ")) + c.loc + " loc";
+      var base = "arch-item arch-box" + (weak ? " weak" : "");
+      var g = el("g", { class: base, "aria-label": c.title + ", " + layerTitle(c.layer),
+        on: { click: select(c.id) } }, [
+        el("title", { text: c.path + "\n" + c.evidence.join("\n") }),
+        el("rect", { x: p.x, y: p.y, width: p.w, height: p.h, rx: 6, class: "frame", stroke: hue }),
+        el("rect", { x: p.x, y: p.y, width: 4, height: p.h, rx: 2, fill: hue }),
+        el("text", { x: p.x + 13, y: p.y + 20, class: "arch-bt", text: fitText(c.title, p.w - 20, 6.6) }),
+        el("text", { x: p.x + 13, y: p.y + 36, class: "arch-bs", fill: c.tech.length ? archLight(hue) : null,
+          text: fitText(sub, p.w - 20, 5.9) }),
+      ]);
+      if (c.entries.length)
+        g.appendChild(el("text", { x: p.x + p.w - 8, y: p.y + 14, "text-anchor": "end", class: "arch-badge",
+          text: "▸" + c.entries.length }));
+      wire(c.id, g, base);
+    });
+    A_STORES.forEach(function (s) {
+      var key = "store:" + s.id, p = pos[key];
+      if (!p) return;
+      var ry = 9, hue = A_HUE.data;
+      var base = "arch-item arch-cyl" + (s.components.length ? "" : " weak");
+      var g = el("g", { class: base, "aria-label": s.label + ", data store", on: { click: select(key) } }, [
+        el("title", { text: s.label + (s.kind ? " · " + s.kind : "") +
+          (s.via.length ? "\nvia " + s.via.join(", ") : "") +
+          (s.declared_in.length ? "\ndeclared in " + s.declared_in.join(", ") : "") }),
+        el("path", { class: "frame", d: archCylBody(p.x, p.y, p.w, p.h, ry), stroke: hue }),
+        el("ellipse", { class: "frame", cx: p.cx, cy: p.y + ry, rx: p.w / 2, ry: ry, stroke: hue }),
+        el("text", { x: p.cx, y: p.y + p.h / 2 + 6, "text-anchor": "middle", class: "arch-bt",
+          text: fitText(s.label, p.w - 14, 6.6) }),
+        el("text", { x: p.cx, y: p.y + p.h / 2 + 20, "text-anchor": "middle", class: "arch-bs",
+          text: fitText(s.kind || "store", p.w - 14, 5.9) }),
+      ]);
+      wire(key, g, base);
+    });
+    function cloudItem(key, p, hue, label, sub, aria, dashed) {
+      var base = "arch-item arch-cloud" + (dashed ? " weak" : "");
+      var g = el("g", { class: base, "aria-label": aria, on: { click: select(key) } }, [
+        el("title", { text: label + (sub ? " · " + sub : "") }),
+        el("path", { class: "frame", d: archCloudPath(p.x, p.y, p.w, p.h), stroke: hue }),
+        el("text", { x: p.cx, y: p.y + p.h * 0.52, "text-anchor": "middle", class: "arch-bt",
+          text: fitText(label, p.w - 36, 6.6) }),
+        el("text", { x: p.cx, y: p.y + p.h * 0.52 + 13, "text-anchor": "middle", class: "arch-bs",
+          text: fitText(sub || "", p.w - 40, 5.9) }),
+      ]);
+      wire(key, g, base);
+    }
+    A_ACTORS.forEach(function (a) {
+      var key = "actor:" + a.id;
+      if (pos[key]) cloudItem(key, pos[key], A_ACTOR_HUE, a.label,
+        a.entries + " entry point" + (a.entries === 1 ? "" : "s"), a.label + ", drives the app");
+    });
+    A_SERVICES.forEach(function (s) {
+      var key = "service:" + s.id;
+      if (pos[key]) cloudItem(key, pos[key], A_SERVICE_HUE, s.label, s.kind, s.label + ", outside service",
+        !s.components.length);
+    });
+
+    // ── hover / selection: classes + one highlight layer, never a re-layout ──
+    function paint(hoverKey) {
+      clear(gHi);
+      var focus = hoverKey || state.archSel;
+      var rel = focus && pos[focus] ? archRelated(focus) : null;
+      Object.keys(itemEls).forEach(function (k) {
+        var cls = itemBase[k];
+        if (rel && !rel.has(k)) cls += " dim";
+        if (k === state.archSel) cls += " sel";
+        itemEls[k].setAttribute("class", cls);
+      });
+      gArrows.setAttribute("class", "arch-arrows" + (rel ? " dim" : ""));
+      if (!rel) return;
+      var a = pos[focus], hue = archHueOf(focus);
+      rel.forEach(function (k) {
+        if (k === focus || !pos[k]) return;
+        var b = pos[k], d;
+        if (Math.abs(a.cy - b.cy) < 4) {   // same row: arc over the top
+          var top = Math.min(a.y, b.y) - 18;
+          d = "M " + a.cx + " " + a.y + " C " + a.cx + " " + top + " " + b.cx + " " + top + " " + b.cx + " " + b.y;
+        } else if (b.x >= a.x + a.w || b.x + b.w <= a.x) {
+          if (b.cy > a.cy) {
+            d = "M " + a.cx + " " + (a.y + a.h) + " C " + a.cx + " " + (a.y + a.h + 40) + " " + b.cx + " " + (b.y - 40) + " " + b.cx + " " + b.y;
+          } else {
+            d = "M " + a.cx + " " + a.y + " C " + a.cx + " " + (a.y - 40) + " " + b.cx + " " + (b.y + b.h + 40) + " " + b.cx + " " + (b.y + b.h);
+          }
+        } else if (b.cy > a.cy) {
+          d = "M " + a.cx + " " + (a.y + a.h) + " L " + b.cx + " " + b.y;
+        } else {
+          d = "M " + a.cx + " " + a.y + " L " + b.cx + " " + (b.y + b.h);
+        }
+        // a side-panel box sits beside the main column: leave from its right edge instead
+        if (a.x + a.w <= x0 - A_SIDE_GAP + 1 && b.x >= x0)
+          d = "M " + (a.x + a.w) + " " + a.cy + " C " + (a.x + a.w + 60) + " " + a.cy + " " + (b.x - 60) + " " + b.cy + " " + b.x + " " + b.cy;
+        else if (b.x + b.w <= x0 - A_SIDE_GAP + 1 && a.x >= x0)
+          d = "M " + a.x + " " + a.cy + " C " + (a.x - 60) + " " + a.cy + " " + (b.x + b.w + 60) + " " + b.cy + " " + (b.x + b.w) + " " + b.cy;
+        gHi.appendChild(el("path", { d: d, stroke: hue }));
+      });
+    }
+    paint(null);
+
+    var controls = [
+      el("div", { class: "arch-stack", title: "The stack, as far as the imports and manifests show it" },
+        (ARCH.stack || []).map(function (s) { return el("span", { class: "chip", text: s }); })),
+      el("div", { class: "spacer" }),
+      el("button", { class: "pill" + (showTests ? " on" : ""),
+        title: "Tests check the app; they're not part of it — shown in the side panel when on",
+        on: { click: function () { state.archShowTests = !state.archShowTests; render(); } } },
+        [el("i", { class: "ph ph-flask" }), "Show tests"]),
+    ];
+    var canvas = el("div", { class: "map-canvas" }, [svg]);
+    var mount = el("div", { class: "map arch" }, [
+      el("div", { class: "map-bar" }, controls),
+      el("div", { class: "arch-body" }, [el("div", { class: "arch-stage" }, [canvas]), archInspector()]),
+    ]);
+    // once laid out: on a phone (the SVG doesn't shrink there, it scrolls) open on
+    // the main column rather than the side panel, and bring a deep-linked
+    // selection into view
+    setTimeout(function () {
+      var svgW = svg.getBoundingClientRect().width, sc = svgW / W;
+      if (hasSide && canvas.clientWidth < svgW) canvas.scrollLeft = Math.max(0, x0 * sc - 12);
+      if (state.archSel && pos[state.archSel])
+        canvas.scrollTop = Math.max(0, pos[state.archSel].y * sc - canvas.clientHeight / 3);
+    }, 0);
+    return mount;
+  }
+
+  // ── the right-hand panel: overview, or the selected item's details ──
+  function archInspector() {
+    var key = state.archSel, it = archItem(key);
+    var head, body = [];
+    function sec(label, kids) {
+      return el("div", { class: "section" }, [el("div", { class: "lbl", text: label })].concat(kids));
+    }
+    function row(rk, rn, rc, onClick, title) {
+      return el("div", { class: "rowitem " + (onClick ? "is-link" : "flat"), title: title || null,
+        on: onClick ? { click: onClick } : null }, [
+        rk ? el("span", { class: "rk", text: rk }) : null,
+        el("span", { class: "rn", text: rn }),
+        rc != null ? el("span", { class: "rc", text: String(rc) }) : null,
+      ]);
+    }
+    function compRow(cid, rc, warn) {
+      var c = A_COMP[cid];
+      if (!c) return null;
+      return row(warn ? "⚠ up" : ((A_LAYER[c.layer] || {}).title || c.layer).split(" ")[0].toLowerCase(),
+        c.title, rc, function () { go("arch", cid); },
+        warn ? "a lower layer importing a higher one" : c.path);
+    }
+    function techChip(label, pkg) {
+      var slug = pkg ? libSlug(pkg) : null, linkable = slug && LIB_BY_SLUG[slug];
+      return el("span", { class: "chip" + (linkable ? " is-link" : ""), text: label,
+        title: linkable ? "Open " + pkg + " in Packages" : null,
+        on: linkable ? { click: function () { go("libs", slug); } } : null });
+    }
+    function note(kids) { return el("p", { class: "arch-note" }, kids); }
+    var foot = null;
+
+    if (!it) {
+      head = [el("span", { class: "k", text: "ARCHITECTURE" }), el("span", { text: "Overview" })];
+      body.push(el("div", { class: "insp-explain" }, [
+        el("div", { class: "lbl", text: ARCH.summary ? "WHAT THIS IS" : "BUILT WITH" }),
+        el("p", {}, ARCH.summary ? codeify(ARCH.summary) : [(ARCH.stack || []).join(" · ") || "no recognised stack"]),
+      ]));
+      body.push(sec("LAYERS", (ARCH.layers || []).filter(function (l) { return l.components.length; })
+        .map(function (l) {
+          return row(null, l.title, l.components.length, function () { go("arch", l.components[0]); }, l.body);
+        })));
+      var ups = A_LINKS.filter(function (l) { return l.dir === "up"; });
+      if (ups.length)
+        body.push(sec("WRONG-WAY IMPORTS · " + ups.length, [
+          note(["A lower layer importing a higher one — often a shortcut, sometimes a real cycle. Worth a second look."]),
+        ].concat(ups.slice(0, 20).map(function (l) {
+          return row("⚠", A_COMP[l.s].title + " → " + A_COMP[l.t].title, l.n, function () { go("arch", l.s); });
+        }))));
+      if ((ARCH.declared_only || []).length)
+        body.push(sec("DECLARED, NEVER IMPORTED", [note(["Listed in a manifest, but no indexed file imports it."])]
+          .concat(ARCH.declared_only.map(function (d) { return row(null, d.label, d.source.split("/").pop(), null, d.source); }))));
+      body.push(sec("HOW TO READ THIS", [
+        archLegendRow("box", "a part of the app — a folder, or one file in a mixed folder"),
+        archLegendRow("weak", "dashed = a best guess; click it to see why"),
+        archLegendRow("cyl", "a data store the code talks to"),
+        archLegendRow("cloud", "who drives the app, or an outside service"),
+        archLegendRow("arrows", "one layer calls into the next and gets results back"),
+        archLegendRow("up", "a lower layer importing a higher one"),
+        archLegendRow("dash", "shared code used by that layer"),
+      ]));
+      body.push(note(["Hover a box to light up what it talks to; click it for why it's in that layer."]));
+      if (!ARCH.authored)
+        body.push(note(["Every placement here is derived from folder names, entry points and imports. The ",
+          el("code", { text: "codebase-to-course" }), " skill can name and correct them in ",
+          el("code", { text: ".codemap/architecture.json" }), "."]));
+    } else if (it.kind === "comp") {
+      var c = it.obj, L = A_LAYER[c.layer] || {};
+      head = [el("span", { class: "k", text: (L.title || c.layer).toUpperCase() }), el("span", { class: "arch-ht", text: c.title })];
+      if (c.body)
+        body.push(el("div", { class: "insp-explain" }, [el("div", { class: "lbl", text: "WHAT THIS IS" }), el("p", {}, codeify(c.body))]));
+      body.push(el("div", { class: "arch-path" }, [el("code", { text: c.path }),
+        el("span", { text: c.files.length + (c.files.length === 1 ? " file · " : " files · ") + c.loc + " loc" })]));
+      var why = c.evidence.map(function (t) { return row(null, t, null); });
+      if (!c.authored && c.confidence === "weak")
+        why.push(note(["A best guess — nothing here names its layer clearly. Correct it in ",
+          el("code", { text: ".codemap/architecture.json" }), "."]));
+      body.push(sec("WHY IT'S HERE", why));
+      if (c.tech.length)
+        body.push(sec("BUILT WITH", [el("div", { class: "arch-chips" },
+          c.tech.map(function (t) { return techChip(t.label, t.package); }))]));
+      var outs = A_LINKS.filter(function (l) { return l.s === c.id; }).sort(function (a, b) { return b.n - a.n; });
+      var ins = A_LINKS.filter(function (l) { return l.t === c.id; }).sort(function (a, b) { return b.n - a.n; });
+      if (outs.length)
+        body.push(sec("TALKS TO", outs.map(function (l) { return compRow(l.t, l.n, l.dir === "up"); })));
+      if (ins.length)
+        body.push(sec("USED BY", ins.map(function (l) { return compRow(l.s, l.n, l.dir === "up"); })));
+      var reach = (c.stores || []).map(function (s) {
+        var st = archFindById(A_STORES, s);
+        return st ? row("store", st.label, st.kind, function () { go("arch", "store:" + s); }) : null;
+      }).concat((c.services || []).map(function (s) {
+        var sv = archFindById(A_SERVICES, s);
+        return sv ? row("service", sv.label, sv.kind, function () { go("arch", "service:" + s); }) : null;
+      }));
+      if (reach.some(Boolean)) body.push(sec("DATA & SERVICES", reach));
+      if (c.entries.length)
+        body.push(sec("ENTRY POINTS", c.entries.map(function (ni) {
+          var n = N[ni], ep = (EP_BY_NODE[ni] || [])[0] || {};
+          return el("div", { class: "rowitem is-link", on: { click: function () { go("graph", n.key); } } }, [
+            el("span", { class: "rk", text: ep.kind || "entry" }),
+            el("span", { class: "rn", text: ep.detail || n.qual, title: n.qual }),
+            el("button", { class: "arch-sim", title: "Simulate what happens from here", "aria-label": "Simulate " + n.qual,
+              on: { click: function (ev) { ev.stopPropagation(); go("sim", "derive:" + n.key + "/0"); } } },
+              [el("i", { class: "ph ph-play" })]),
+          ]);
+        })));
+      body.push(sec("FILES", c.files.slice(0, 40).map(function (fi) {
+        var f = FILES[fi];
+        return row(null, c.files.length === 1 ? f.path : f.path.slice(c.path.length + 1) || f.path, f.loc + " loc",
+          fileAct(f), "Open " + f.path + " in the Graph");
+      }).concat(c.files.length > 40 ? [row(null, "+ " + (c.files.length - 40) + " more", null)] : [])));
+      var folder = c.kind === "folder" ? c.path : dirGroup(c.path);
+      if (FOLDER_BY_PATH[folder])
+        foot = el("div", { class: "insp-foot" }, [
+          el("button", { class: "btn", on: { click: function () { go("learn", folder); } } },
+            ["Read about " + (folder === "(root)" ? "the project root" : folder + "/") + " in Learn"]),
+        ]);
+    } else {
+      var o = it.obj;
+      var kindLabel = it.kind === "store" ? "DATA STORE" : it.kind === "service" ? "OUTSIDE SERVICE" : "WHO DRIVES IT";
+      head = [el("span", { class: "k", text: kindLabel }), el("span", { class: "arch-ht", text: o.label })];
+      if (o.body)
+        body.push(el("div", { class: "insp-explain" }, [el("div", { class: "lbl", text: "WHAT THIS IS" }), el("p", {}, codeify(o.body))]));
+      if (it.kind === "actor") {
+        body.push(note([o.entries + " entry point" + (o.entries === 1 ? "" : "s") +
+          " — the places execution starts when " + o.label.toLowerCase() + " does something."]));
+        var eps = [];
+        o.components.forEach(function (cid) { (A_COMP[cid] ? A_COMP[cid].entries : []).forEach(function (ni) { eps.push(ni); }); });
+        body.push(sec("ENTRY POINTS", eps.slice(0, 40).map(function (ni) {
+          var ep = (EP_BY_NODE[ni] || [])[0] || {};
+          return row(ep.kind || "entry", ep.detail || N[ni].qual, null, function () { go("graph", N[ni].key); }, N[ni].qual);
+        })));
+      } else {
+        if (o.kind) body.push(el("div", { class: "arch-path" }, [el("span", { text: o.kind })]));
+        if ((o.via || []).length)
+          body.push(sec("HOW THE CODE REACHES IT", [el("div", { class: "arch-chips" },
+            o.via.map(function (pkg) { return techChip(pkg, pkg); }))]));
+        if ((o.declared_in || []).length)
+          body.push(sec("DECLARED IN", o.declared_in.map(function (p) { return row(null, p, null); })));
+        if (!o.components.length)
+          body.push(note(["Declared, but no indexed file imports a client for it — it may be reached through an ORM, a URL in config, or a service outside this repo."]));
+      }
+      if (o.components.length)
+        body.push(sec("USED BY", o.components.map(function (cid) { return compRow(cid, null, false); })));
+    }
+
+    var closeBtn = it ? el("button", { class: "arch-close", "aria-label": "Back to the overview",
+      on: { click: function () { go("arch"); } } }, [el("i", { class: "ph ph-x" })]) : null;
+    return el("aside", { class: "arch-insp" + (it ? " has-sel" : ""), "aria-label": "Architecture details" }, [
+      el("div", { class: "insp-head" }, head.concat([el("span", { class: "spacer" }), closeBtn])),
+      el("div", { class: "insp-body" }, body),
+      foot,
+    ]);
+  }
+  function archLegendRow(kind, text) {
+    var s = el("svg", { width: 30, height: 20, viewBox: "0 0 30 20", class: "arch-sw", "aria-hidden": "true" });
+    var hue = A_HUE.logic;
+    if (kind === "box" || kind === "weak") {
+      s.appendChild(el("rect", { x: 1.5, y: 3, width: 27, height: 14, rx: 3, class: "frame", stroke: hue,
+        "stroke-dasharray": kind === "weak" ? "3 2" : null }));
+      s.appendChild(el("rect", { x: 1.5, y: 3, width: 3, height: 14, rx: 1.5, fill: hue }));
+    } else if (kind === "cyl") {
+      s.appendChild(el("path", { class: "frame", d: archCylBody(7, 2, 16, 16, 3.5), stroke: A_HUE.data }));
+      s.appendChild(el("ellipse", { class: "frame", cx: 15, cy: 5.5, rx: 8, ry: 3.5, stroke: A_HUE.data }));
+    } else if (kind === "cloud") {
+      s.appendChild(el("path", { class: "frame", d: archCloudPath(3, 3, 24, 15), stroke: A_SERVICE_HUE }));
+    } else if (kind === "arrows") {
+      var g = archArrowPair(15, 2, 18);
+      g.setAttribute("transform", "translate(15 10) scale(0.55) translate(-15 -10)");
+      s.appendChild(g);
+    } else if (kind === "up") {
+      s.appendChild(el("g", { class: "arch-up" }, [el("path", { d: "M 4 17 C 4 6 26 14 26 3" })]));
+    } else if (kind === "dash") {
+      s.appendChild(el("path", { class: "arch-side-line", d: "M 2 10 L 28 10" }));
+    }
+    return el("div", { class: "rowitem flat" }, [s, el("span", { class: "rn", text: text })]);
+  }
+
   // ---- simulate tab -------------------------------------
   // Three lanes feed the same normalized step shape (references/scenarios-schema.md):
   //   ⚡ derived  — computed right here, from the call graph + each edge's call-site
@@ -3917,7 +4642,8 @@
         el("div", { class: "orient-col" }, [
           el("div", { class: "orient-col-h", text: "What exists — the floor plan" }),
           orientLink("graph", null, "Graph", "every file and function, and what calls what"),
-          orientLink("map", null, "Map", "the shape of the whole system, layer by layer"),
+          orientLink("arch", null, "Architecture", "the layers, what each is built with, and what it talks to"),
+          orientLink("map", null, "Map", "import depth, one call chain, and where the code sits"),
           orientLink("learn", null, "Learn", "what this project is and how its parts fit together"),
           orientLink("libs", null, "Packages", "what every dependency and module actually does"),
         ]),
@@ -4516,7 +5242,9 @@
         "aria-label": "Close panel",
         on: { click: function () { state.mobileRail = false; state.mobileInsp = false; render(); } } });
       frag.appendChild(el("main", { class: "view" }, [railNode, stage(), inspNode, backdrop]));
-    } else if (state.tab === "map")
+    } else if (state.tab === "arch")
+      frag.appendChild(el("main", { class: "view" }, [archTab()]));
+    else if (state.tab === "map")
       frag.appendChild(el("main", { class: "view" }, [mapTab()]));
     else if (state.tab === "sim")
       frag.appendChild(el("main", { class: "view" }, [simTab()]));

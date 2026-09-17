@@ -144,15 +144,18 @@ button { font-family: inherit; }
    still overflowed the whole page horizontally with the old threshold; a 6th
    tab (Packages) pushed the required width further still, so this raises to
    ~1040px — past the plain 900px "tablet" breakpoint used elsewhere in this
-   file, which no longer leaves quite enough room here. */
-@media (max-width: 1040px) {
+   file, which no longer leaves quite enough room here. A 7th tab
+   (Architecture) measured the counters overflowing up to ~1091px, hence 1100. */
+@media (max-width: 1100px) {
   .topbar .stat, .brand .ver { display: none; }
 }
-@media (max-width: 420px) {
+@media (max-width: 780px) {
   /* hiding the counters alone still wasn't enough room for all 6 tabs at a
      phone width — collapse to icon-only tabs; aria-label (set in explore.js)
      keeps each button's accessible name either way. Raised from 400 to 420
-     alongside the 6th tab (Packages) for the same reason. */
+     alongside the 6th tab (Packages) for the same reason; measured again with
+     the 7th (Architecture): seven labelled tabs + the brand need ~766px, and
+     the old 420 already let 421-649px scroll sideways, hence 780. */
   .tab-label { display: none; }
   .tab { padding: 6px 9px; }
 }
@@ -738,6 +741,90 @@ button { font-family: inherit; }
 
 @media (prefers-reduced-motion: reduce) {
   .trace-st, .cake-block rect, .mass-cell rect:first-child { transition: none; }
+}
+
+/* ── architecture tab: layered diagram ───────────────────────── */
+.arch-body { flex: 1; min-height: 0; display: flex; }
+.arch-stage { flex: 1; min-width: 0; position: relative; }
+/* scale down to the stage width rather than scroll sideways on a laptop;
+   the viewBox keeps proportions, and phones get real scrolling instead (below) */
+.map-canvas svg.arch { max-width: calc(100% - 24px); height: auto; }
+.arch-stack { display: flex; flex-wrap: wrap; gap: 5px; min-width: 0; }
+.chip {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--color-neutral-800); background: var(--color-surface-2);
+  font: 400 11px/1.5 var(--font-mono); color: var(--color-neutral-300);
+}
+.chip.is-link { cursor: pointer; }
+.chip.is-link:hover, .chip.is-link:focus-visible { border-color: var(--color-accent); color: var(--color-accent-200); }
+.arch-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+
+.arch-lk { font: 500 9.5px/1 var(--font-mono); letter-spacing: .09em; fill: var(--color-neutral-600); }
+.arch-lt { font: 600 13px/1 var(--font-ui) !important; letter-spacing: .01em; }
+.arch-lt.small { font-size: 11px !important; }
+.arch-lc { font: 400 9.5px/1 var(--font-mono); fill: var(--color-neutral-600); }
+
+.arch-item { cursor: pointer; transition: opacity .15s ease; outline: none; }
+.arch-item .frame { fill: var(--color-surface); stroke-width: 1.3; transition: filter .12s ease; }
+.arch-item:hover .frame, .arch-item:focus-visible .frame { filter: brightness(1.45); }
+.arch-item.weak .frame { stroke-dasharray: 4 3; }
+.arch-item.sel .frame { stroke: var(--color-accent-300) !important; stroke-width: 2.4; }
+.arch-item.dim { opacity: .22; }
+.arch-bt { font: 500 11.5px/1 var(--font-mono); fill: var(--color-neutral-100); pointer-events: none; }
+.arch-bs { font: 400 9.5px/1 var(--font-mono); fill: var(--color-neutral-500); pointer-events: none; }
+.arch-badge { font: 500 9px/1 var(--font-mono); fill: var(--color-neutral-500); pointer-events: none; }
+.arch-cloud .frame, .arch-cyl .frame { stroke-width: 1.4; }
+
+.arch-arrows { transition: opacity .15s ease; }
+.arch-arrows.dim { opacity: .25; }
+.arch-arrow path { fill: #232532; stroke: var(--color-neutral-500); stroke-width: 1; stroke-linejoin: round; }
+.arch-skip path { fill: none; stroke: var(--color-neutral-600); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.arch-skip path.head { fill: var(--color-neutral-600); stroke: none; }
+.arch-skip.actor path { stroke: var(--color-neutral-400); stroke-dasharray: none; }
+.arch-skip.actor path.head { fill: var(--color-neutral-400); }
+.arch-side-line { fill: none; stroke: var(--color-neutral-500); stroke-width: 1.4; stroke-dasharray: 6 5; }
+.arch-svc-line { fill: none; stroke: #9085e9; stroke-opacity: .5; stroke-width: 1.2; stroke-dasharray: 2 4; }
+.arch-up path { fill: none; stroke: #e66767; stroke-width: 1.5; stroke-dasharray: 5 4; }
+.arch-up circle { fill: #2a1a22; stroke: #e66767; stroke-width: 1.2; }
+.arch-up text { font: 700 10px/1 var(--font-ui) !important; fill: #f3a3a3; pointer-events: none; }
+.arch-hi path { stroke-width: 2; stroke-opacity: .9; stroke-linecap: round; pointer-events: none; }
+
+.arch-insp {
+  width: var(--insp-w); flex: none; min-height: 0;
+  display: flex; flex-direction: column;
+  border-left: 1px solid var(--color-divider); background: var(--color-panel);
+}
+.arch-insp .insp-head .spacer { margin-left: auto; }
+.arch-ht { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.arch-close {
+  flex: none; width: 24px; height: 24px; display: grid; place-items: center;
+  border: 1px solid var(--color-neutral-800); border-radius: 6px;
+  background: transparent; color: var(--color-neutral-400); cursor: pointer;
+}
+.arch-close:hover { border-color: var(--color-accent); color: var(--color-accent-200); }
+.arch-path { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 11px; color: var(--color-neutral-500); }
+.arch-path code { font: 400 11.5px var(--font-mono); color: var(--color-neutral-300); word-break: break-all; }
+.arch-note { margin: 4px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--color-neutral-500); }
+.arch-note code { font: 400 11px var(--font-mono); color: var(--color-neutral-300); }
+.arch-sw { flex: none; }
+.arch-sim {
+  flex: none; margin-left: auto; width: 22px; height: 22px; display: grid; place-items: center;
+  border: 1px solid var(--color-neutral-800); border-radius: 5px;
+  background: transparent; color: var(--color-accent-300); cursor: pointer;
+}
+.arch-sim:hover { border-color: var(--color-accent); }
+
+@media (prefers-reduced-motion: reduce) {
+  .arch-item, .arch-arrows, .arch-item .frame { transition: none; }
+}
+/* no room for diagram + panel side by side: stack them and scroll the page body */
+@media (max-width: 900px) {
+  .arch-body { flex-direction: column; overflow-y: auto; }
+  .arch-stage { flex: none; height: 62vh; }
+  .map-canvas svg.arch { max-width: none; }
+  .arch-insp { width: auto; border-left: 0; border-top: 1px solid var(--color-divider); }
+  .arch-insp .insp-body { overflow: visible; }
 }
 
 /* glossary tooltip — position:fixed on body so overflow:hidden ancestors don't clip it */

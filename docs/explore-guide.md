@@ -2,15 +2,15 @@
 
 `codemap explore` turns the symbol graph in `.codemap/index.db` into **one
 self-contained file**, `.codemap/explore.html`, that you open in a browser. No
-server, no build step. Six tabs: Graph, Map, Simulate, Learn, Packages,
-Timeline. It opens on Learn's Orientation screen (§8) first, not the graph —
+server, no build step. Seven tabs: Graph, Architecture, Map, Simulate, Learn,
+Packages, Timeline. It opens on Learn's Orientation screen (§9) first, not the graph —
 read the map before the words.
 
 All commands below assume you've installed the CLI (see
 [`install.md`](install.md)) and are running `codemap` from the repo root. If
 you're working from a checkout instead, prefix every command with
 `.venv/Scripts/python -m` (Windows) or `.venv/bin/python -m` (macOS/Linux) —
-see [§13](#13-running-from-a-checkout-instead-of-an-install).
+see [§14](#14-running-from-a-checkout-instead-of-an-install).
 
 ## Contents
 
@@ -18,16 +18,17 @@ see [§13](#13-running-from-a-checkout-instead-of-an-install).
 2. [Index the repository](#2-index-the-repository)
 3. [Generate and open the explorer](#3-generate-and-open-the-explorer)
 4. [The Graph tab](#4-the-graph-tab-the-main-page)
-5. [The Map tab](#5-the-map-tab-structure-not-connections)
-6. [The Simulate tab](#6-the-simulate-tab-what-happens-when-it-runs-step-by-step)
-7. [The Timeline tab](#7-the-timeline-tab)
-8. [The Learn tab](#8-the-learn-tab-project-walkthrough)
-9. [The Packages tab](#9-the-packages-tab-library--module-reference)
-10. [Keep it fresh automatically](#10-keep-it-fresh-automatically-optional)
-11. [Config knobs](#11-config-knobs-codemapconfigtoml)
-12. [Running against a different repository](#12-running-against-a-different-repository)
-13. [Running from a checkout instead of an install](#13-running-from-a-checkout-instead-of-an-install)
-14. [Troubleshooting](#14-troubleshooting)
+5. [The Architecture tab](#5-the-architecture-tab-the-system-as-layers)
+6. [The Map tab](#6-the-map-tab-structure-not-connections)
+7. [The Simulate tab](#7-the-simulate-tab-what-happens-when-it-runs-step-by-step)
+8. [The Timeline tab](#8-the-timeline-tab)
+9. [The Learn tab](#9-the-learn-tab-project-walkthrough)
+10. [The Packages tab](#10-the-packages-tab-library--module-reference)
+11. [Keep it fresh automatically](#11-keep-it-fresh-automatically-optional)
+12. [Config knobs](#12-config-knobs-codemapconfigtoml)
+13. [Running against a different repository](#13-running-against-a-different-repository)
+14. [Running from a checkout instead of an install](#14-running-from-a-checkout-instead-of-an-install)
+15. [Troubleshooting](#15-troubleshooting)
 
 ## 1. Check the tool runs
 
@@ -65,9 +66,9 @@ Useful flags:
 |---|---|
 | `--out <path>` | write somewhere other than `.codemap/explore.html` |
 | `--quiet` | no summary line |
-| `--max-symbols N` | cap graph nodes (default from config; see [§11](#11-config-knobs-codemapconfigtoml)) |
+| `--max-symbols N` | cap graph nodes (default from config; see [§12](#12-config-knobs-codemapconfigtoml)) |
 | `--json` | print the raw graph model as JSON and write nothing |
-| `--emit-brief` | write the analysis pack the `codebase-to-course` skill uses to author the Simulate, Learn, and Packages tabs (§6, §8, §9) — including the folder brief that seeds Learn's walkthrough |
+| `--emit-brief` | write the analysis pack the `codebase-to-course` skill uses to author the Simulate, Learn, and Packages tabs (§7, §9, §10) and to correct the Architecture tab (§5) — including the folder brief that seeds Learn's walkthrough |
 
 ## 4. The Graph tab (the main page)
 
@@ -79,7 +80,7 @@ Useful flags:
 - press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>Cmd</kbd>+<kbd>K</kbd> on Mac), or
   click "Find anything on screen" at the top of the rail, to search — not just
   symbol names and file paths, but docstrings and the source shown on the page
-  (capped by `max_snippet_lines`, §11 — a real miss says so, it doesn't just
+  (capped by `max_snippet_lines`, §12 — a real miss says so, it doesn't just
   look empty)
 
 **Centre canvas — the neural graph.**
@@ -101,12 +102,12 @@ at a time. The "Whole graph" button clears the focus.
 - **history** — how many commits actually changed this symbol and, for the
   most recent one, the reason someone recorded at the time (never a guess —
   `codemap` captures intent, it doesn't reverse-engineer it, same source as
-  the Timeline tab's intent line, §7)
+  the Timeline tab's intent line, §8)
 - the shortest path from an entry point (e.g. `GET /report` → … → `fetch`),
   with a **"Trace back to entry ▶"** link that plays that exact chain as a
   Simulate scenario instead of just printing it (hidden when this symbol *is*
   the entry point — there's nothing to walk back through)
-- a "Trace calls from here" link into the Map tab's Run trace (§5)
+- a "Trace calls from here" link into the Map tab's Run trace (§6)
 - the symbol's source, and an "Open in editor" link
 
 **Legend** (bottom-right) — read this:
@@ -116,7 +117,80 @@ at a time. The "Whole graph" button clears the focus.
 
 Nothing is ever labelled "dead" — only "no inbound edge at tier N".
 
-## 5. The Map tab (structure, not connections)
+## 5. The Architecture tab (the system as layers)
+
+The Graph tab shows every call and the Map tab shows import depth. The
+Architecture tab draws the picture you'd sketch on a whiteboard for a new
+teammate: the classic "routes → views / API → logic → models" diagram, with
+each part labelled by what it's built with. It's derived from the index, so
+it needs no extra step, and it works on any repo.
+
+**What's on it**
+- **Clouds at the top**: who drives the app, taken from the entry points
+  codemap found:
+  - *Internet*: HTTP routes
+  - *Terminal*: CLI commands, or a `__main__` program
+  - *User's screen*: app screens
+  - *Scheduler*: background tasks
+- **Coloured bands**: the layers, top to bottom. **Routes & entry**, then
+  **Views & UI** beside **API**, then **Logic**, then **Data & models**. A
+  layer with nothing in it isn't drawn.
+- **Boxes**: the parts of the app. A box is a folder, or a single file when
+  its folder mixes layers. The second line names what the part is built with
+  (Flask, React, SQLAlchemy, …), or its size when no known library shows up. A
+  **dashed** box is a best guess (see "How placement works" below).
+- **Cylinders** in the Data band: the databases, caches, search engines and
+  queues the code talks to (PostgreSQL, SQLite, Redis, Solr, …). codemap finds
+  them from the driver packages the code imports, and also from `docker-compose`
+  images and `package.json` / `requirements.txt` / `pyproject.toml` / `go.mod`
+  dependencies. A **dashed** cylinder is declared in one of those files, but no
+  indexed file imports a client for it.
+- **Clouds at the bottom**: outside services such as Stripe, OpenAI,
+  Anthropic and AWS.
+- **Side panel**: shared & cross-cutting code (config, utils, scripts,
+  plugins), with dashed lines to the layers that use it. The "Show tests"
+  button adds the tests.
+
+**The lines**
+- a pair of block arrows between two layers: files in the upper layer import
+  files in the lower one, so calls go down and results come back up. No
+  arrows means no imports cross there.
+- a dotted line down the right edge: imports that skip a layer (Routes
+  straight to Data)
+- a red dashed line with a **!**: a wrong-way import, where a lower layer
+  imports a higher one. Sometimes it's a shortcut, sometimes it's a real cycle.
+
+**Reading it**
+- hover any box, cylinder or cloud to light up everything it talks to
+- click an item to open the right-hand panel, which shows:
+  - **why it's in that layer**: every reason the placement scored, e.g.
+    "folder named routes/", "3× HTTP route", "imports flask"
+  - what it's **built with** (click a library to open it in Packages, §10)
+  - what it **talks to** and what **uses** it
+  - its **entry points** (▶ plays one in Simulate, §7)
+  - its **files** (click one to open it in the Graph tab)
+  - a link to its folder in Learn (§9)
+- with nothing selected, the panel shows the stack, how big each layer is,
+  the list of wrong-way imports, and a legend
+- every selection is a link: `#/arch/<layer>:<path>`
+
+**How placement works.** Every file is scored:
+- folder names (`routes/`, `views/`, `api/`, `services/`, `models/`, `utils/`,
+  …) weigh most
+- then file names (`cli.py`, `db.py`, `render.py`)
+- then detected entry points. An HTTP handler inside `api/` counts toward API,
+  not Routes.
+
+An imported library only breaks ties. A library imported almost everywhere,
+like `sqlite3` used as a type hint in a dozen modules, doesn't count toward a
+layer at all. A file with no signal lands in Logic as a dashed best guess.
+To rename boxes, move misplaced ones, or add a database the imports don't
+reveal, the `codebase-to-course` skill (§10) writes corrections into
+`.codemap/architecture.json`. See
+`skills/codebase-to-course/references/architecture-schema.md` for the file
+format.
+
+## 6. The Map tab (structure, not connections)
 
 The Graph tab answers "what calls what". The Map tab answers three questions
 it doesn't: what *shape* is the system, what happens when it *runs*, and
@@ -160,7 +234,7 @@ view on the focused symbol.
   current tier — a candidate for deletion, or a sign of missing edges
 - click a rectangle to open the file in the Graph tab
 
-## 6. The Simulate tab (what happens when it runs, step by step)
+## 7. The Simulate tab (what happens when it runs, step by step)
 
 The Graph and Map tabs are about **structure**. Simulate is about **time**: it
 replays one run of the code as an animation you drive with a transport bar
@@ -179,7 +253,7 @@ has a lane icon:
 | Icon | Lane | Meaning |
 |---|---|---|
 | ⚡ | derived | computed from the call graph, not a real run — shown only when nobody has authored `scenarios.json` |
-| ✏ | authored | written into `.codemap/scenarios.json` by the `codebase-to-course` skill (§9); most entries just name a starting function, the page derives the call tree |
+| ✏ | authored | written into `.codemap/scenarios.json` by the `codebase-to-course` skill (§10); most entries just name a starting function, the page derives the call tree |
 | ⏺ | recorded | a real run captured with `codemap trace` (real branches taken, real loop counts, real output) |
 
 **Main area** — four resizable, collapsible panes plus a narration line. Drag
@@ -208,21 +282,21 @@ Under the panes, two lines per step: a person icon = what the user sees, a
 gear icon = what the code is doing. The first time a step touches a
 third-party library the Packages tab actually describes, a third, quieter
 line shows that blurb inline — click it to open the full entry in Packages
-(§9).
+(§10).
 
 A derived (⚡) scenario's banner spells out honestly what it is — a prediction
 from the code's shape, not a recorded run — and gives you the exact
 `codemap trace` command to record the real thing instead.
 
 To get authored scenarios: same as the Packages tab — run `--emit-brief`,
-invoke the `codebase-to-course` skill, re-render (§9). With no authoring at all,
+invoke the `codebase-to-course` skill, re-render (§10). With no authoring at all,
 Simulate still works: it offers a derived scenario for the busiest few
 functions, plus an on-demand one for any Graph-tab symbol via its "Trace back
 to entry ▶" link (§4). See
 `skills/codebase-to-course/references/scenarios-schema.md` for the file
 format.
 
-## 7. The Timeline tab
+## 8. The Timeline tab
 
 Newest commit first. Each card shows:
 - the stated intent and where it came from (commit message / note / session)
@@ -233,12 +307,12 @@ Newest commit first. Each card shows:
 Click "Read this first: …" on a card to jump straight to that symbol in the
 Graph tab.
 
-## 8. The Learn tab (project walkthrough)
+## 9. The Learn tab (project walkthrough)
 
 This is where `explore.html` opens by default — on **Orientation**, not the
 graph. It states the tool's whole premise up front (nobody understands a
 codebase entirely, including whoever wrote it), lays out which tabs show what
-*exists* (Graph, Map, Learn, Packages) versus what *happens* (Simulate,
+*exists* (Graph, Architecture, Map, Learn, Packages) versus what *happens* (Simulate,
 Timeline), lists the repo's own top-level folders before anything else, and
 names the four ways to actually move around unfamiliar code: search for text
 you saw on screen, jump to a definition, read the history, run it and watch
@@ -290,7 +364,7 @@ derived folder tree — no intro, no categories, nothing breaks. See
 format.
 
 Wherever authored prose renders — here, in Packages' "In general"/"In this
-codebase" lines (§9), anywhere else it's shown — an underlined word is a
+codebase" lines (§10), anywhere else it's shown — an underlined word is a
 glossary hookup: hover it, or reach it with keyboard focus, for a
 plain-language definition. It's sourced from two dictionaries bundled with
 `codemap` itself (well-known packages, common technical concepts) plus an
@@ -298,7 +372,7 @@ optional per-project `.codemap/glossary.json` for anything project-specific.
 Which term gets underlined is picked automatically — nothing about it is
 authored per instance.
 
-## 9. The Packages tab (library & module reference)
+## 10. The Packages tab (library & module reference)
 
 The Packages tab explains the code's **dependencies**, not the code itself —
 this is what the Learn tab used to be, moved to its own tab now that Learn is
@@ -335,7 +409,7 @@ own modules, niche packages, and a hand-written "in this codebase" line:
    `/codemap:course`. It reads the briefs and `references/`, then writes
    `.codemap/libraries.json` (plus `explanations.json` for the Graph inspector,
    `scenarios.json` for the Simulate tab, and `walkthrough.json` for the Learn
-   tab, §8).
+   tab, §9).
 3. Re-render:
    ```
    codemap explore --open
@@ -345,7 +419,7 @@ If `libraries.json` is malformed the tab silently falls back to the built-in
 blurbs + import graph — nothing breaks. See
 `skills/codebase-to-course/references/libraries-schema.md`.
 
-## 10. Keep it fresh automatically (optional)
+## 11. Keep it fresh automatically (optional)
 
 ```
 codemap install-hook
@@ -364,7 +438,7 @@ rebuild_on_commit = false
 
 Manual `codemap explore` still works when this is `false`.
 
-## 11. Config knobs (`.codemap/config.toml`)
+## 12. Config knobs (`.codemap/config.toml`)
 
 ```toml
 [explore]
@@ -375,7 +449,7 @@ max_symbols       = 1500    # graph node cap; over this the graph drops to
 max_snippet_lines = 40      # longest source excerpt embedded per symbol
 ```
 
-## 12. Running against a different repository
+## 13. Running against a different repository
 
 `--path` works on every subcommand:
 
@@ -385,7 +459,7 @@ codemap explore --path ../other-repo --emit-brief
 codemap explore --path ../other-repo
 ```
 
-## 13. Running from a checkout instead of an install
+## 14. Running from a checkout instead of an install
 
 If you're developing `codemap` itself rather than using an installed copy,
 run it as a module from the repo root instead of installing it — see
@@ -399,7 +473,7 @@ run it as a module from the repo root instead of installing it — see
 Or activate the venv for your shell session (`.venv\Scripts\activate` on
 Windows, `deactivate` to disconnect) and drop the prefix.
 
-## 14. Troubleshooting
+## 15. Troubleshooting
 
 **Yellow "Built from … HEAD is now …" banner**
 You've committed since the last render. Run `codemap explore` again.

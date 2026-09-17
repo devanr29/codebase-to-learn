@@ -13,7 +13,7 @@ codemap scan → index.db → codemap explore --emit-brief → .codemap/briefs/*
                                               codebase-to-course skill reads
                                                                   │
                                                                   ▼
-                      .codemap/{libraries,explanations,scenarios}.json
+       .codemap/{walkthrough,libraries,explanations,scenarios,glossary,architecture}.json
                                                                   │
                                               codemap explore (bakes them in)
                                                                   ▼
@@ -33,6 +33,7 @@ these files existing — this is the one rule that makes the split safe:
 | `.codemap/scenarios.json` | **Simulate** | a derived scenario computed client-side in `explore.js` for the busiest few functions |
 | `.codemap/walkthrough.json` | **Learn** | a plain-language intro, an optional category map, and per-folder prose — falls back to a derived folder tree with no authored content |
 | `.codemap/glossary.json` | *(cross-cutting — every tab's prose)* | the two dictionaries bundled with `codemap` (well-known packages, common concepts) still power tooltips alone |
+| `.codemap/architecture.json` | **Architecture** | the full layered diagram derived from folder names, entry points, imports and manifests — the file only renames boxes, moves misplaced ones, and adds stores/services the imports don't reveal |
 
 The Map and Timeline tabs have **no** authored input at all — they're built
 entirely from the graph.
@@ -61,6 +62,7 @@ documented JSON — write them yourself, or with any other tool:
 - [`skills/codebase-to-course/references/scenarios-schema.md`](../skills/codebase-to-course/references/scenarios-schema.md)
 - [`skills/codebase-to-course/references/walkthrough-schema.md`](../skills/codebase-to-course/references/walkthrough-schema.md)
 - [`skills/codebase-to-course/references/glossary-schema.md`](../skills/codebase-to-course/references/glossary-schema.md)
+- [`skills/codebase-to-course/references/architecture-schema.md`](../skills/codebase-to-course/references/architecture-schema.md)
 
 `codemap explore --emit-brief` is useful either way — it writes
 `.codemap/briefs/` with every symbol's `key:`, pre-extracted snippets, and (for

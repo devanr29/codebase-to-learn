@@ -404,6 +404,44 @@ def build(
 
     folder_list = _folders.build(files, file_edges, entry_points)
 
+    # -- derived architecture diagram (layers, components, stores, services)
+    #    for the Architecture tab; `.codemap/architecture.json` may correct it.
+    #    Manifests (package.json, docker-compose, …) aren't indexed source, so
+    #    they're read through the same commit-vs-worktree split the indexer
+    #    uses for frontend-root detection -------------------------------------
+    from . import architecture as _architecture
+
+    if sha == WORKTREE_SHA:
+        from ..discovery import raw_worktree_paths, read_worktree_bytes
+
+        def _manifest_paths() -> list[str]:
+            return raw_worktree_paths(cfg.root)
+
+        def _read_manifest(p: str) -> bytes | None:
+            return read_worktree_bytes(cfg.root, p)
+    else:
+
+        def _manifest_paths() -> list[str]:
+            return gitio.ls_tree(cfg.root, sha)
+
+        def _read_manifest(p: str) -> bytes | None:
+            return gitio.show_bytes(cfg.root, sha, p)
+
+    try:
+        manifest_paths = _manifest_paths()
+    except gitio.GitError:
+        manifest_paths = []
+    arch = _architecture.build(
+        files,
+        file_edges,
+        folder_list,
+        entry_points,
+        nodes,
+        manifest_paths=manifest_paths,
+        read_bytes=_read_manifest,
+        overrides=_architecture.load(cfg),
+    )
+
     # -- authored walkthrough content (optional) — Learn's actual content:
     #    a plain-language intro, the category map, and per-folder prose ------
     from . import walkthrough as _walkthrough
@@ -476,6 +514,7 @@ def build(
         "file_edges": file_edges,
         "modules": modules,
         "folders": folder_list,
+        "architecture": arch,
         "entry_points": entry_points,
         "external": sorted(all_external),
         "dependencies": dependencies,
