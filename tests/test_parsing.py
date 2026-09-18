@@ -166,3 +166,84 @@ function Screen() {
     pf = parse_source("app/screen.jsx", src, spec_for_path("app/screen.jsx"))
     targets = {r.target_name for r in pf.refs if r.from_key == "app/screen.jsx::Screen"}
     assert "TodayCard" in targets
+
+
+# ---------------------------------------------- error gaps don't fail a file
+
+
+def test_header_with_extern_c_parses_via_cpp_grammar():
+    # .h is registered to the C++ grammar (registry.py), which understands
+    # `extern "C" { ... }` — a plain C grammar chokes on it.
+    src = b"""\
+#ifndef FOO_H
+#define FOO_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int foo(int x);
+void bar(void);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+"""
+    spec = spec_for_path("include/foo.h")
+    assert spec.name == "cpp"
+    pf = parse_source("include/foo.h", src, spec)
+    assert pf.ok
+
+
+def test_storage_class_macro_yields_a_gap_not_a_failure():
+    # A macro used as a storage-class specifier (e.g. thread-local storage
+    # macros) confuses the grammar locally, but the rest of the file —
+    # including both functions — still parses cleanly.
+    src = b"""\
+#define CBM_TLS __thread
+
+static CBM_TLS int counter = 0;
+
+int increment(void) {
+    return ++counter;
+}
+
+int decrement(void) {
+    return --counter;
+}
+"""
+    pf = parse_source("src/counter.c", src, spec_for_path("src/counter.c"))
+    assert pf.ok
+    assert {s.key for s in pf.symbols} == {"src/counter.c::increment", "src/counter.c::decrement"}
+    assert pf.error_ranges  # the damage is recorded, just not fatal
+
+
+def test_tsx_generic_type_argument_on_call_yields_a_gap_not_a_failure():
+    # `vi.importOriginal<typeof import("...")>()` — a generic type argument
+    # on a call expression — is a construct current tsx grammars mishandle,
+    # but the component defined below it still extracts fine.
+    src = b"""\
+import { vi } from "vitest";
+
+vi.mock("./lib/i18n", async () => {
+  const actual = await vi.importOriginal<typeof import("./lib/i18n")>();
+  return actual;
+});
+
+function Widget() {
+  return null;
+}
+"""
+    pf = parse_source("src/App.test.tsx", src, spec_for_path("src/App.test.tsx"))
+    assert pf.ok
+    assert "src/App.test.tsx::Widget" in {s.key for s in pf.symbols}
+    assert pf.error_ranges
+
+
+def test_mostly_unparseable_file_is_marked_unusable():
+    src = b"this is not )(( valid *&^% typescript at all {{{ }}} ]][[ \n" * 5
+    pf = parse_source("src/garbage.ts", src, spec_for_path("src/garbage.ts"))
+    assert not pf.ok
+    assert pf.error is not None and "unusable" in pf.error

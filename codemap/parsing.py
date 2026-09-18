@@ -5,9 +5,11 @@ Extraction is driven entirely by each language's ``tags.scm`` (see
 nesting, method-vs-function, decorator binding, the enclosing symbol of a call —
 is derived here from byte ranges, so this module stays language agnostic.
 
-``parse_source`` never raises: a syntax error or an unexpected failure yields a
-``ParsedFile`` with ``ok=False`` and whatever partial results were recovered
-(spec section 9, fixture commit 10).
+``parse_source`` never raises: a syntax error records ``error_ranges`` (the
+line spans tree-sitter couldn't parse) but keeps ``ok=True`` and whatever
+partial results were recovered, unless a single gap swallows at least 80% of
+the file — then the file is genuinely unusable and ``ok=False``. An
+unexpected failure also yields ``ok=False`` (spec section 9, fixture commit 10).
 """
 
 from __future__ import annotations
@@ -71,6 +73,7 @@ class ParsedFile:
     imports: list[Import] = field(default_factory=list)
     main_calls: list[str] = field(default_factory=list)  # names called under `if __name__ == "__main__"`
     default_export: str | None = None  # JS/TS only: name of `export default ...`, if resolvable
+    error_ranges: list[tuple[int, int]] = field(default_factory=list)  # 1-based, inclusive: unparsed gaps
     ok: bool = True
     error: str | None = None
 
@@ -102,6 +105,26 @@ def _strip_doc(raw: str) -> str:
     return s.strip()
 
 
+def _raw_error_spans(root_node) -> list[tuple[int, int, int, int]]:
+    """(start_line, end_line, start_byte, end_byte), 1-based lines, for each
+    top-level ERROR/MISSING node. Doesn't descend into one once found — its
+    whole span is already the reported gap, and descending would just report
+    the same damage again in smaller, more confusing pieces."""
+    if not root_node.has_error:
+        return []
+    out: list[tuple[int, int, int, int]] = []
+    stack = [root_node]
+    while stack:
+        node = stack.pop()
+        if node.type == "ERROR" or node.is_missing:
+            out.append((node.start_point[0] + 1, node.end_point[0] + 1, node.start_byte, node.end_byte))
+            continue
+        if node.has_error:
+            for i in range(node.child_count - 1, -1, -1):
+                stack.append(node.child(i))
+    return out
+
+
 def _enclosing(defs: list[Symbol], start: int, end: int) -> Symbol | None:
     """Innermost symbol whose byte range strictly contains [start, end)."""
     best: Symbol | None = None
@@ -129,9 +152,7 @@ def parse_source(rel_path: str, source: bytes, spec: LanguageSpec) -> ParsedFile
 def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec) -> None:
     lang, query = _compiled(spec.grammar, spec.query_dir)
     tree = Parser(lang).parse(source)
-    if tree.root_node.has_error:
-        pf.ok = False
-        pf.error = "syntax error"
+    error_spans = _raw_error_spans(tree.root_node)
 
     raw_defs: list[dict] = []
     doc_nodes: list = []
@@ -292,6 +313,26 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
         pf.default_export = _default_export_name(tree.root_node, source)
 
     pf.symbols = symbols
+
+    # --- error gaps: a syntax error doesn't fail a file (spec section 9) —
+    #     record where the damage is and only give up if one gap swallows
+    #     most of the file. A file that still yields symbols despite a
+    #     malformed macro or an unsupported construct elsewhere stays usable.
+    if error_spans:
+        total_lines = max(source.count(b"\n") + 1, 1)
+        ranges: set[tuple[int, int]] = set()
+        for start_line, end_line, start_byte, end_byte in error_spans:
+            if start_byte == end_byte and start_byte >= len(source):
+                continue  # zero-width MISSING synthesized at end of file
+            if any(sym.start_byte <= start_byte and end_byte <= sym.end_byte for sym in symbols):
+                continue  # inside a definition we still extracted cleanly
+            ranges.add((start_line, end_line))
+        if ranges:
+            pf.error_ranges = sorted(ranges)
+            worst = max(end - start + 1 for start, end in pf.error_ranges)
+            if worst / total_lines >= 0.8:
+                pf.ok = False
+                pf.error = f"unusable: syntax errors cover {round(worst / total_lines * 100)}% of the file"
 
 
 def _main_guard_calls(root_node, source: bytes) -> list[str]:

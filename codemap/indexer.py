@@ -33,7 +33,8 @@ class ScanStats:
     commits_indexed: int = 0
     files_parsed: int = 0
     files_skipped: int = 0
-    errors: list[tuple[str, str]] = field(default_factory=list)
+    errors: list[tuple[str, str]] = field(default_factory=list)  # unusable files (mostly failed to parse)
+    gaps: list[tuple[str, int]] = field(default_factory=list)    # (path, gap count) — still usable, partial parse
 
 
 # --------------------------------------------------------------------------- utils
@@ -486,6 +487,8 @@ def index_commit(
         stats.files_parsed += 1
         if not pf.ok:
             stats.errors.append((path, pf.error or "parse error"))
+        elif pf.error_ranges:
+            stats.gaps.append((path, len(pf.error_ranges)))
 
     # files present in the parent snapshot but gone at this commit
     if incremental:
@@ -595,6 +598,8 @@ def _index_worktree(
             stats.files_parsed += 1
             if not pf.ok:
                 stats.errors.append((entry.path, pf.error or "parse error"))
+            elif pf.error_ranges:
+                stats.gaps.append((entry.path, len(pf.error_ranges)))
 
     for path in list(prev_hashes):
         if path not in present:

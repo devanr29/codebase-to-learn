@@ -336,9 +336,10 @@ COMMITS: list[Commit] = [
         tag="c10-syntaxerror",
         message="M-fixture c10: introduce a syntax error (must not crash)",
         writes={"web/loader.ts": C10_LOADER},
-        expected={
-            ("parse_error", "web/loader.ts"),
-        },
+        # not exercised by test_commit_change_set (c10 is excluded from that
+        # parametrization) — the syntax-error behavior itself is covered by
+        # test_syntax_error_commit_does_not_crash and test_c10_syntax_error_does_not_crash.
+        expected=set(),
     ),
 ]
 

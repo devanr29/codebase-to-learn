@@ -19,8 +19,10 @@ from pathlib import Path
 import pathspec
 
 from . import gitio
-from .config import HARD_EXCLUDES, Config
+from .config import HARD_EXCLUDE_PATTERNS, HARD_EXCLUDES, Config
 from .languages import registry
+
+_HARD_IGNORE_SPEC = pathspec.PathSpec.from_lines("gitignore", HARD_EXCLUDE_PATTERNS)
 
 
 @dataclass(frozen=True)
@@ -42,6 +44,8 @@ def _config_spec(cfg: Config) -> pathspec.PathSpec | None:
 
 def _accept(path: str, cfg: Config, ignore_spec: pathspec.PathSpec | None):
     if _hard_excluded(path):
+        return None
+    if _HARD_IGNORE_SPEC.match_file(path):
         return None
     if ignore_spec is not None and ignore_spec.match_file(path):
         return None

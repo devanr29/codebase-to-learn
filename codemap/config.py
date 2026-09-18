@@ -21,11 +21,29 @@ HARD_EXCLUDES = (
     "venv",
     "node_modules",
     "vendor",
+    "vendored",
+    "third_party",
+    "generated",
+    "gen",
     "dist",
     "build",
     "target",
     "__pycache__",
     ".codemap",
+)
+
+# File patterns excluded regardless of .gitignore or config ignore (spec M1):
+# generated/bundled code that isn't meant to be read, and would otherwise show
+# up as unparseable noise rather than genuine syntax errors worth reporting.
+HARD_EXCLUDE_PATTERNS = (
+    "*.min.js",
+    "*.min.css",
+    "*.bundle.js",
+    "*.chunk.js",
+    "*.d.ts",
+    "*.pb.go",
+    "*_pb2.py",
+    "*_pb2_grpc.py",
 )
 
 _TEMPLATE = """\

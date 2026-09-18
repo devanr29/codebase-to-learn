@@ -115,9 +115,14 @@ def cmd_scan(args: argparse.Namespace) -> int:
             f"{stats.files_skipped} unchanged"
         )
         if stats.errors:
-            print(f"{len(stats.errors)} file(s) had parse errors (see below):")
+            print(f"{len(stats.errors)} file(s) could not be parsed (see below):")
             for path, msg in stats.errors[:20]:
                 print(f"  {path}: {msg}")
+        if stats.gaps:
+            print(
+                f"{len(stats.gaps)} file(s) parsed with gaps "
+                "(syntax errors in part of the file; symbols elsewhere were still extracted)"
+            )
         return 0
     finally:
         conn.close()

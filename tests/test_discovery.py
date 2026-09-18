@@ -53,3 +53,37 @@ def test_config_ignore_and_language_narrowing(tmp_path):
     cfg.languages = ["python"]
     paths = {e.path for e in discovery.iter_worktree(cfg)}
     assert paths == {"keep.py"}
+
+
+def test_generated_and_vendored_dirs_are_hard_excluded(tmp_path):
+    root = tmp_path
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "t@e.com")
+    _git(root, "config", "user.name", "t")
+    (root / "app.py").write_text("def a():\n    return 1\n")
+    for d in ("vendored", "third_party", "generated", "gen"):
+        (root / d).mkdir()
+        (root / d / "dep.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "seed")
+
+    cfg = config.load(root)
+    paths = {e.path for e in discovery.iter_worktree(cfg)}
+    assert paths == {"app.py"}
+
+
+def test_generated_file_patterns_are_hard_excluded(tmp_path):
+    root = tmp_path
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "t@e.com")
+    _git(root, "config", "user.name", "t")
+    (root / "app.ts").write_text("export const x = 1;\n")
+    (root / "app.d.ts").write_text("export declare const x: number;\n")
+    (root / "bundle.min.js").write_text("var x=1;\n")
+    (root / "schema_pb2.py").write_text("x = 1\n")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-q", "-m", "seed")
+
+    cfg = config.load(root)
+    paths = {e.path for e in discovery.iter_worktree(cfg)}
+    assert paths == {"app.ts"}

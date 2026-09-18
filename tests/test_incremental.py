@@ -56,7 +56,16 @@ def test_syntax_error_commit_does_not_crash(fixture_repo, tmp_path):
     cfg = config.load(fixture_repo.path)
     conn = _fresh_db(tmp_path, "syn")
     stats = indexer.scan(conn, cfg, until=fixture_repo.sha("c10-syntaxerror"))
-    assert any(path == "web/loader.ts" for path, _ in stats.errors)
+    # loader.ts's error is a single missing paren inside load()'s body — the
+    # rest of the file (dispatch()) still parses clean, and load() itself
+    # still extracts as a symbol whose byte range covers the damage, so the
+    # file is usable and must NOT be reported as failed (spec section 9).
+    assert not any(path == "web/loader.ts" for path, _ in stats.errors)
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM symbols s JOIN files f ON f.id = s.file_id "
+        "WHERE f.path = 'web/loader.ts'"
+    ).fetchone()
+    assert row["n"] == 2  # load + dispatch, both still extracted
     # the run still completed and indexed every commit
     assert stats.commits_indexed == len(fixture_repo.commits)
 

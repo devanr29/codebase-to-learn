@@ -85,8 +85,11 @@ _register([".java"], _JAVA)
 _register([".cs"], _CSHARP)
 _register([".rb"], _RUBY)
 _register([".php"], _PHP)
-_register([".c", ".h"], _C)
-_register([".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"], _CPP)
+_register([".c"], _C)
+# .h is parsed with the C++ grammar, not C: it understands `extern "C" { ... }`
+# and other constructs common in headers meant to be included from either
+# language, which the plain C grammar trips over.
+_register([".h", ".cc", ".cpp", ".cxx", ".hpp", ".hh", ".hxx"], _CPP)
 
 
 def spec_for_path(path: str) -> LanguageSpec | None:
