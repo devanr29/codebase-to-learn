@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.3] — 2026-09-18
 
 ### Added
 - **Architecture tab** — a layered architecture diagram of the indexed repo,
@@ -89,6 +89,7 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `/explore` and `/review` slash commands.
 - Post-commit hook for diff explanations.
 
+[0.2.3]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.1.0...v0.2.0
