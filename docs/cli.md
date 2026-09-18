@@ -90,9 +90,9 @@ codemap snapshot
 
 ## `codemap explore`
 
-Renders `.codemap/explore.html` — the self-contained, five-tab browsable
-surface (Graph / Map / Simulate / Learn / Timeline). See
-[`explore-guide.md`](explore-guide.md) for what's in it.
+Renders `.codemap/explore.html` — the self-contained, seven-tab browsable
+surface (Graph / Architecture / Map / Simulate / Learn / Packages / Timeline).
+See [`explore-guide.md`](explore-guide.md) for what's in it.
 
 ```
 codemap explore --open
@@ -102,7 +102,7 @@ codemap explore --open
 |---|---|
 | `--out <path>` | write somewhere other than `.codemap/explore.html` |
 | `--json` | print the graph model as JSON, write nothing |
-| `--emit-brief` | write module briefs for the `codebase-to-course` skill |
+| `--emit-brief` | write the analysis pack in `.codemap/briefs/` that the `codebase-to-course` skill authors from — `00-overview.md` plus one brief per module, and `folders-`, `libraries-`, `scenarios-` and `architecture-derived.json` |
 | `--max-symbols N` | cap graph nodes (default: from config) |
 | `--open` | open the result in a browser |
 | `--quiet` | suppress the summary line and progress output |

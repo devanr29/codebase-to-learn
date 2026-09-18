@@ -25,7 +25,7 @@ answers the question this tool was built around:
 ```
 codemap scan  →  .codemap/index.db  →  codemap explore  →  explore.html
                                               ▲
-              .codemap/{libraries,explanations,scenarios}.json
+  .codemap/{walkthrough,libraries,explanations,scenarios,glossary,architecture}.json
               (optional — authored by the codebase-to-course skill)
 ```
 
@@ -82,6 +82,12 @@ calls an LLM.
   in the Map tab's treemap, no folder page in Learn, and no entry in the
   folder brief the `codebase-to-course` skill reads from — there's nothing to
   derive it from. Nothing breaks; that folder is just invisible to the tool.
+- The Architecture tab's layers are a scored guess from folder names, file
+  names, entry points and imports. Folders that don't say what they are end
+  up as dashed best-guess boxes in Logic. A database or service the code
+  reaches with no import and no manifest entry (a plain HTTP call, a
+  connection URL read from the environment) doesn't appear until
+  `.codemap/architecture.json` adds it — see [`docs/spec.md`](docs/spec.md) §18.
 - Impact analysis is structural only; it can't tell you whether a change is
   *correct*.
 - Intent marked `inferred` is a guess, not a record.

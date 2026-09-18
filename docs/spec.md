@@ -688,6 +688,140 @@ convention in common use, not every mobile UI toolkit.
 
 ---
 
+## 18. Architecture tab (M20)
+
+The Graph tab says what calls what; Map ▸ Layers says how deep a file sits in
+the import graph. Neither names a *role* or a *vendor* — nothing on the page
+said "this is the API, it runs on Flask, it talks to Postgres." M20 adds a
+seventh tab, **Architecture** (`#/arch`): the diagram a person sketches for a
+new teammate. Whoever drives the app sits at the top, then **Routes & entry** →
+**Views & UI** beside **API** → **Logic** → **Data & models**, with **Shared &
+cross-cutting** and **Tests** in a side panel. Each box names the tech it's
+built on, data stores are cylinders, and outside services are clouds.
+
+`site/architecture.py::build()` is a pure function over pieces
+`site/model.py::build()` already assembled (`files`, `file_edges`, `folders`,
+`entry_points`, `nodes`) and ships as `DATA.architecture`. Its only I/O is a
+manifest reader the caller injects: `package.json`, `requirements*.txt`,
+`pyproject.toml`, `go.mod` and `docker-compose*.yml` aren't indexed source, so
+`model.py` reads them through the same commit-vs-worktree split the indexer
+uses for frontend-root detection (`gitio.ls_tree`/`show_bytes` for a commit,
+`discovery.raw_worktree_paths`/`read_worktree_bytes` for `worktree`). At most
+60 manifests are read, none under `node_modules`, `.venv`, `vendor`, `dist`,
+`build`, `target` or `.codemap`; an unparseable one is skipped.
+
+**Placement is a score with evidence, never a verdict.** Every non-test file
+earns points per layer, and each point is recorded as a human-readable reason
+("folder named routes/", "3× HTTP route", "imports flask") that the page shows
+under "Why it's here":
+
+| Signal | Points |
+|---|---|
+| test path or stem (`test_*`, `*_test`, `conftest`, `*.test`/`*.spec`) | 100 to `tests`; nothing else is scored |
+| detected entry point: route/controller/cli/script → entry, screen/layout → views, task → logic | 4 |
+| nearest folder segment matches a layer token (`routes/`, `api/`, `services/`, `models/`, `utils/`, …) | 3 |
+| file stem matches a layer token (`cli.py`, `db.py`, `render.py`, …) | 2.5 |
+| an ancestor folder segment matches | 2 |
+| a bare `__main__` guard (scripts have one too) | 2 |
+| a `.tsx` file | 1 to `views` |
+| a catalog vendor import with a `role` | 1, **tie-breaker only** |
+
+The highest score wins; ties go to the first of `tests, entry, api, views,
+data, logic, shared`. Four rules shape that, each one added after a real
+misplacement:
+
+- **An import never overrules a path or an entry point.** It only adds to a
+  layer already tied for the top score (or names the layer outright when
+  nothing else scored). `site/model.py` imports `sqlite3` and stays view code.
+- **Pervasive packages give no layer signal.** A package imported by more than
+  20% of non-test files (and by more than 2) is ignored for placement, and it
+  labels only boxes in its own layer. `sqlite3`, used as a type hint in a dozen
+  modules, had pulled `indexer`/`impact`/`semdiff` into Data.
+- **An HTTP handler follows its path.** A route or controller in a file whose
+  path already scores API or Views counts toward that layer, not Routes: the
+  Routes band is the URL map, and the handlers live below it. A `main` entry
+  whose detail matches `AppRegistry`/`registerRootComponent`/a render root is
+  a screen (Views), not a program.
+- **No signal means a weak guess.** The file lands in Logic with the reason
+  "no clear signal — placed in Logic by default". A component is
+  `confidence: "strong"` when the lines in its strongly placed files (top
+  score ≥ 2.5) outweigh the weak ones; otherwise it's drawn dashed.
+
+**Components.** Files group by their (post-fold) folder. A folder whose
+non-test files all land in one layer is one box. A folder spanning two or more
+layers is drawn file by file, up to 16 files per layer, and as one box per layer
+beyond that. Symbol-less files of 5 lines or fewer, and `__init__`/`index`/`mod`
+barrels, never become their own box. They ride along as `extra_files` of the
+folder's biggest component, or of the biggest one below a folder that is only a
+package marker, so imports still resolve through them. Component ids are
+`"<layer>:<path>"`, which doubles as the deep link (`#/arch/<layer>:<path>`).
+
+**Tech, stores and services** come from `site/data/architecture-catalog.json`.
+It maps ~220 packages to a `label`, an optional layer `role`, a `stack` flag,
+and an optional `store` (PostgreSQL, MySQL, SQLite, MongoDB, Redis, …) or
+`service` (Stripe, OpenAI, Anthropic, AWS, …). Pip-name `aliases`
+(`psycopg2-binary`, `mysqlclient`, …) map to those packages, and `images` maps
+docker image names to stores. A box's tech line is its most-imported catalog
+labels, or raw third-party names, up to 6. Each store or service carries where
+it came from:
+
+- an **import** links it to the importing component;
+- a **manifest** dependency or compose image records `declared_in`, and the
+  page draws it dashed when no indexed file imports a client for it;
+- **`architecture.json`** adds it by hand (see below).
+
+A framework declared in a manifest but never imported goes to
+`declared_only`, not onto a box.
+
+**Links, actors, stack.** `file_edges` are aggregated to component pairs and
+tagged `down` (the expected direction: a higher layer imports a lower one),
+`up` (a wrong-way import, drawn red with **!**), `same`, or `side` (touches the
+side panel). Actors come from the entry points of non-side components:
+*Internet* (route/controller), *User's screen* (screen/layout/UI root),
+*Terminal* (cli/script, or a `main` in the entry layer) and *Scheduler* (task).
+The overview's stack line lists languages at ≥ 8% of non-test lines, then up
+to 6 `stack` vendors (top layer first), then every store and service.
+
+**Authored corrections** live in `.codemap/architecture.json`, loaded by
+`architecture.load()` → `clean_overrides()`. An absent or malformed file, or one
+that cleans down to nothing, yields `None` and never raises, the same fail-soft
+contract as `scenarios.py`/`learn.py`. It holds corrections only:
+
+- rename or describe a layer;
+- retitle, move or describe a component. A folder key forces one box; a file
+  key splits that file out into its own;
+- prepend tech the imports can't reveal;
+- add stores or services, or extend derived ones, attached through `via` paths.
+
+An authored placement keeps the derived reasons visible under "placed here by
+architecture.json". Schema:
+`skills/codebase-to-course/references/architecture-schema.md`. `--emit-brief`
+writes `.codemap/briefs/architecture-derived.json` (the full model, with each
+component's `file_paths`) and an **Architecture** section in `00-overview.md`
+that flags weak guesses and wrong-way imports. The skill corrects a derived
+diagram; it never draws one from scratch.
+
+**Rendering.** `archTab()` in `explore.js` lays out bands, boxes, cylinders and
+clouds as inline SVG; `archInspector()` fills the right panel with the
+evidence, tech, what the item talks to and what uses it, entry points and
+files. Every entry links out: files to Graph, tech to Packages, ▶ to Simulate,
+the folder to Learn. Hover and selection only rewrite classes and one highlight
+`<g>`, never relayout, the same discipline as the Graph tab. Adding a seventh
+tab overflowed the topbar, so tab labels now collapse to icons below 780px and
+the counters hide below 1100px.
+
+**Deliberately not built:**
+
+- placement logic in `explore.js`. It all lives in `_DIR_TOKENS`,
+  `_STEM_TOKENS` and the catalog, so the brief and the page always agree;
+- detection of infrastructure reached with neither an import nor a manifest
+  entry (a plain-HTTP call, an ORM URL read from the environment). That gap is
+  what `architecture.json`'s `stores`/`services` fill;
+- any claim that the layering is *correct*. A dashed box is a guess and says
+  so.
+
+---
+
 ## 9. Testing
 
 `tests/fixtures/build_repo.py` constructs a **real git repository** via `subprocess`, with a

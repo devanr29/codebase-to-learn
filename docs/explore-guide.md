@@ -486,6 +486,16 @@ Check the tier badge in the inspector. "No callers at tier 1" means
 name-based resolution couldn't see them (aliased imports, dynamic dispatch),
 not that none exist.
 
+**The Architecture tab puts a part in the wrong layer, or misses a database**
+Click the box and read "Why it's here": every reason it was placed there is
+listed. A dashed box had no clear signal and landed in Logic by default. The
+usual cause is a folder whose name says nothing about its job (`lib/`, `src/`,
+`app/`). A database or service reached with no import and no manifest entry,
+such as a plain HTTP call or a connection URL read from the environment, has
+nothing to detect. Fix either by adding `.codemap/architecture.json` (the
+`codebase-to-course` skill writes it, or see §5 for the schema), then run
+`codemap explore` again.
+
 **Icons or fonts look off**
 Phosphor Icons are vendored into the page itself (base64, no CDN) — they
 render the same offline or on a network that blocks arbitrary CDNs. Only the

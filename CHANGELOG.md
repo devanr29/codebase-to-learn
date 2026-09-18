@@ -30,6 +30,8 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Fixed
 - Topbar no longer scrolls the page sideways between ~421px and ~650px wide:
   tabs collapse to icons below 780px, and the counters hide below 1100px.
+- Simulate rail cards wrap a scenario's summary instead of cutting it off
+  with "…", and hovering a card shows its full title.
 
 ## [0.2.2] — 2026-09-12
 
