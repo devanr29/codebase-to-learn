@@ -600,6 +600,12 @@ def _index_worktree(
                 stats.errors.append((entry.path, pf.error or "parse error"))
             elif pf.error_ranges:
                 stats.gaps.append((entry.path, len(pf.error_ranges)))
+            if stats.files_parsed % 200 == 0:
+                # A worktree sync of a large repo can otherwise run as one
+                # multi-thousand-file transaction: nothing is resumable if
+                # interrupted, and the WAL can't checkpoint until the very
+                # end. Committing periodically bounds both.
+                conn.commit()
 
     for path in list(prev_hashes):
         if path not in present:
