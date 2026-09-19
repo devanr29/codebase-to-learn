@@ -153,8 +153,13 @@ it needs no extra step, and it works on any repo.
 
 **The lines**
 - a pair of block arrows between two layers: files in the upper layer import
-  files in the lower one, so calls go down and results come back up. No
-  arrows means no imports cross there.
+  files in the lower one, so calls go down and results come back up. The arrow
+  sits over the layer it points into; hover it for the two layers, how many
+  imports cross, and one real pair of parts as an example. No arrows means no
+  imports cross there. Hover a box to see exactly which parts it talks to.
+- a sideways pair of block arrows in the gap between **Views & UI** and
+  **API**: those two layers sit side by side, so this is the screens calling the
+  API layer
 - a dotted line down the right edge: imports that skip a layer (Routes
   straight to Data)
 - a red dashed line with a **!**: a wrong-way import, where a lower layer

@@ -4,6 +4,28 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Architecture tab** — imports between Views & UI and API are drawn. The two
+  layers sit side by side in one row, so their imports were tagged `same` and
+  never rendered; they now get a sideways pair of block arrows in the gap
+  between the two bands.
+
+### Fixed
+- **Architecture tab** — an arrow between two layers is placed over the bands it
+  joins and named for those two layers, with the import count and one example
+  pair of parts (`Routes & entry → API · 3 imports` / `for example: app.py →
+  api.py · 1`). It used to sit at the midpoint of two *boxes* and be titled with
+  their names, which on a split row (Views beside API) put it in the seam between
+  the bands, touching neither box. A cap of two arrows per gap also silently hid
+  whole layer-to-layer relationships (API → Logic was never drawn on a
+  client-plus-API repo).
+- **Architecture tab** — the actor's arrow (Internet, User's screen…) reaches
+  the band it drives, layer-skipping connectors name and leave from the layers
+  they really join, and every band that uses shared code gets its own titled
+  dashed line (the API band had none when Views also used shared code).
+
 ## [0.2.3] — 2026-09-18
 
 ### Added

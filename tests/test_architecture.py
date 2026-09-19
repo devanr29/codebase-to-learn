@@ -191,6 +191,26 @@ def test_links_carry_counts_and_direction():
     assert all(link["n"] >= 1 for link in arch["links"])
 
 
+def test_views_and_api_share_a_rank_so_their_links_are_same_not_down():
+    """Views and API sit side by side in one band row, so an import between them is
+    `same`, not `down`. explore.js draws those sideways across the seam between the two
+    bands. If someone "fixes" a missing arrow by giving the two layers different ranks,
+    the page would stack them vertically and every band arrow would point at the wrong
+    band -- see tests/test_arch_arrows.py."""
+    files = [
+        mk_file(0, "app/views/pages.py", deps=["jinja2"]),
+        mk_file(1, "app/views/emails.py", deps=["jinja2"]),
+        mk_file(2, "app/api/client.py"),
+        mk_file(3, "app/api/schemas.py"),
+    ]
+    arch = run(files, [(0, 2), (1, 3)])
+    layer = {c["id"]: c["layer"] for c in arch["components"]}
+    assert architecture.RANK["views"] == architecture.RANK["api"]
+    assert {(layer[link["s"]], layer[link["t"]], link["dir"]) for link in arch["links"]} == {
+        ("views", "api", "same")
+    }
+
+
 def test_actors_come_from_entry_point_kinds():
     _files, arch = flask_app()
     assert [a["id"] for a in arch["actors"]] == ["internet"]

@@ -2556,7 +2556,8 @@
   var A_SERVICE_HUE = "#9085e9", A_ACTOR_HUE = "#b2b6ca", A_UP_HUE = "#e66767";
   var A_BOX_W = 140, A_BOX_H = 48, A_GAP = 12, A_BAND_PAD = 14, A_BAND_HEAD = 32,
       A_ROW_GAP = 52, A_MAIN_W = 700, A_SIDE_W = 184, A_SIDE_GAP = 54, A_PAD = 20,
-      A_CLOUD_W = 150, A_CLOUD_H = 64, A_CYL_W = 118, A_CYL_H = 66, A_UP_MAX = 12;
+      A_CLOUD_W = 150, A_CLOUD_H = 64, A_CYL_W = 118, A_CYL_H = 66, A_UP_MAX = 12,
+      A_SEAM = 18, A_SEAM_WIDE = 46;
   var EP_BY_NODE = {};
   (DATA.entry_points || []).forEach(function (ep) {
     if (ep.node != null) (EP_BY_NODE[ep.node] = EP_BY_NODE[ep.node] || []).push(ep);
@@ -2627,6 +2628,29 @@
     g.appendChild(el("path", { d: archBlockArrow(x + 12, yBot, yTop) }));   // results back
     return g;
   }
+  // the same block arrow laid on its side, tip at x2
+  function archBlockArrowH(y, x1, x2) {
+    var dir = x2 > x1 ? 1 : -1, sw = 5, hw = 11, xh = x2 - 11 * dir;
+    return "M " + x1 + " " + (y - sw) + " L " + xh + " " + (y - sw) + " L " + xh + " " + (y - hw) +
+      " L " + x2 + " " + y + " L " + xh + " " + (y + hw) + " L " + xh + " " + (y + sw) +
+      " L " + x1 + " " + (y + sw) + " Z";
+  }
+  function archArrowPairH(y, xa, xb, title) {
+    var g = el("g", { class: "arch-arrow" }, title ? [el("title", { text: title })] : []);
+    g.appendChild(el("path", { d: archBlockArrowH(y - 12, xa, xb) }));   // calls across
+    g.appendChild(el("path", { d: archBlockArrowH(y + 12, xb, xa) }));   // results back
+    return g;
+  }
+  // An arrow stands for a whole pair of layers, so its tooltip leads with the layers
+  // and then names one real pair of parts as a concrete example of what crosses.
+  function archTip(head, pairs) {
+    var s = pairs.slice().sort(function (a, b) {
+      return b.n - a.n || (a.s < b.s ? -1 : a.s > b.s ? 1 : 0) || (a.t < b.t ? -1 : a.t > b.t ? 1 : 0);
+    });
+    var ex = A_COMP[s[0].s].title + " → " + A_COMP[s[0].t].title;
+    if (s.length === 1) return head + "\n" + ex;
+    return head + "\n" + (s[1].n === s[0].n ? "for example: " : "heaviest: ") + ex + " · " + s[0].n;
+  }
 
   function archTab() {
     if (!A_COMPS.length)
@@ -2641,6 +2665,20 @@
     var byLayer = {};
     A_COMPS.forEach(function (c) {
       if (visible(c.id)) (byLayer[c.layer] = byLayer[c.layer] || []).push(c);
+    });
+
+    // Imports between two layers of the same rank. architecture.py tags them `same`
+    // because Views and API share a rank, and they sit side by side in one row, so
+    // they cannot be drawn down a row gap: they cross the seam between the bands.
+    // Worked out before layout because it decides how wide that seam has to be.
+    var sameBands = {};      // "<srcLayer>|<tgtLayer>" -> {n, pairs: [link]}
+    A_LINKS.forEach(function (l) {
+      if (l.dir !== "same" || !A_COMP[l.s] || !A_COMP[l.t] || !visible(l.s) || !visible(l.t)) return;
+      var ls = A_COMP[l.s].layer, lt = A_COMP[l.t].layer;
+      if (ls === lt) return;                       // inside one band: hover already shows it
+      var k = ls + "|" + lt, e = sameBands[k] || (sameBands[k] = { n: 0, pairs: [] });
+      e.n += l.n;
+      e.pairs.push(l);
     });
 
     var pos = {};      // item key -> {x, y, w, h, cx, cy}
@@ -2685,12 +2723,18 @@
         return (byLayer[l] || []).length || (l === "data" && storesShown.length);
       });
       if (!present.length) return;
+      // two bands share this row (Views beside API). Their seam is normally 18px,
+      // far too narrow to hold an arrow; when imports cross it, open it up.
+      var seam = A_SEAM;
+      if (present.length === 2 &&
+          (sameBands[present[0] + "|" + present[1]] || sameBands[present[1] + "|" + present[0]]))
+        seam = A_SEAM_WIDE;
       var widths;
       if (present.length === 1) widths = [A_MAIN_W];
       else {
         var na = (byLayer[present[0]] || []).length, nb = (byLayer[present[1]] || []).length;
         var share = Math.max(0.38, Math.min(0.62, na / (na + nb)));
-        widths = [(A_MAIN_W - 18) * share, (A_MAIN_W - 18) * (1 - share)];
+        widths = [(A_MAIN_W - seam) * share, (A_MAIN_W - seam) * (1 - share)];
       }
       var rowIdx = rows.length, bands = [], rowH = 0, bx = x0;
       present.forEach(function (layer, k) {
@@ -2713,7 +2757,7 @@
           });
           rowH = Math.max(rowH, A_BAND_HEAD + A_CYL_H + A_BAND_PAD);
           bands.push({ layer: layer, x: bx, w: bw });
-          bx += bw + 18;
+          bx += bw + seam;
           return;
         }
         var boxesH = place(comps, A_BOX_W, A_BOX_H, bx, bw, top);
@@ -2726,9 +2770,9 @@
         h += A_BAND_PAD;
         rowH = Math.max(rowH, h);
         bands.push({ layer: layer, x: bx, w: bw });
-        bx += bw + 18;
+        bx += bw + seam;
       });
-      rows.push({ kind: "band", top: y, bottom: y + rowH, bands: bands });
+      rows.push({ kind: "band", top: y, bottom: y + rowH, bands: bands, seam: seam });
       y += rowH + A_ROW_GAP;
     });
 
@@ -2770,7 +2814,7 @@
     }
 
     // ── links that don't fit the neighbour-to-neighbour picture ──
-    var pairAgg = {}, skipAgg = {}, ups = [], sideLayers = {};
+    var bandAgg = {}, skipAgg = {}, ups = [], sideLayers = {};
     A_LINKS.forEach(function (l) {
       if (!visible(l.s) || !visible(l.t) || !pos[l.s] || !pos[l.t]) return;
       if (l.dir === "side") {
@@ -2780,13 +2824,21 @@
       } else if (l.dir === "up") {
         ups.push(l);
       } else if (l.dir === "down") {
-        var rs = rowOf[l.s], rt = rowOf[l.t];
+        var rs = rowOf[l.s], rt = rowOf[l.t], sl = A_COMP[l.s].layer, tl = A_COMP[l.t].layer;
         if (rt === rs + 1) {
-          var pk = rs + "|" + l.s + "|" + l.t;
-          pairAgg[pk] = (pairAgg[pk] || 0) + l.n;
+          // one entry per pair of *bands*: an arrow across a row gap can only honestly
+          // say "this layer calls that layer", never name a single box
+          var bk = rs + "|" + sl + "|" + tl;
+          var be = bandAgg[bk] || (bandAgg[bk] = { r: rs, sl: sl, tl: tl, n: 0, pairs: [] });
+          be.n += l.n;
+          be.pairs.push(l);
         } else if (rt > rs + 1) {
           var sk = rs + "|" + rt;
-          skipAgg[sk] = (skipAgg[sk] || 0) + l.n;
+          var se = skipAgg[sk] || (skipAgg[sk] = { n: 0, from: {}, to: {}, pairs: [] });
+          se.n += l.n;
+          se.from[sl] = (se.from[sl] || 0) + l.n;     // which layers it really leaves from...
+          se.to[tl] = (se.to[tl] || 0) + l.n;         // ...and lands in, not a guess from band order
+          se.pairs.push(l);
         }
       }
     });
@@ -2806,6 +2858,16 @@
     svg.appendChild(gBands); svg.appendChild(gArrows); svg.appendChild(gHi); svg.appendChild(gItems);
 
     function layerTitle(id) { return (A_LAYER[id] && A_LAYER[id].title) || id; }
+    // the band a layer occupies in a given row, or null (the actors and services rows have none)
+    function bandIn(rowIdx, layer) {
+      var bs = (rows[rowIdx] || {}).bands || [];
+      for (var i = 0; i < bs.length; i++) if (bs[i].layer === layer) return bs[i];
+      return null;
+    }
+    function layerRank(m) {
+      return Object.keys(m).sort(function (a, b) { return m[b] - m[a] || (a < b ? -1 : 1); });
+    }
+    function clampIn(x, b, pad) { return Math.max(b.x + pad, Math.min(b.x + b.w - pad, x)); }
 
     // ── bands ──
     rows.forEach(function (row) {
@@ -2835,52 +2897,81 @@
     }
 
     // ── neighbour arrows: actors → first band, band → next band ──
-    var gutterK = skipKeys.length;
+    var gutterK = skipKeys.length, routed = 0;
     A_ACTORS.forEach(function (a) {
       var p = pos["actor:" + a.id], best = null;
       a.components.forEach(function (cid) { if (rowOf[cid] != null && (best == null || rowOf[cid] < best)) best = rowOf[cid]; });
       if (!p || best == null) return;
-      var title = a.label + " → " + layerTitle(rows[best].bands[0].layer) + " · " + a.entries + " entry point" + (a.entries === 1 ? "" : "s");
+      // the band that actually holds its components in that row, not just the leftmost one
+      var heat = {};
+      a.components.forEach(function (cid) {
+        if (rowOf[cid] === best) heat[A_COMP[cid].layer] = (heat[A_COMP[cid].layer] || 0) + 1;
+      });
+      var tb = bandIn(best, layerRank(heat)[0]) || rows[best].bands[0];
+      var title = a.label + " → " + layerTitle(tb.layer) + " · " + a.entries + " entry point" + (a.entries === 1 ? "" : "s");
       if (best === 1) {
-        gArrows.appendChild(archArrowPair(p.cx, p.y + p.h * 0.84 + 4, rows[best].top - 4, title));
+        gArrows.appendChild(archArrowPair(clampIn(p.cx, tb, 30), p.y + p.h * 0.84 + 4, rows[best].top - 4, title));
         return;
       }
       // the layer it drives isn't the next one down: go around the bands, not through them
       var gx = x0 + A_MAIN_W + 14 + (gutterK++) * 10, yb = rows[best].top + 26;
-      gArrows.appendChild(el("g", { class: "arch-skip actor" }, [
-        el("title", { text: title }),
-        el("path", { d: "M " + (p.x + p.w * 0.97) + " " + p.cy + " H " + gx + " V " + yb + " H " + (x0 + A_MAIN_W + 6) }),
-        el("path", { class: "head", d: "M " + (x0 + A_MAIN_W + 1) + " " + yb + " l 7 -4 v 8 z" }),
-      ]));
+      var kids = [el("title", { text: title })];
+      if (tb.x + tb.w >= x0 + A_MAIN_W - 1) {
+        // its band is the rightmost in the row: come in at that edge
+        kids.push(el("path", { d: "M " + (p.x + p.w * 0.97) + " " + p.cy + " H " + gx + " V " + yb + " H " + (x0 + A_MAIN_W + 6) }));
+        kids.push(el("path", { class: "head", d: "M " + (x0 + A_MAIN_W + 1) + " " + yb + " l 7 -4 v 8 z" }));
+      } else {
+        // otherwise run back over the top of the row and drop into its own band
+        var ya = rows[best].top - 30 - (routed++) * 7, tx = tb.x + tb.w / 2;
+        kids.push(el("path", { d: "M " + (p.x + p.w * 0.97) + " " + p.cy + " H " + gx + " V " + ya + " H " + tx + " V " + (rows[best].top - 10) }));
+        kids.push(el("path", { class: "head", d: "M " + tx + " " + (rows[best].top - 4) + " l -4 -7 h 8 z" }));
+      }
+      gArrows.appendChild(el("g", { class: "arch-skip actor" }, kids));
     });
-    var byRow = {};
-    Object.keys(pairAgg).forEach(function (k) {
-      var parts = k.split("|");
-      (byRow[parts[0]] = byRow[parts[0]] || []).push({ s: parts[1], t: parts[2], n: pairAgg[k] });
+    // Band → next band, one pair of block arrows per pair of *bands*. It spans a row gap,
+    // so it can only honestly say "this layer calls that layer": it is centred on the
+    // overlap of the two bands and titled with the two layers. Box-to-box detail is on
+    // hover, where paint() draws a real curve to each box. (It used to sit at the midpoint
+    // of two *boxes* and name them, which on a split row put it in the seam between
+    // Views and API, touching neither box.) No cap and no collision rule are needed: the
+    // pairs in one gap sit over disjoint band overlaps.
+    Object.keys(bandAgg).forEach(function (k) {
+      var e = bandAgg[k], sb = bandIn(e.r, e.sl), tb = bandIn(e.r + 1, e.tl);
+      if (!sb || !tb) return;
+      var lo = Math.max(sb.x, tb.x), hi = Math.min(sb.x + sb.w, tb.x + tb.w);
+      var x = clampIn(hi - lo >= 60 ? (lo + hi) / 2 : tb.x + tb.w / 2, tb, 26);
+      gArrows.appendChild(archArrowPair(x, rows[e.r].bottom + 4, rows[e.r + 1].top - 4,
+        archTip(layerTitle(e.sl) + " → " + layerTitle(e.tl) + " · " + e.n + " import" + (e.n === 1 ? "" : "s"), e.pairs)));
     });
-    Object.keys(byRow).forEach(function (r) {
-      var list = byRow[r].sort(function (a, b) { return b.n - a.n || (a.s < b.s ? -1 : 1); });
-      var total = list.reduce(function (s, p) { return s + p.n; }, 0), xs = [];
-      list.forEach(function (p) {
-        if (xs.length >= 2) return;
-        var x = Math.max(x0 + 30, Math.min(x0 + A_MAIN_W - 30, (pos[p.s].cx + pos[p.t].cx) / 2));
-        if (xs.some(function (o) { return Math.abs(o - x) < 70; })) return;
-        xs.push(x);
-        gArrows.appendChild(archArrowPair(x, rows[+r].bottom + 4, rows[+r + 1].top - 4,
-          A_COMP[p.s].title + " → " + A_COMP[p.t].title + " · " + p.n + " import" + (p.n === 1 ? "" : "s") +
-          (total > p.n ? " (" + total + " between these layers)" : "")));
-      });
+    // Views and API sit at the same depth, so their imports run sideways across the seam
+    rows.forEach(function (row) {
+      if (row.kind !== "band" || !row.bands[1] || row.seam < A_SEAM_WIDE) return;
+      var a = row.bands[0], b = row.bands[1];
+      var fw = sameBands[a.layer + "|" + b.layer], rv = sameBands[b.layer + "|" + a.layer];
+      var flip = !fw || (rv && rv.n > fw.n), e = flip ? rv : fw, back = flip ? fw : rv;
+      if (!e) return;
+      var sl = flip ? b.layer : a.layer, tl = flip ? a.layer : b.layer, xl = a.x + a.w + 4, xr = b.x - 4;
+      gArrows.appendChild(archArrowPairH(row.top + A_BAND_HEAD + A_BOX_H / 2, flip ? xr : xl, flip ? xl : xr,
+        archTip(layerTitle(sl) + " → " + layerTitle(tl) + " · " + e.n + " import" + (e.n === 1 ? "" : "s") +
+          (back ? " (+" + back.n + " the other way)" : ""), e.pairs)));
     });
 
     // ── skip-a-layer connectors down the right gutter ──
     skipKeys.forEach(function (k, idx) {
-      var parts = k.split("|"), ra = rows[+parts[0]], rb = rows[+parts[1]];
+      var parts = k.split("|"), ra = rows[+parts[0]], rb = rows[+parts[1]], e = skipAgg[k];
       var gx = x0 + A_MAIN_W + 14 + idx * 10;
       var ya = (ra.top + ra.bottom) / 2, yb = (rb.top + rb.bottom) / 2 + idx * 4;
-      var from = layerTitle(ra.bands[ra.bands.length - 1].layer), to = layerTitle(rb.bands[0].layer);
+      var fromL = layerRank(e.from), toL = layerRank(e.to);
+      // leave from the band the imports really come from: its right edge if it is the
+      // rightmost band, otherwise the gap just under its row
+      var sb = bandIn(+parts[0], fromL[0]) || ra.bands[ra.bands.length - 1];
+      var start = sb.x + sb.w >= x0 + A_MAIN_W - 1
+        ? "M " + (x0 + A_MAIN_W) + " " + ya + " H " + gx
+        : "M " + (sb.x + sb.w - 12) + " " + ra.bottom + " V " + (ra.bottom + 8) + " H " + gx;
       gArrows.appendChild(el("g", { class: "arch-skip" }, [
-        el("title", { text: skipAgg[k] + " import" + (skipAgg[k] === 1 ? "" : "s") + " skip a layer: " + from + " → " + to }),
-        el("path", { d: "M " + (x0 + A_MAIN_W) + " " + ya + " H " + gx + " V " + yb + " H " + (x0 + A_MAIN_W + 6) }),
+        el("title", { text: archTip(e.n + " import" + (e.n === 1 ? "" : "s") + " skip a layer: " +
+          fromL.map(layerTitle).join(", ") + " → " + toL.map(layerTitle).join(", "), e.pairs) }),
+        el("path", { d: start + " V " + yb + " H " + (x0 + A_MAIN_W + 6) }),
         el("path", { class: "head", d: "M " + (x0 + A_MAIN_W + 1) + " " + yb + " l 7 -4 v 8 z" }),
       ]));
     });
@@ -2890,16 +2981,15 @@
       var axs = A_PAD + A_SIDE_W, ays = (side.top + side.bottom) / 2;
       rows.forEach(function (row) {
         if (row.kind !== "band") return;
+        // each band that leans on shared code gets its own titled line; a second band in
+        // the same row (API beside Views) draws to its own left edge
         row.bands.forEach(function (b, k) {
-          if (!sideLayers[b.layer] || k > 0) return;
+          var n = sideLayers[b.layer];
+          if (!n) return;
           gArrows.appendChild(el("path", { class: "arch-side-line",
-            d: "M " + axs + " " + ays + " L " + b.x + " " + ((row.top + row.bottom) / 2) }, [
-            el("title", { text: layerTitle(b.layer) + " ⇄ shared code · " + sideLayers[b.layer] + " imports" })]));
+            d: "M " + axs + " " + ays + " L " + b.x + " " + (k === 0 ? (row.top + row.bottom) / 2 : row.top + 16) }, [
+            el("title", { text: layerTitle(b.layer) + " ⇄ shared code · " + n + " import" + (n === 1 ? "" : "s") })]));
         });
-        // a second band in the same row (API beside Views) gets its line to its own left edge
-        if (row.bands[1] && sideLayers[row.bands[1].layer] && !sideLayers[row.bands[0].layer])
-          gArrows.appendChild(el("path", { class: "arch-side-line",
-            d: "M " + axs + " " + ays + " L " + row.bands[1].x + " " + (row.top + 16) }));
       });
     }
 
@@ -3125,7 +3215,7 @@
         archLegendRow("weak", "dashed = a best guess; click it to see why"),
         archLegendRow("cyl", "a data store the code talks to"),
         archLegendRow("cloud", "who drives the app, or an outside service"),
-        archLegendRow("arrows", "one layer calls into the next and gets results back"),
+        archLegendRow("arrows", "one layer calls into another and gets results back"),
         archLegendRow("up", "a lower layer importing a higher one"),
         archLegendRow("dash", "shared code used by that layer"),
       ]));

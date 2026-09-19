@@ -775,8 +775,9 @@ A framework declared in a manifest but never imported goes to
 
 **Links, actors, stack.** `file_edges` are aggregated to component pairs and
 tagged `down` (the expected direction: a higher layer imports a lower one),
-`up` (a wrong-way import, drawn red with **!**), `same`, or `side` (touches the
-side panel). Actors come from the entry points of non-side components:
+`up` (a wrong-way import, drawn red with **!**), `same` (two layers of equal
+rank, Views and API, drawn sideways across the seam between their two bands), or
+`side` (touches the side panel). Actors come from the entry points of non-side components:
 *Internet* (route/controller), *User's screen* (screen/layout/UI root),
 *Terminal* (cli/script, or a `main` in the entry layer) and *Scheduler* (task).
 The overview's stack line lists languages at ≥ 8% of non-test lines, then up
@@ -805,13 +806,20 @@ diagram; it never draws one from scratch.
 clouds as inline SVG; `archInspector()` fills the right panel with the
 evidence, tech, what the item talks to and what uses it, entry points and
 files. Every entry links out: files to Graph, tech to Packages, ▶ to Simulate,
-the folder to Learn. Hover and selection only rewrite classes and one highlight
+the folder to Learn. A band arrow spans a row gap, so it states a layer-to-layer
+fact only: it is centred on the overlap of the two bands and titled with the two
+layers, the total import count and one example pair of parts. Box-level detail
+is on hover, where `paint()` draws a curve to each box. Hover and selection only rewrite classes and one highlight
 `<g>`, never relayout, the same discipline as the Graph tab. Adding a seventh
 tab overflowed the topbar, so tab labels now collapse to icons below 780px and
 the counters hide below 1100px.
 
 **Deliberately not built:**
 
+- box-to-box connectors in the row gaps. A gap has about 44px of vertical room
+  and, on a real repo, most pairs of boxes sit in different columns; precision
+  there would cost the calls-down/results-up block arrows and duplicate the
+  layer-skipping connector's look;
 - placement logic in `explore.js`. It all lives in `_DIR_TOKENS`,
   `_STEM_TOKENS` and the catalog, so the brief and the page always agree;
 - detection of infrastructure reached with neither an import nor a manifest
