@@ -372,7 +372,9 @@ the primary way to *read* the repository. Three tabs sharing one hash router:
 - **Graph** — the whole file/function structure as a neural-style graph: a source
   tree in the left rail, module "lobes" with organic dendritic edges on the
   canvas, a soma-and-dendrites neuron view when a symbol is focused, and an
-  inspector (fan-in/out, blast radius, entry path, source excerpt, the file's
+  inspector (fan-in/out, blast radius, entry path, a source preview plus a
+  slide-over viewer of the whole file with call-site links back into the graph
+  — files are embedded under `[explore] max_source_bytes`, most relevant first —, the file's
   third-party / built-in / internal imports, and a "what this does" blurb from
   `.codemap/explanations.json` when present).
 - **Learn** — a guided project walkthrough: an Orientation landing screen, an

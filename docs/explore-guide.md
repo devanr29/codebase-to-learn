@@ -79,9 +79,9 @@ Useful flags:
 - the number on each row is that symbol's caller count
 - press <kbd>Ctrl</kbd>+<kbd>K</kbd> (<kbd>Cmd</kbd>+<kbd>K</kbd> on Mac), or
   click "Find anything on screen" at the top of the rail, to search — not just
-  symbol names and file paths, but docstrings and the source shown on the page
-  (capped by `max_snippet_lines`, §12 — a real miss says so, it doesn't just
-  look empty)
+  symbol names and file paths, but docstrings and the code itself, including
+  text deep inside a long function (source is embedded up to `max_source_bytes`,
+  §12 — a real miss says so, it doesn't just look empty)
 
 **Centre canvas — the neural graph.**
 - the Package / Module / File / Function buttons change what a dot means
@@ -108,12 +108,38 @@ at a time. The "Whole graph" button clears the focus.
   Simulate scenario instead of just printing it (hidden when this symbol *is*
   the entry point — there's nothing to walk back through)
 - a "Trace calls from here" link into the Map tab's Run trace (§6)
-- the symbol's source, and an "Open in editor" link
+- the symbol's source: a numbered, syntax-coloured preview of its first 30
+  lines, a **View source** button (the source viewer, below), and an "Open in
+  editor" link
+
+**Source viewer.** "View source" (or the "+N more lines" link under the
+preview) slides a panel over the right side of the graph with the symbol's
+**whole file**: line numbers, syntax colours, the symbol's own lines shaded and
+scrolled into view.
+- a small square in the margin marks where each symbol starts — click it to
+  focus that symbol in the graph
+- a chip at the end of a line (`head ↗`) marks a call the graph knows about —
+  click it to jump to the callee; the viewer stays open and follows you
+- the thin strip on the right is the whole file at a glance (every symbol at
+  its true position); click it to jump
+- <kbd>Esc</kbd> or the ✕ closes it. The address (`#/graph/<symbol>/src`) is
+  shareable
+- the highlighter is built into the page (comments, strings, numbers,
+  keywords, names) — no library is loaded, so it works offline
+- files that missed the size budget (`max_source_bytes`, §12) or look minified
+  show just the symbol's own excerpt, and the panel says so
 
 **Legend** (bottom-right) — read this:
 - **purple edge** = a same-file call the tool is confident about (tier 2)
 - **grey edge** = a cross-file guess by name (tier 1, may be over-broad)
 - module-level calls are **not** drawn at all
+- **Folder | Layer** switch — colours the dots and edges by folder (the
+  default) or by the architecture layer the Architecture tab (§5) placed each
+  file in. Layer mode lists the layers with their file counts; click one to
+  isolate it (the rest fade, they aren't hidden), click again to show all. The
+  layout doesn't move, only the colours. Layers are **inferred** from names and
+  imports, so treat them as a good guess; the folder view is the ground truth.
+  The switch only appears when the Architecture tab found layers
 
 Nothing is ever labelled "dead" — only "no inbound edge at tier N".
 
@@ -452,7 +478,17 @@ max_symbols       = 1500    # graph node cap; over this the graph drops to
                              #   file-level and the page says so. The tree
                              #   and file list stay complete.
 max_snippet_lines = 40      # longest source excerpt embedded per symbol
+                             #   (Simulate reads these; the viewer shows any length)
+max_source_bytes  = 4000000 # whole-file source embedded for the source viewer
+                             #   and code search. Most relevant files first
+                             #   (entry points, then churn + connectivity); past
+                             #   the budget a file keeps only its short excerpts.
+                             #   0 = embed no files.
 ```
+
+`max_source_bytes` is the knob for page size: on this repo the whole page is
+about 2.3 MB with every file embedded. Minified files and files with a line
+over 4,000 characters are never embedded.
 
 ## 13. Running against a different repository
 

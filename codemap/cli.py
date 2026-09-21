@@ -224,6 +224,7 @@ def cmd_explore(args: argparse.Namespace) -> int:
                 cfg,
                 max_symbols=args.max_symbols or cfg.explore.max_symbols,
                 max_snippet_lines=cfg.explore.max_snippet_lines,
+                max_source_bytes=cfg.explore.max_source_bytes,
                 progress=rep,
             )
             html = out = None
@@ -249,7 +250,8 @@ def cmd_explore(args: argparse.Namespace) -> int:
             print(f"wrote {len(paths)} brief(s) under {cfg.codemap_dir / 'briefs'}")
             return 0
         if args.json:
-            print(_json.dumps(data, indent=2, sort_keys=True))
+            # the embedded file text is for the HTML page, not for tooling
+            print(_json.dumps({k: v for k, v in data.items() if k != "sources"}, indent=2, sort_keys=True))
             return 0
 
         size_mb = len(html.encode("utf-8")) / 1_048_576

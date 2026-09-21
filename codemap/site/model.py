@@ -37,7 +37,7 @@ def _path_of(key: str) -> str:
     return key.split("::", 1)[0]
 
 
-def _file_source(cfg: Config, sha: str, path: str) -> list[str] | None:
+def _file_text(cfg: Config, sha: str, path: str) -> str | None:
     if sha == WORKTREE_SHA:
         from ..discovery import read_worktree_bytes
 
@@ -46,7 +46,29 @@ def _file_source(cfg: Config, sha: str, path: str) -> list[str] | None:
         blob = gitio.show_bytes(cfg.root, sha, path)
     if blob is None:
         return None
-    return blob.decode("utf-8", "replace").splitlines()
+    return blob.decode("utf-8", "replace")
+
+
+def _file_source(cfg: Config, sha: str, path: str) -> list[str] | None:
+    text = _file_text(cfg, sha, path)
+    return None if text is None else text.splitlines()
+
+
+# A line this long means a minified bundle or a data blob: nobody reads it in a
+# viewer, and one such file would eat the whole source budget.
+_MAX_SOURCE_LINE = 4000
+
+
+def _embeddable(text: str) -> str | None:
+    """The text as the viewer should show it, or None when it isn't source
+    worth embedding. Only LF-terminated lines are kept as lines: that is how
+    the parser counts, so a symbol's ``line`` range indexes the viewer's rows."""
+    if "\x00" in text:
+        return None
+    text = text.replace("\r\n", "\n")
+    if max((len(ln) for ln in text.split("\n")), default=0) > _MAX_SOURCE_LINE:
+        return None
+    return text
 
 
 # --------------------------------------------------------------------------- build
@@ -58,6 +80,7 @@ def build(
     *,
     max_symbols: int = 1500,
     max_snippet_lines: int = 40,
+    max_source_bytes: int = 4_000_000,
     progress: _progress.Reporter | None = None,
 ) -> dict:
     progress = progress or _progress.NULL
@@ -243,6 +266,30 @@ def build(
                     "explain": explanations.get(k) or None,
                 }
             )
+
+    # -- embedded sources ----------------------------------------------------
+    # The whole text of each file that holds a kept symbol, once, so the
+    # explorer's source viewer can show a symbol in its file and the palette can
+    # search symbols too long for `excerpt`. Most relevant files first (entry
+    # points, then churn + connectivity) until `max_source_bytes` runs out; a
+    # file that misses out keeps its capped per-symbol `excerpt`s.
+    sources: dict[str, str] = {}   # str(file index) -> text; string keys survive a JSON round trip
+    if max_source_bytes > 0:
+        rank: dict[str, int] = {}
+        for nd in nodes:
+            rank[nd["file"]] = rank.get(nd["file"], 0) + (
+                nd["churn"] * 3 + nd["fan_in"] + nd["fan_out"] + (1000 if nd["entry"] else 0)
+            )
+        left = max_source_bytes
+        for path in sorted(rank, key=lambda p: (-rank[p], p)):
+            text = _file_text(cfg, sha, path)
+            text = None if text is None else _embeddable(text)
+            if text is None:
+                continue
+            size = len(text.encode("utf-8"))
+            if size <= left:
+                sources[str(path_to_fi[path])] = text
+                left -= size
 
     # -- call edges (index pairs; tier 2 = same-file, tier 1 = name-based;
     #    confidence is the finer-grained M15 signal — EXTRACTED/INFERRED/
@@ -513,6 +560,8 @@ def build(
         "files": files,
         "file_edges": file_edges,
         "modules": modules,
+        "sources": sources,
+        "snippet_lines": max_snippet_lines,
         "folders": folder_list,
         "architecture": arch,
         "entry_points": entry_points,

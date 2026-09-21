@@ -122,6 +122,40 @@
   var fileByPath = {};
   FILES.forEach(function (f) { fileByPath[f.path] = f; });
 
+  // ---- embedded sources ---------------------------------------------------
+  // DATA.sources = {file index: whole file text} for the files that fit the
+  // [explore] max_source_bytes budget (model.py). The payload leaves out the
+  // per-symbol `excerpt` of those files, so it's rebuilt here — capped exactly
+  // as the Python side caps it, so Simulate and the rest see the same snippets.
+  var SRC = DATA.sources || {};
+  var SNIP_LINES = DATA.snippet_lines || 40;
+  var srcLinesCache = {};
+  function fileLines(fi) {
+    if (!(fi in srcLinesCache)) {
+      var t = SRC[fi];
+      if (t == null) srcLinesCache[fi] = null;
+      else {
+        var a = t.split("\n");
+        if (a.length && a[a.length - 1] === "") a.pop();
+        srcLinesCache[fi] = a;
+      }
+    }
+    return srcLinesCache[fi];
+  }
+  // a symbol's complete source (any length) — or its capped excerpt when its
+  // file wasn't embedded, or null when neither is known
+  function srcOf(n) {
+    var f = fileByPath[n.file], lines = f ? fileLines(f.fi) : null;
+    if (lines) return lines.slice(Math.max(n.line[0] - 1, 0), n.line[1]).join("\n");
+    return n.excerpt || null;
+  }
+  N.forEach(function (n) {
+    if (n.excerpt == null && n.line[1] - n.line[0] + 1 <= SNIP_LINES) {
+      var f = fileByPath[n.file];
+      if (f && fileLines(f.fi)) n.excerpt = srcOf(n);
+    }
+  });
+
   function bfs(start, adj, maxHops) {
     var dist = new Map([[start, 0]]);
     var frontier = [start];
@@ -257,6 +291,62 @@
   function colorForPath(p) { return groupColor[dirGroup(p)] || GROUP_OTHER; }
   function colorForNode(n) { return n && n.file ? colorForPath(n.file) : GROUP_OTHER; }
   function moduleColor(name) { return groupColor[name] || GROUP_OTHER; }
+
+  // ---- graph grouping: Folder | Layer ---------------------------------------
+  // The Graph legend can colour and filter by architecture layer instead of by
+  // folder. Layers come from DATA.architecture (the Architecture tab's
+  // inferred placement), so they are a best guess — the legend says so. Only
+  // colours and the filter key change; the layout is the same (it is seeded by
+  // node key, not by colour), so switching is a repaint, never a relayout.
+  var LAYER_IDS = ["entry", "views", "api", "logic", "data", "shared", "tests", "unplaced"];
+  var LAYER_LABEL = { entry: "Routes & entry", views: "Views & UI", api: "API", logic: "Logic",
+                      data: "Data", shared: "Shared code", tests: "Tests", unplaced: "Unplaced" };
+  var layerByFi = null;
+  function layerOfFile(f) {
+    if (!layerByFi) {
+      layerByFi = {};
+      ((DATA.architecture || {}).components || []).forEach(function (c) {
+        (c.files || []).concat(c.extra_files || []).forEach(function (fi) { layerByFi[fi] = c.layer; });
+      });
+    }
+    return (f && layerByFi[f.fi]) || "unplaced";
+  }
+  function hasLayers() { return !!((DATA.architecture || {}).components || []).length; }
+  function layerHue(id) { return id === "unplaced" ? GROUP_OTHER : (A_HUE[id] || GROUP_OTHER); }
+  function layerCounts() {
+    var c = {};
+    FILES.forEach(function (f) { var l = layerOfFile(f); c[l] = (c[l] || 0) + 1; });
+    return c;
+  }
+  // the graph's own colour / filter-key lookups: folder mode = the plain folder
+  // system above, layer mode = the file's layer. `gKey` is what state.folders
+  // holds and what applyHighlight() compares (a folder path, or "layer:<id>").
+  function gKey(path) {
+    return state.groupBy === "layer" ? "layer:" + layerOfFile(fileByPath[path]) : dirGroup(path);
+  }
+  function gColorForPath(p) {
+    return state.groupBy === "layer" ? layerHue(layerOfFile(fileByPath[p])) : colorForPath(p);
+  }
+  function gColorForNode(n) { return n && n.file ? gColorForPath(n.file) : GROUP_OTHER; }
+  var modLayerCache = {};
+  function gModuleColor(name) {
+    if (state.groupBy !== "layer") return moduleColor(name);
+    if (!(name in modLayerCache)) {
+      // a module cloud has no single layer: take the one most of its symbols sit in
+      var w = {}, best = null;
+      FILES.forEach(function (f) {
+        if (f.module !== name) return;
+        var l = layerOfFile(f);
+        w[l] = (w[l] || 0) + (f.symbols.length || 1);
+      });
+      Object.keys(w).forEach(function (l) { if (best === null || w[l] > w[best]) best = l; });
+      modLayerCache[name] = best || "unplaced";
+    }
+    return layerHue(modLayerCache[name]);
+  }
+  // a lobe is a folder outline, so in layer mode it stays neutral and lets the
+  // layer colours on the nodes and edges carry the grouping
+  function gLobeColor(name) { return state.groupBy === "layer" ? GROUP_OTHER : moduleColor(name); }
 
   // ---- traffic model --------------------------------------------------
   // No runtime profile exists, so "traffic" is derived by BFS outward from the
@@ -462,7 +552,9 @@
     module: null,
     pkg: null,      // Packages: current package/module slug
     flow: !reduceMotion,
-    folders: new Set(),   // legend folder filter — empty = every folder shown
+    folders: new Set(),   // legend filter — empty = everything shown; folder paths, or "layer:<id>" in layer mode
+    groupBy: "folder",    // Graph: colour + filter by "folder" or by inferred architecture "layer"
+    srcOpen: false,       // Graph: the source viewer slide-over is open on the focused symbol
     pin: null,            // a click-pinned node key: spotlight it + its edges
     mapView: "layers",    // Map tab: "layers" | "trace" | "mass"
     traceRoot: null,      // Map/trace: node index of the traced call root
@@ -495,6 +587,7 @@
   }
   function go(tab, arg) {
     var next = "#/" + tab + (arg ? "/" + encodeURIComponent(arg) : "");
+    if (tab === "graph" && arg && state.srcOpen) next += "/src";   // keep the viewer open while moving between symbols
     // location.hash = same value fires no hashchange, so re-clicking the
     // already-open target (a symbol, the focused file's row, …) would
     // otherwise silently do nothing — route directly instead.
@@ -512,8 +605,15 @@
     var r = parseHash();
     state.tab = ["graph", "arch", "learn", "libs", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "learn";
     if (state.tab === "graph") {
-      if (r.arg && keyToI[r.arg] != null) { state.focus = keyToI[r.arg]; state.fileScope = null; }
-      else if (!r.arg) state.focus = null;
+      // "#/graph/<key>/src" = that symbol with the source viewer open
+      var gArg = r.arg;
+      state.srcOpen = false;
+      if (gArg && keyToI[gArg] == null && /\/src$/.test(gArg) && keyToI[gArg.slice(0, -4)] != null) {
+        gArg = gArg.slice(0, -4);
+        state.srcOpen = true;
+      }
+      if (gArg && keyToI[gArg] != null) { state.focus = keyToI[gArg]; state.fileScope = null; }
+      else if (!gArg) state.focus = null;
     } else if (state.tab === "learn") {
       // #/learn/<page-id>; no arg lands on Orientation, not the first folder —
       // "nobody understands a codebase entirely" is a better first thing to
@@ -789,6 +889,7 @@
   // state.folderScope records `prefix` itself, verbatim, so the legend (see
   // legend() / openFolder()) knows which folder it's currently browsing.
   function isolateFolder(prefix) {
+    state.groupBy = "folder";   // folder keys mean nothing in layer mode
     var hits = new Set();
     Object.keys(groupColor).forEach(function (k) {
       if (k === prefix || k.indexOf(prefix + "/") === 0) hits.add(k);
@@ -832,7 +933,7 @@
       mods.forEach(function (m, mi) {
         var c = centers[m.name];
         placed.push({ i: "mod:" + m.name, x: c.x, y: c.y, style: NODE_STYLE.hot,
-          label: m.name + "  (" + m.symbol_count + ")", kind: "mod", group: moduleColor(m.name),
+          label: m.name + "  (" + m.symbol_count + ")", kind: "mod", group: gModuleColor(m.name),
           act: function () { state.grain = 1; state.view = { x: 0, y: 0, k: 1 }; render(); } });
       });
       var seen = {};
@@ -843,7 +944,7 @@
         var md = moduleDepth(a);
         links.push({ a: centers[a], b: centers[b], seed: hashSeed(a + b), hot: true,
           sk: "mod:" + a, tk: "mod:" + b,
-          grp: moduleColor(a), live: md >= 0, dep: md < 0 ? 0 : md, vol: 8 });
+          grp: gModuleColor(a), live: md >= 0, dep: md < 0 ? 0 : md, vol: 8 });
       });
       return { placed: placed, links: links, lobes: lobes, capped: false };
     }
@@ -876,10 +977,10 @@
           : it.ref.entry.length ? NODE_STYLE.entry
           : dead ? NODE_STYLE.dead
           : it.ref.fan_in >= 6 ? NODE_STYLE.hot : NODE_STYLE.node;
-        var fk = it.kind === "file" ? dirGroup(it.ref.path) : dirGroup(it.ref.file);
+        var fk = it.kind === "file" ? gKey(it.ref.path) : gKey(it.ref.file);
         placed.push({ i: it.idx == null ? it.key : it.idx, x: x, y: y, style: style,
           label: it.label, kind: it.kind, dead: dead,
-          group: it.kind === "file" ? colorForPath(it.ref.path) : colorForNode(it.ref), fk: fk,
+          group: it.kind === "file" ? gColorForPath(it.ref.path) : gColorForNode(it.ref), fk: fk,
           act: it.kind === "file" ? fileAct(it.ref) : null });
       });
     });
@@ -901,7 +1002,7 @@
         var fd = fileFlow[fe.s], tf = FILES[fe.t];
         links.push({ a: a, b: b, seed: fe.s * 131 + fe.t, hot: hot,
           sk: "file:" + FILES[fe.s].path, tk: "file:" + FILES[fe.t].path,
-          grp: colorForPath(FILES[fe.s].path), fk: dirGroup(FILES[fe.s].path),
+          grp: gColorForPath(FILES[fe.s].path), fk: gKey(FILES[fe.s].path),
           live: fd >= 0, dep: fd < 0 ? 0 : fd,
           vol: (tf.symbols || []).reduce(function (s, si) { return s + N[si].fan_in; }, 0) });
       });
@@ -913,7 +1014,7 @@
         if (e.tier === 1 && N[e.s].fan_in < 3 && N[e.t].fan_in < 3 && cap++ > 220) return;
         var sd = symDepth(e.s);
         links.push({ a: a, b: b, seed: e.s * 131 + e.t, hot: e.tier === 2,
-          s: e.s, t: e.t, sk: e.s, tk: e.t, grp: colorForNode(N[e.s]), fk: dirGroup(N[e.s].file),
+          s: e.s, t: e.t, sk: e.s, tk: e.t, grp: gColorForNode(N[e.s]), fk: gKey(N[e.s].file),
           live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[e.t].fan_in });
       });
     }
@@ -925,7 +1026,7 @@
     var f = state.focus;
     var soma = { x: VBW / 2, y: VBH / 2 };
     var placed = [{ i: f, x: soma.x, y: soma.y, style: NODE_STYLE.focus, label: N[f].name,
-      kind: "focus", group: colorForNode(N[f]), fk: dirGroup(N[f].file) }];
+      kind: "focus", group: gColorForNode(N[f]), fk: gKey(N[f].file) }];
     var links = [];
     var capped = false;
     function ring(dist, side) {
@@ -953,14 +1054,14 @@
           var style = N[idx].entry.length ? NODE_STYLE.entry
             : N[idx].fan_in >= 6 ? NODE_STYLE.hot : NODE_STYLE.node;
           placed.push({ i: idx, x: x, y: y, style: style, label: N[idx].name,
-            kind: side === "in" ? "caller" : "callee", group: colorForNode(N[idx]),
-            fk: dirGroup(N[idx].file) });
+            kind: side === "in" ? "caller" : "callee", group: gColorForNode(N[idx]),
+            fk: gKey(N[idx].file) });
           var src = side === "in" ? idx : f, dst = side === "in" ? f : idx;
           var sd = symDepth(src);
           links.push({ a: side === "in" ? { x: x, y: y } : soma,
             b: side === "in" ? soma : { x: x, y: y },
             seed: hashSeed(N[idx].key), hot: h === 1, thin: side === "in",
-            s: src, t: dst, sk: src, tk: dst, grp: colorForNode(N[idx]), fk: dirGroup(N[idx].file),
+            s: src, t: dst, sk: src, tk: dst, grp: gColorForNode(N[idx]), fk: gKey(N[idx].file),
             live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[dst].fan_in });
         });
       });
@@ -990,7 +1091,7 @@
       transform: "translate(" + state.view.x + "," + state.view.y + ") scale(" + state.view.k + ")" });
 
     lay.lobes.forEach(function (lo) {
-      var lc = moduleColor(lo.name), plain = lc === GROUP_OTHER;
+      var lc = gLobeColor(lo.name), plain = lc === GROUP_OTHER;
       g.appendChild(el("ellipse", { cx: lo.x, cy: lo.y, rx: lo.rx, ry: lo.ry,
         fill: plain ? "rgba(147,151,171,.035)" : hexA(lc, 0.055),
         stroke: plain ? "rgba(147,151,171,.18)" : hexA(lc, 0.34), "stroke-width": 1.2 }));
@@ -1501,6 +1602,51 @@
     grip.addEventListener("pointerup", endDrag);
     grip.addEventListener("pointercancel", endDrag);
   }
+  // Folder | Layer: recolours the same graph (see "graph grouping" above)
+  function setGroupBy(mode) {
+    if (state.groupBy === mode) return;
+    state.groupBy = mode;
+    state.folders = new Set();
+    state.folderScope = "";
+    paintGraph();
+    refreshLegend();
+  }
+  function groupSwitch() {
+    function opt(mode, label) {
+      var on = state.groupBy === mode;
+      return el("button", { class: on ? "on" : "", "aria-pressed": on ? "true" : "false", text: label,
+        on: { click: function () { setGroupBy(mode); } } });
+    }
+    return el("div", { class: "legend-seg", role: "group", "aria-label": "Colour the graph by" },
+      [opt("folder", "Folder"), opt("layer", "Layer")]);
+  }
+  // clicking a layer isolates it (transparent, not hidden — same rule as folders);
+  // clicking the only isolated layer again shows everything
+  function toggleLayer(id) {
+    var key = "layer:" + id;
+    state.folders = state.folders.size === 1 && state.folders.has(key) ? new Set() : new Set([key]);
+    applyHighlight();
+    refreshLegend();
+  }
+  function legendLayers(box) {
+    var counts = layerCounts();
+    LAYER_IDS.forEach(function (id) {
+      if (!counts[id]) return;
+      var on = state.folders.has("layer:" + id);
+      box.appendChild(el("div", { class: "row nav" + (on ? " on" : ""),
+        title: "isolate " + LAYER_LABEL[id] + " — " + counts[id] + " file" + (counts[id] === 1 ? "" : "s"),
+        on: { click: function () { toggleLayer(id); } } }, [
+        el("span", { class: "sw dot", style: "background:" + layerHue(id) }),
+        el("span", { class: "gname", text: LAYER_LABEL[id] }),
+        el("span", { class: "cnt", text: String(counts[id]) }),
+      ]));
+    });
+    if (state.folders.size)
+      box.appendChild(el("div", { class: "row nav", on: { click: function () { state.folders = new Set(); applyHighlight(); refreshLegend(); } } },
+        [el("i", { class: "ph ph-x" }), el("span", { class: "gname", text: "show all layers" })]));
+    box.appendChild(el("div", { class: "row note" }, [el("span", {}, ["inferred from names and imports · ",
+      el("a", { href: "#/arch", text: "see Architecture" })])]));
+  }
   function legend() {
     var scope = state.folderScope;
     var box = el("div", { class: "legend" + (state.legendCollapsed ? " collapsed" : "") });
@@ -1511,7 +1657,7 @@
     var grip = el("i", { class: "ph ph-dots-six-vertical legend-grip", "aria-hidden": "true", title: "Drag to move" });
     box.appendChild(el("div", { class: "legend-head" }, [
       grip,
-      el("span", { class: "lk", text: "FOLDERS" }),
+      el("span", { class: "lk", text: state.groupBy === "layer" ? "LAYERS" : "FOLDERS" }),
       el("div", { class: "spacer" }),
       el("button", { class: "legend-toggle", "aria-label": state.legendCollapsed ? "Show legend" : "Hide legend",
         on: { click: function () { state.legendCollapsed = !state.legendCollapsed; refreshLegend(); } } },
@@ -1519,52 +1665,56 @@
     ]));
     wireLegendDrag(grip, box);
     if (state.legendCollapsed) return box;
+    if (hasLayers()) box.appendChild(groupSwitch());
 
-    // Dynamic, drilldown FOLDERS section: rather than one flat, repo-wide
-    // list, it mirrors TREE at whatever folder is currently "open" — root by
-    // default, or wherever a folder crumb / a row below last pointed. Picking
-    // a row both narrows this list to that folder's own children *and*
-    // isolates it in the graph (openFolder() does both, via state.folders).
-    if (scope) {
-      var segs = scope.split("/");
-      var pathRow = el("div", { class: "legend-path" }, [
-        el("span", { class: "seg", text: "root", on: { click: function () { openFolder(""); } } }),
-      ]);
-      segs.forEach(function (s, i) {
-        pathRow.appendChild(el("i", { class: "ph ph-caret-right" }));
-        var last = i === segs.length - 1;
-        var upto = segs.slice(0, i + 1).join("/");
-        var attrs = { class: last ? "seg cur" : "seg", text: s };
-        if (!last) attrs.on = { click: function () { openFolder(upto); } };
-        pathRow.appendChild(el("span", attrs));
-      });
-      box.appendChild(pathRow);
-    }
-    var node = treeNodeAt(scope) || TREE;
-    var childNames = Object.keys(node.dirs || {}).sort();
-    if (childNames.length) {
-      childNames.forEach(function (name) {
-        var childPath = scope ? scope + "/" + name : name;
-        // only a folder that directly holds files has one true colour in the
-        // graph itself (see colorForPath) — a pass-through folder that holds
-        // only subfolders gets a plain glyph rather than a made-up swatch.
-        var hex = Object.prototype.hasOwnProperty.call(groupColor, childPath) ? groupColor[childPath] : null;
-        box.appendChild(el("div", {
-          class: "row nav", title: "open " + childPath,
-          on: { click: function () { openFolder(childPath); } },
-        }, [
-          hex ? el("span", { class: "sw dot", style: "background:" + hex }) : el("i", { class: "ph ph-folder" }),
-          el("span", { class: "gname", text: name }),
-        ]));
-      });
-    } else {
-      box.appendChild(el("div", { class: "row note", text: "no subfolders here" }));
-      node.files.slice().sort(function (a, b) { return a.path < b.path ? -1 : 1; }).forEach(function (f) {
-        box.appendChild(el("div", { class: "row nav", title: f.path, on: { click: fileAct(f) } }, [
-          el("i", { class: fileIcon(f.lang) }),
-          el("span", { class: "gname", text: f.path.split("/").pop() }),
-        ]));
-      });
+    if (state.groupBy === "layer") legendLayers(box);
+    else {
+      // Dynamic, drilldown FOLDERS section: rather than one flat, repo-wide
+      // list, it mirrors TREE at whatever folder is currently "open" — root by
+      // default, or wherever a folder crumb / a row below last pointed. Picking
+      // a row both narrows this list to that folder's own children *and*
+      // isolates it in the graph (openFolder() does both, via state.folders).
+      if (scope) {
+        var segs = scope.split("/");
+        var pathRow = el("div", { class: "legend-path" }, [
+          el("span", { class: "seg", text: "root", on: { click: function () { openFolder(""); } } }),
+        ]);
+        segs.forEach(function (s, i) {
+          pathRow.appendChild(el("i", { class: "ph ph-caret-right" }));
+          var last = i === segs.length - 1;
+          var upto = segs.slice(0, i + 1).join("/");
+          var attrs = { class: last ? "seg cur" : "seg", text: s };
+          if (!last) attrs.on = { click: function () { openFolder(upto); } };
+          pathRow.appendChild(el("span", attrs));
+        });
+        box.appendChild(pathRow);
+      }
+      var node = treeNodeAt(scope) || TREE;
+      var childNames = Object.keys(node.dirs || {}).sort();
+      if (childNames.length) {
+        childNames.forEach(function (name) {
+          var childPath = scope ? scope + "/" + name : name;
+          // only a folder that directly holds files has one true colour in the
+          // graph itself (see colorForPath) — a pass-through folder that holds
+          // only subfolders gets a plain glyph rather than a made-up swatch.
+          var hex = Object.prototype.hasOwnProperty.call(groupColor, childPath) ? groupColor[childPath] : null;
+          box.appendChild(el("div", {
+            class: "row nav", title: "open " + childPath,
+            on: { click: function () { openFolder(childPath); } },
+          }, [
+            hex ? el("span", { class: "sw dot", style: "background:" + hex }) : el("i", { class: "ph ph-folder" }),
+            el("span", { class: "gname", text: name }),
+          ]));
+        });
+      } else {
+        box.appendChild(el("div", { class: "row note", text: "no subfolders here" }));
+        node.files.slice().sort(function (a, b) { return a.path < b.path ? -1 : 1; }).forEach(function (f) {
+          box.appendChild(el("div", { class: "row nav", title: f.path, on: { click: fileAct(f) } }, [
+            el("i", { class: fileIcon(f.lang) }),
+            el("span", { class: "gname", text: f.path.split("/").pop() }),
+          ]));
+        });
+      }
     }
     box.appendChild(el("div", { class: "lk", style: "margin-top:9px", text: "EDGE" }));
     box.appendChild(el("div", { class: "row" }, [
@@ -1753,13 +1903,15 @@
         el("p", { style: "margin:0;font-size:12px;color:#b2b6ca", text: n.doc }),
       ]));
 
-    if (n.excerpt)
-      body.appendChild(el("div", { class: "section" }, [
-        el("div", { class: "lbl", text: n.file + ":" + n.line[0] + "-" + n.line[1] }),
-        el("pre", { class: "excerpt", text: n.excerpt }),
-      ]));
+    var preview = codePreview(n);
+    if (preview) body.appendChild(preview);
 
-    foot.appendChild(el("a", { class: "btn primary", href: editorUri(n), text: "Open in editor" }));
+    if (hasSource(n)) {
+      var viewBtn = el("button", { class: "btn primary", text: "View source" });
+      viewBtn.addEventListener("click", openSource);
+      foot.appendChild(viewBtn);
+    }
+    foot.appendChild(el("a", { class: "btn" + (hasSource(n) ? "" : " primary"), href: editorUri(n), text: "Open in editor" }));
     var copyBtn = el("button", { class: "btn", text: "Copy key" });
     copyBtn.addEventListener("click", function () { copyText(n.key, copyBtn); });
     foot.appendChild(copyBtn);
@@ -1939,8 +2091,323 @@
     return encodeURI("vscode://file" + root + "/" + n.file + ":" + n.line[0]);
   }
 
+
+  // ---- source viewer --------------------------------------------------------
+  // A slide-over on the Graph stage: the focused symbol's whole file, line
+  // numbered and highlighted, with the symbol's range marked. Definitions and
+  // call sites inside it link back into the graph — the reason to read code
+  // here rather than in an editor. Built from DATA.sources; a file that missed
+  // the embed budget shows the symbol's own excerpt instead. The highlighter is
+  // deliberately small (comments, strings, numbers, keywords, names) and local:
+  // no CDN script, so the page still works offline.
+  //
+  // Every piece of source text reaches the DOM through escHtml() (a whole file
+  // is thousands of rows — building them as nodes is the slow path), and the
+  // only other markup is fixed strings and numeric symbol indices.
+  function kwSet(words) {
+    var o = {};
+    words.split(" ").forEach(function (w) { o[w] = 1; });
+    return o;
+  }
+  var HL_KW = {
+    py: kwSet("and as assert async await break case class continue def del elif else except finally for from " +
+      "global if import in is lambda match nonlocal not or pass raise return try while with yield self cls " +
+      "True False None"),
+    js: kwSet("abstract as async await break case catch class const continue debugger declare default delete do " +
+      "else enum export extends false finally for from function get if implements import in instanceof " +
+      "interface let namespace new null of private protected public readonly return set static super switch " +
+      "this throw true try type typeof undefined var void while with yield"),
+    c: kwSet("abstract as async await bool break case catch char class const continue default defer delete do " +
+      "double else enum export extends extern false final finally float fn for func go goto if impl import " +
+      "in include instanceof int interface let long loop match mod mut namespace new nil null override package " +
+      "private protected pub public readonly ref return self short signed static struct super switch this " +
+      "throw trait true try type typedef typeof union unsafe unsigned use using var virtual void volatile " +
+      "where while yield"),
+    rb: kwSet("alias and begin break case class def defined do else elsif end ensure false for if in module " +
+      "next nil not or redo rescue retry return self super then true undef unless until when while yield " +
+      "require require_relative attr_accessor attr_reader attr_writer"),
+  };
+  var HL_SLASH = { line: ["//"], block: ["/*", "*/"], kw: "c" };
+  var HL_SPEC = {
+    python: { line: ["#"], tri: true, kw: "py" },
+    ruby: { line: ["#"], kw: "rb" },
+    php: { line: ["//", "#"], block: ["/*", "*/"], kw: "c" },
+    javascript: { line: ["//"], block: ["/*", "*/"], tpl: true, kw: "js" },
+    typescript: { line: ["//"], block: ["/*", "*/"], tpl: true, kw: "js" },
+    tsx: { line: ["//"], block: ["/*", "*/"], tpl: true, kw: "js" },
+    go: { line: ["//"], block: ["/*", "*/"], tpl: true, kw: "c" },
+  };
+  var HL_DEF_WORD = kwSet("def class function fn func struct enum interface trait type impl module namespace");
+  // sticky: String.match() with these reads from `lastIndex`, i.e. "does a token start exactly here"
+  var HL_RE_ID = /[A-Za-z_$][\w$]*/y;
+  var HL_RE_NUM = /0[xX][0-9a-fA-F_]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+  var HL_BS = String.fromCharCode(92);
+  function escHtml(s) {
+    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+  // one html string per source line. A block comment / triple-quoted / template
+  // string that is still open at the end of a line carries into the next one.
+  function highlightLines(lines, lang) {
+    var spec = HL_SPEC[lang] || HL_SLASH, kw = HL_KW[spec.kw];
+    var carry = null, out = [];
+    lines.forEach(function (s) {
+      var h = "", pl = "", i = 0, n = s.length, afterDef = false;
+      function flush() { if (pl) { h += escHtml(pl); pl = ""; } }
+      function tok(cls, t) { flush(); h += '<span class="' + cls + '">' + escHtml(t) + "</span>"; }
+      if (carry) {
+        var j0 = s.indexOf(carry.end);
+        if (j0 < 0) { out.push(s ? '<span class="' + carry.cls + '">' + escHtml(s) + "</span>" : ""); return; }
+        tok(carry.cls, s.slice(0, j0 + carry.end.length));
+        i = j0 + carry.end.length;
+        carry = null;
+      }
+      while (i < n) {
+        var c = s.charAt(i), m, k;
+        var isLine = false;
+        for (k = 0; k < spec.line.length; k++) if (s.startsWith(spec.line[k], i)) { isLine = true; break; }
+        if (isLine) { tok("c", s.slice(i)); i = n; break; }
+        if (spec.block && s.startsWith(spec.block[0], i)) {
+          var eb = s.indexOf(spec.block[1], i + spec.block[0].length);
+          if (eb < 0) { tok("c", s.slice(i)); carry = { end: spec.block[1], cls: "c" }; i = n; }
+          else { tok("c", s.slice(i, eb + spec.block[1].length)); i = eb + spec.block[1].length; }
+          continue;
+        }
+        if (spec.tri && (s.startsWith('"""', i) || s.startsWith("'''", i))) {
+          var q3 = s.substr(i, 3), e3 = s.indexOf(q3, i + 3);
+          if (e3 < 0) { tok("s", s.slice(i)); carry = { end: q3, cls: "s" }; i = n; }
+          else { tok("s", s.slice(i, e3 + 3)); i = e3 + 3; }
+          continue;
+        }
+        if (c === '"' || c === "'" || (c === "`" && spec.tpl)) {
+          var j = i + 1;
+          while (j < n && s.charAt(j) !== c) j += s.charAt(j) === HL_BS ? 2 : 1;
+          if (j >= n && c === "`") { tok("s", s.slice(i)); carry = { end: "`", cls: "s" }; i = n; }
+          else { tok("s", s.slice(i, j + 1)); i = Math.min(j + 1, n); }
+          continue;
+        }
+        if (c >= "0" && c <= "9" && !/[\w$]/.test(i ? s.charAt(i - 1) : " ")) {
+          HL_RE_NUM.lastIndex = i;
+          m = s.match(HL_RE_NUM);
+          if (m) { tok("n", m[0]); i += m[0].length; afterDef = false; continue; }
+        }
+        if (c === "@" && /[A-Za-z_]/.test(s.charAt(i + 1))) {
+          HL_RE_ID.lastIndex = i + 1;
+          m = s.match(HL_RE_ID);
+          if (m) { tok("d", "@" + m[0]); i += 1 + m[0].length; afterDef = false; continue; }
+        }
+        if (/[A-Za-z_$]/.test(c)) {
+          HL_RE_ID.lastIndex = i;
+          m = s.match(HL_RE_ID);
+          var w = m[0];
+          if (kw[w]) { tok("k", w); afterDef = !!HL_DEF_WORD[w]; }
+          else if (afterDef) { tok("f", w); afterDef = false; }
+          else if (s.charAt(i + w.length) === "(") { tok("m", w); }
+          else if (/^[A-Z]/.test(w)) { tok("t", w); }
+          else pl += w;
+          i += w.length;
+          continue;
+        }
+        if (c !== " " && c !== "\t") afterDef = false;
+        pl += c;
+        i++;
+      }
+      flush();
+      out.push(h);
+    });
+    return out;
+  }
+  var hlCache = {};   // file index -> highlighted html per line (whole files only)
+  function fileHtml(f) {
+    if (!hlCache[f.fi]) hlCache[f.fi] = highlightLines(fileLines(f.fi), f.lang);
+    return hlCache[f.fi];
+  }
+  function hasSource(n) {
+    var f = fileByPath[n.file];
+    return !!((f && fileLines(f.fi)) || n.excerpt);
+  }
+  function symSpan(m) { return m.line[1] - m.line[0]; }
+  // parse an html string (already escaped, see above) into `host`
+  function setHtml(host, html) {
+    host.textContent = "";
+    host.appendChild(document.createRange().createContextualFragment(html));
+  }
+
+  // the inspector's short preview of a symbol: numbered + highlighted, first
+  // PREVIEW_LINES lines, with a way into the full viewer
+  var PREVIEW_LINES = 30;
+  function codePreview(n) {
+    var text = srcOf(n);
+    if (!text) return null;
+    var f = fileByPath[n.file], lines = text.split("\n");
+    var shown = lines.slice(0, PREVIEW_LINES);
+    var html = highlightLines(shown, f ? f.lang : "");
+    var pre = el("pre", { class: "excerpt code" });
+    setHtml(pre, html.map(function (h, i) {
+      return '<span class="no">' + (n.line[0] + i) + "</span>" + h;
+    }).join("\n"));
+    var kids = [
+      el("div", { class: "lbl", text: n.file + ":" + n.line[0] + "-" + n.line[1] }),
+      pre,
+    ];
+    if (lines.length > shown.length)
+      kids.push(el("div", { class: "src-more",
+        text: "+" + (lines.length - shown.length) + " more lines — view source",
+        on: { click: function () { openSource(); } } }));
+    return el("div", { class: "section" }, kids);
+  }
+
+  function openSource() {
+    if (state.focus == null || !hasSource(N[state.focus])) return;
+    state.srcOpen = true;
+    history.replaceState(null, "", "#/graph/" + encodeURIComponent(N[state.focus].key) + "/src");
+    syncSrc();
+  }
+  function closeSource() {
+    state.srcOpen = false;
+    if (state.focus != null)
+      history.replaceState(null, "", "#/graph/" + encodeURIComponent(N[state.focus].key));
+    syncSrc();
+  }
+  window.addEventListener("keydown", function (e) {
+    if (e.key === "Escape" && state.srcOpen && !paletteOpen && state.tab === "graph") closeSource();
+  });
+
+  function srcViewer(n) {
+    var f = fileByPath[n.file] || null;
+    var whole = !!(f && fileLines(f.fi));
+    var first = whole ? 1 : n.line[0];
+    var htmls = whole ? fileHtml(f)
+      : n.excerpt ? highlightLines(n.excerpt.split("\n"), f ? f.lang : "") : null;
+    var syms = whole ? f.symbols.map(function (i) { return N[i]; }) : [n];
+
+    var head = el("div", { class: "src-head" }, [
+      el("i", { class: fileIcon(f ? f.lang : "") }),
+      el("div", { class: "src-title" }, [
+        el("span", { class: "src-path", text: n.file }),
+        el("span", { class: "src-sub", text: n.qual + " · lines " + n.line[0] + "–" + n.line[1] +
+          (f && f.loc ? " · " + f.loc + " lines in file" : "") }),
+      ]),
+      el("div", { class: "spacer" }),
+      el("a", { class: "btn", href: editorUri(n), text: "Open in editor" }),
+      el("button", { class: "src-close", "aria-label": "Close source", title: "Close (Esc)",
+        on: { click: closeSource } }, [el("i", { class: "ph ph-x" })]),
+    ]);
+    var kids = [head];
+    if (!whole && htmls)
+      kids.push(el("div", { class: "src-note",
+        text: "The whole file isn't embedded (over the max_source_bytes budget, or minified) — this is the symbol's own excerpt." }));
+
+    var body = el("div", { class: "srcbody", tabindex: "0", role: "region", "aria-label": "Source of " + n.file });
+    if (!htmls) {
+      body.appendChild(el("div", { class: "src-empty",
+        text: "No source is embedded for this symbol. Use Open in editor to read it." }));
+      kids.push(el("div", { class: "srcwrap" }, [body]));
+      return el("aside", { class: "srcpane", "aria-label": "Source viewer" }, kids);
+    }
+
+    // where a definition starts / a call happens, by absolute line
+    var defAt = {}, callsAt = {};
+    syms.forEach(function (m) {
+      var l = m.line[0];
+      if (!(l in defAt) || symSpan(m) < symSpan(N[defAt[l]])) defAt[l] = m.i;
+      (outCalls[m.i] || []).forEach(function (c) {
+        if (!c.line) return;
+        var a = callsAt[c.line] || (callsAt[c.line] = []);
+        if (a.indexOf(c.t) < 0) a.push(c.t);
+      });
+    });
+    var rows = [];
+    for (var k = 0; k < htmls.length; k++) {
+      var no = first + k;
+      var cls = "sl" + (no >= n.line[0] && no <= n.line[1] ? " in" : "") + (no === n.line[0] ? " top" : "");
+      var mk = defAt[no] != null
+        ? '<button class="dm' + (defAt[no] === n.i ? " on" : "") + '" data-s="' + defAt[no] +
+          '" title="Show in the graph" aria-label="Show in the graph"></button>' : "";
+      var chips = "";
+      (callsAt[no] || []).slice(0, 3).forEach(function (t) {
+        chips += '<button class="cl" data-s="' + t + '" title="Go to ' + escHtml(N[t].qual) + '">' +
+          escHtml(N[t].name) + " &#8599;</button>";
+      });
+      rows.push('<div class="' + cls + '" data-l="' + no + '"><span class="mk">' + mk + '</span><span class="no">' +
+        no + '</span><span class="cd">' + (htmls[k] || " ") + chips + "</span></div>");
+    }
+    setHtml(body, rows.join(""));
+    body.addEventListener("click", function (e) {
+      var t = e.target.closest && e.target.closest("[data-s]");
+      if (t) go("graph", N[+t.getAttribute("data-s")].key);
+    });
+
+    var wrapKids = [body];
+    if (whole) {
+      // a strip of the file: every symbol at its true position (same idea as the
+      // inspector's anatomy), a viewport marker, click to jump
+      var total = htmls.length;
+      var map = el("div", { class: "srcmap", "aria-hidden": "true", title: "Click to jump" });
+      syms.forEach(function (m) {
+        map.appendChild(el("i", { class: "sm" + (m.i === n.i ? " on" : ""),
+          style: "top:" + ((m.line[0] - 1) / total * 100) + "%;height:" +
+            Math.max(0.5, (m.line[1] - m.line[0] + 1) / total * 100) + "%;background:" +
+            (ANATOMY_KIND[m.kind] || "#75798c") }));
+      });
+      var view = el("b", { class: "sm-view" });
+      map.appendChild(view);
+      var place = function () {
+        var h = body.scrollHeight || 1;
+        view.style.top = (body.scrollTop / h * 100) + "%";
+        view.style.height = Math.min(100, body.clientHeight / h * 100) + "%";
+      };
+      body.addEventListener("scroll", place);
+      map.addEventListener("click", function (e) {
+        var r = map.getBoundingClientRect();
+        body.scrollTop = (e.clientY - r.top) / r.height * body.scrollHeight - body.clientHeight / 2;
+      });
+      wrapKids.push(map);
+    }
+    kids.push(el("div", { class: "srcwrap" }, wrapKids));
+    return el("aside", { class: "srcpane", "aria-label": "Source viewer" }, kids);
+  }
+
+  // Mount / refresh / remove the pane so it always matches state.srcOpen and the
+  // focused symbol. Called after every graph render and focus change.
+  function syncSrc() {
+    var stageEl = canvasEl && canvasEl.closest(".stage");
+    if (!stageEl) return;
+    var old = stageEl.querySelector(".srcpane");
+    var want = state.srcOpen && state.tab === "graph" && state.focus != null && hasSource(N[state.focus]);
+    stageEl.classList.toggle("src-open", !!want);
+    if (!want) {
+      if (old) old.remove();
+      return;
+    }
+    var n = N[state.focus], pane = srcViewer(n);
+    if (old) old.replaceWith(pane);
+    else stageEl.appendChild(pane);
+    var body = pane.querySelector(".srcbody"), top = pane.querySelector('.sl[data-l="' + n.line[0] + '"]');
+    if (body && top) body.scrollTop = Math.max(0, top.offsetTop - body.clientHeight * 0.22);
+    if (body) body.dispatchEvent(new Event("scroll"));
+  }
+
   // ---- palette --------------------------------------------
   var paletteOpen = false;
+  // symbols matching `q`: by name / file / docstring first (in file order), then
+  // by text inside their code. The full symbol text is lower-cased once per
+  // symbol — this runs on every keystroke.
+  var lcSrc = {};
+  function srcLower(n) {
+    if (!(n.i in lcSrc)) { var s = srcOf(n); lcSrc[n.i] = s ? s.toLowerCase() : ""; }
+    return lcSrc[n.i];
+  }
+  function searchNodes(q) {
+    var named = [], inText = [];
+    N.forEach(function (n) {
+      if ((n.qual + " " + n.file).toLowerCase().indexOf(q) >= 0
+        || (n.doc && n.doc.toLowerCase().indexOf(q) >= 0)) named.push(n);
+      else if (srcLower(n).indexOf(q) >= 0) inText.push(n);
+    });
+    // a hit inside code: the innermost symbol first, not the class or long function around it
+    inText.sort(function (a, b) { return symSpan(a) - symSpan(b); });
+    return named.concat(inText);
+  }
   function openPalette() {
     if (paletteOpen) return;
     paletteOpen = true;
@@ -1951,12 +2418,12 @@
     var list = el("ul");
     // "text on a button exists somewhere in the files — that's your entry
     // point into anything" (teacher's principle 6). This box only ever
-    // searches what's actually in the page (source excerpts are capped by
-    // [explore] max_snippet_lines), so a real miss still deserves a plain
-    // explanation rather than reading as "that text doesn't exist".
+    // searches what's actually in the page (whole files up to [explore]
+    // max_source_bytes, capped excerpts past that), so a real miss still
+    // deserves a plain explanation rather than reading as "that text doesn't exist".
     var empty = el("li", { class: "palette-empty",
-      text: "No match in any symbol name, file, docstring, or the source shown here " +
-        "— it may be in a snippet too long for this page to hold.", hidden: true });
+      text: "No match in any symbol name, file, docstring, or the source in this page " +
+        "— it may be in a file too large to embed (see max_source_bytes).", hidden: true });
     var back = el("div", { class: "palette-back", role: "dialog", "aria-modal": "true",
       on: { click: function (e) { if (e.target === back) closeP(); } } },
       [el("div", { class: "palette" }, [input, list])]);
@@ -1974,15 +2441,16 @@
       document.body.removeChild(back);
       if (restoreFocus && typeof restoreFocus.focus === "function") restoreFocus.focus();
     }
-    // the first line in the doc or the source excerpt that contains the query
+    // the first line in the doc or the symbol's source that contains the query
     // — matched text you saw on screen, not just a symbol you already know
-    // the name of. Excerpts are capped by max_snippet_lines, so this is "what's
-    // in the page", not "the whole repo" (the empty state above says so).
+    // the name of. This is "what's in the page", not "the whole repo" (the
+    // empty state above says so).
     function findMatchLine(n, q) {
       if (n.doc && n.doc.toLowerCase().indexOf(q) >= 0)
         return n.doc.trim().split("\n")[0];
-      if (n.excerpt) {
-        var lines = n.excerpt.split("\n");
+      var src = srcOf(n);
+      if (src) {
+        var lines = src.split("\n");
         for (var i = 0; i < lines.length; i++)
           if (lines[i].toLowerCase().indexOf(q) >= 0) return lines[i].trim();
       }
@@ -1990,11 +2458,7 @@
     }
     function refresh() {
       var q = input.value.toLowerCase().trim();
-      matches = (q ? N.filter(function (n) {
-        return (n.qual + " " + n.file).toLowerCase().indexOf(q) >= 0
-          || (n.doc && n.doc.toLowerCase().indexOf(q) >= 0)
-          || (n.excerpt && n.excerpt.toLowerCase().indexOf(q) >= 0);
-      }) : N).slice(0, 60);
+      matches = (q ? searchNodes(q) : N).slice(0, 60);
       sel = 0;
       clear(list);
       if (!matches.length) { list.appendChild(empty); empty.hidden = false; return; }
@@ -5346,6 +5810,7 @@
       frag.appendChild(el("main", { class: "view" }, [learnTab()]));
     APP.appendChild(frag);
     updateCap();
+    syncSrc();
   }
 
   // Cheap path for "still on the Graph tab, just picked a different symbol
@@ -5372,6 +5837,7 @@
     freshInsp.classList.toggle("open", state.mobileInsp);
     var oldInsp = document.querySelector(".insp");
     if (oldInsp) oldInsp.replaceWith(freshInsp);
+    syncSrc();
   }
 
   route();

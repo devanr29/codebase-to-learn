@@ -76,6 +76,10 @@ model = "claude-sonnet-5"
 rebuild_on_commit = true
 max_symbols = 1500
 max_snippet_lines = 40
+# Whole-file source embedded for the source viewer (bytes, all files together);
+# past it the least relevant files keep only their short per-symbol excerpts.
+# 0 = embed no files.
+max_source_bytes = 4000000
 """
 
 
@@ -90,6 +94,7 @@ class ExploreConfig:
     rebuild_on_commit: bool = True
     max_symbols: int = 1500
     max_snippet_lines: int = 40
+    max_source_bytes: int = 4_000_000
 
 
 @dataclass
@@ -146,6 +151,7 @@ def load(root: Path | str) -> Config:
         rebuild_on_commit=bool(exp.get("rebuild_on_commit", True)),
         max_symbols=int(exp.get("max_symbols", 1500)),
         max_snippet_lines=int(exp.get("max_snippet_lines", 40)),
+        max_source_bytes=int(exp.get("max_source_bytes", 4_000_000)),
     )
     return cfg
 

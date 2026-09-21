@@ -101,7 +101,7 @@ codemap explore --open
 | Flag | Does |
 |---|---|
 | `--out <path>` | write somewhere other than `.codemap/explore.html` |
-| `--json` | print the graph model as JSON, write nothing |
+| `--json` | print the graph model as JSON, write nothing (without the embedded file text the page carries for its source viewer) |
 | `--emit-brief` | write the analysis pack in `.codemap/briefs/` that the `codebase-to-course` skill authors from — `00-overview.md` plus one brief per module, and `folders-`, `libraries-`, `scenarios-` and `architecture-derived.json` |
 | `--max-symbols N` | cap graph nodes (default: from config) |
 | `--open` | open the result in a browser |

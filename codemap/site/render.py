@@ -24,13 +24,30 @@ def _title(data: dict) -> str:
     return f"Codegraph {short}".strip()
 
 
+def _slim(data: dict) -> dict:
+    """The page rebuilds a symbol's `excerpt` from the embedded file text, so a
+    file that ships whole doesn't also ship every symbol's lines a second time
+    (nested symbols repeat their parent's). Files that missed the source budget
+    keep their excerpts."""
+    sources = data.get("sources")
+    if not sources:
+        return data
+    held = {int(fi) for fi in sources}
+    embedded = {f["path"] for f in data.get("files", ()) if f["fi"] in held}
+    nodes = [
+        {k: v for k, v in n.items() if k != "excerpt"} if n["file"] in embedded else n
+        for n in data.get("nodes", ())
+    ]
+    return {**data, "nodes": nodes}
+
+
 def render(data: dict) -> str:
     shell = _asset("shell.html")
     css = _asset("explore.css")
     js = _asset("explore.js")
     icons_css = _asset("phosphor-icons.css")
 
-    payload = json.dumps(data, separators=(",", ":"), sort_keys=True)
+    payload = json.dumps(_slim(data), separators=(",", ":"), sort_keys=True)
     # every '<' in valid JSON is inside a string literal, so a unicode escape is
     # both safe and keeps '</script>' / '<!--' from ending the inline block early
     payload = payload.replace("<", "\\u003c")
