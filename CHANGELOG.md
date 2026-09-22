@@ -4,13 +4,40 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.4] — 2026-09-22
 
 ### Added
+- **Graph tab source viewer** — a symbol's "View source" opens a panel over
+  the graph with its whole file: line numbers, syntax colours, the symbol's
+  own lines highlighted and scrolled into view, clickable definition markers
+  and call-site chips that jump the graph to the callee, and a minimap strip.
+  The inspector's preview is now numbered and syntax-coloured too. Files are
+  embedded once (not per-symbol) up to a new `[explore] max_source_bytes`
+  budget (default 4 MB, most relevant files first); the ⌘K palette can now
+  find text anywhere in a long function, not just its first 40 lines.
+- **Graph tab Folder | Layer colouring** — the legend can colour and isolate
+  nodes by the architecture layer the Architecture tab inferred, as an
+  alternative to folders (still the default). Switching only recolours; the
+  layout doesn't move. Layers are labelled "inferred" since folders remain
+  the ground truth.
+- **Language support** — generated and vendored files (`*.min.js`,
+  `*.bundle.js`, `*.d.ts`, `*_pb2.py`, `*.pb.go`, plus `vendored/`,
+  `third_party/`, `generated/` directories) are excluded from indexing by
+  default, regardless of `.gitignore`. A file with a syntax error in part of
+  it is now parsed for whatever's still readable instead of being dropped
+  entirely, unless the unparsed gap swallows most of the file; `codemap scan`
+  reports these as "parsed with gaps", separate from files it couldn't use
+  at all.
 - **Architecture tab** — imports between Views & UI and API are drawn. The two
   layers sit side by side in one row, so their imports were tagged `same` and
   never rendered; they now get a sideways pair of block arrows in the gap
   between the two bands.
+
+### Changed
+- A worktree scan now commits its progress every 200 files instead of as one
+  multi-thousand-file transaction, so an interrupted scan on a large repo
+  doesn't lose everything and the WAL file can checkpoint along the way
+  instead of ballooning to gigabytes.
 
 ### Fixed
 - **Architecture tab** — an arrow between two layers is placed over the bands it
@@ -113,6 +140,7 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `/explore` and `/review` slash commands.
 - Post-commit hook for diff explanations.
 
+[0.2.4]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.0...v0.2.1
