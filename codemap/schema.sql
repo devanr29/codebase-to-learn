@@ -66,7 +66,9 @@ CREATE TABLE IF NOT EXISTS refs (
     target_symbol_id INTEGER,   -- NULL when unresolved
     resolved         INTEGER,
     tier             INTEGER,
-    line             INTEGER
+    line             INTEGER,
+    receiver         TEXT       -- what the call was made on (parsing._receiver_of);
+                                 -- NULL on rows written before schema v3
 );
 
 CREATE TABLE IF NOT EXISTS imports (

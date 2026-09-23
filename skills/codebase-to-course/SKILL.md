@@ -178,6 +178,12 @@ the thing is *for*.
    ```
    codemap explore --open
    ```
+   First, grep-verify every exclusivity claim you wrote across all five files —
+   `"only X does Y"`, `"the only place that…"`, `"nothing else touches this"` — before
+   baking. That phrasing reads as fact once it's on screen; an unverified one is worse
+   than no claim at all (see `references/scenarios-schema.md`'s Rules for the exact
+   check, and don't repeat the mistake this whole skill exists to fix: written prose
+   the underlying data doesn't back up).
    Learn tab: `intro` renders top to bottom (the `what` line, each side's
    `body`, the `seam` note if there is one); the category map's groups read as
    things a vibe coder would recognize, not tech labels; every folder the

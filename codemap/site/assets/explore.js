@@ -1,4 +1,4 @@
-/* Codegraph Explorer — frozen runtime. No libraries, no build step.
+/* codemap Explorer — frozen runtime. No libraries, no build step.
    Everything variable comes from the inlined JSON in #codemap-data. Do NOT
    regenerate this file from Python. All DOM is built with textContent / real
    nodes — no string HTML is ever assigned to the document. */
@@ -8,8 +8,8 @@
   var DATA = JSON.parse(document.getElementById("codemap-data").textContent);
   var APP = document.getElementById("app");
   var SVGNS = "http://www.w3.org/2000/svg";
-  var SVG_TAGS = { svg: 1, g: 1, path: 1, circle: 1, text: 1, ellipse: 1, line: 1, rect: 1,
-                   animate: 1, animateMotion: 1, defs: 1, pattern: 1, title: 1 };
+  var SVG_TAGS = { svg: 1, g: 1, path: 1, circle: 1, text: 1, tspan: 1, ellipse: 1, line: 1, rect: 1,
+                   animate: 1, animateMotion: 1, defs: 1, pattern: 1, clipPath: 1, title: 1 };
 
   // ---- tiny DOM helper -------------------------------------------------
   // tags that are already both focusable and operable from the keyboard by
@@ -88,6 +88,19 @@
     flash(ok);
   }
 
+  // A viewer preference that should survive a reload — but this page can be
+  // opened from file://, a private window, or with site data blocked, where
+  // localStorage throws on first touch rather than just being empty.
+  function lsGet(key, fallback) {
+    try {
+      var v = localStorage.getItem("codemap." + key);
+      return v == null ? fallback : JSON.parse(v);
+    } catch (e) { return fallback; }
+  }
+  function lsSet(key, value) {
+    try { localStorage.setItem("codemap." + key, JSON.stringify(value)); } catch (e) { /* unavailable */ }
+  }
+
   // small uppercase kind badge (tree rows, caller/callee lists, entry points).
   // A blind slice(0, 4) reads fine for "function"/"method" but turns "class"
   // into "clas" — spell out the short ones instead of truncating them.
@@ -110,7 +123,16 @@
   var FILES = DATA.files || [];
   var outAdj = N.map(function () { return []; });
   var inAdj = N.map(function () { return []; });
-  E.forEach(function (e) { outAdj[e.s].push(e.t); inAdj[e.t].push(e.s); });
+  // confidence-filtered twin of each: an AMBIGUOUS edge (no import evidence,
+  // matched by name alone) is a real edge for the canvas and Simulate's
+  // "might be it" narration, but never for a *count* presented as fact —
+  // blast radius, the entry path and "Trace back to entry" all walk these.
+  var outAdjSure = N.map(function () { return []; });
+  var inAdjSure = N.map(function () { return []; });
+  E.forEach(function (e) {
+    outAdj[e.s].push(e.t); inAdj[e.t].push(e.s);
+    if (e.confidence !== "AMBIGUOUS") { outAdjSure[e.s].push(e.t); inAdjSure[e.t].push(e.s); }
+  });
   // per-caller calls, in call-site order — the Graph/Map views only need "is
   // there an edge", but Simulate (Lane 1) needs "in what order does this
   // frame make its calls", which only the line number on each edge carries.
@@ -155,6 +177,10 @@
       if (f && fileLines(f.fi)) n.excerpt = srcOf(n);
     }
   });
+  // how many files the search box's "isn't embedded" caveat can honestly
+  // point to — on a repo where everything fits the budget, naming
+  // max_source_bytes as the reason for a miss would just be wrong.
+  var unembeddedFileCount = FILES.reduce(function (n, f) { return n + (fileLines(f.fi) ? 0 : 1); }, 0);
 
   function bfs(start, adj, maxHops) {
     var dist = new Map([[start, 0]]);
@@ -172,16 +198,15 @@
     dist.delete(start);
     return dist;
   }
-  function reachSet(start, adj) {
-    var seen = new Set([start]);
-    var stack = [start];
-    while (stack.length) {
-      var nb = adj[stack.pop()] || [];
-      for (var i = 0; i < nb.length; i++)
-        if (!seen.has(nb[i])) { seen.add(nb[i]); stack.push(nb[i]); }
-    }
-    seen.delete(start);
-    return seen;
+  // Everything reachable from `start` along `adj`, capped at `maxHops` —
+  // built on the same hop-limited bfs() above rather than an unbounded DFS
+  // stack walk, so "Editing this reaches N callers" means "within the depth
+  // impact analysis actually explores" (DATA.impact_depth, the same bound
+  // `codemap`'s own impact.analyze() uses), not "everything transitively
+  // reachable, however many hops away" — on a real repo that unbounded walk
+  // is how a single edge into a busy symbol turned into "419 callers".
+  function reachSet(start, adj, maxHops) {
+    return new Set(bfs(start, adj, maxHops == null ? (DATA.impact_depth || 3) : maxHops).keys());
   }
 
   // ---- organic edge geometry (ported from the design's support script) --
@@ -507,12 +532,19 @@
     }
   });
   function fileAllDead(fi) { return funcOf[fi] > 0 && deadOf[fi] === funcOf[fi]; }
+  // matches "tests/…" AND "pkg/tests/…" — a top-level-only check misses any
+  // nested tests dir. Shared by Map's "Hide tests" pill and anywhere else
+  // "unreachable" needs to mean something (a test file's own functions are
+  // never called by production code either — that's not the interesting kind
+  // of dead code, so it shouldn't read as a warning).
+  function isTestPath(path) { return /(^|\/)tests\//.test(path); }
   var churnMax = Math.max.apply(null, churnOf.concat([1]));
 
-  // Trace roots are ranked by call-subtree size, NOT read from DATA.entry_points
-  // — main() dies at `args.func(args)` after two hops (dynamic dispatch the
-  // indexer can't follow), so the richly-connected roots are the big test
-  // drivers and the cmd_* handlers instead.
+  // Candidacy is still call-subtree size, not "is this a DATA.entry_points
+  // entry" — main() dies at `args.func(args)` after two hops (dynamic
+  // dispatch the indexer can't follow), so the richly-connected roots are
+  // the big test drivers and the cmd_* handlers instead. entry_points only
+  // breaks ties in the ranking below (real entries over tests), not the cut.
   function subtreeSize(i, cap) {
     var seen = new Set([i]), frontier = [i];
     for (var d = 0; d < cap && frontier.length; d++) {
@@ -526,23 +558,33 @@
     }
     return seen.size - 1;
   }
+  // real entry points (routes, main guards, jobs, …) belong at the top of the
+  // Run-trace root picker; a test file's own top-level functions have huge
+  // subtrees too (they call into everything they exercise) and used to
+  // outrank the actual entry points the picker exists to surface.
+  var TRACE_ENTRY_NODES = new Set((DATA.entry_points || [])
+    .map(function (ep) { return ep.node; }).filter(function (i) { return i != null; }));
   var traceRoots = N.map(function (nd) { return { i: nd.i, size: subtreeSize(nd.i, 6) }; })
     .filter(function (r) { return r.size >= 4; })
-    .sort(function (a, b) { return b.size - a.size || N[a.i].qual.localeCompare(N[b.i].qual); })
+    .sort(function (a, b) {
+      var an = N[a.i], bn = N[b.i];
+      var aEntry = TRACE_ENTRY_NODES.has(a.i), bEntry = TRACE_ENTRY_NODES.has(b.i);
+      if (aEntry !== bEntry) return aEntry ? -1 : 1;
+      var aTest = isTestPath(an.file), bTest = isTestPath(bn.file);
+      if (aTest !== bTest) return aTest ? 1 : -1;
+      return b.size - a.size || an.qual.localeCompare(bn.qual);
+    })
     .slice(0, 14);
   var traceExpand = {};   // "<root>:<depth>" -> true once the "+N more" is opened
 
   // ---- app state ---------------------------------------------------
   var reduceMotion = window.matchMedia &&
     window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  // touch has no hover and no reliable dblclick — a tap-then-wait-200ms
-  // "was that a double click" trick just reads as a laggy single tap, and
-  // the actual double tap needed to drill in often never registers at all.
-  var IS_TOUCH = navigator.maxTouchPoints > 0 || "ontouchstart" in window;
+  var flowPref = lsGet("flow", null);   // explicit viewer choice, else the size-based default below decides
   var state = {
     tab: "learn",   // land on Orientation, not the graph — "read the map before the words" (route() sets this from the hash before first render anyway)
-    grain: 1,   // 0 Module, 1 File (default), 2 Function — see GRAINS below
-    hops: 2,
+    grain: lsGet("grain", 1),   // 0 Module, 1 File (default), 2 Function — see GRAINS below; remembers the viewer's last pick
+    hops: lsGet("hops", 2),     // remembers the viewer's last pick
     focus: null,
     fileScope: null,
     showDead: true,
@@ -551,10 +593,11 @@
     touched: null,
     module: null,
     pkg: null,      // Packages: current package/module slug
-    flow: !reduceMotion,
+    flow: flowPref != null ? flowPref : !reduceMotion,
     folders: new Set(),   // legend filter — empty = everything shown; folder paths, or "layer:<id>" in layer mode
     groupBy: "folder",    // Graph: colour + filter by "folder" or by inferred architecture "layer"
     srcOpen: false,       // Graph: the source viewer slide-over is open on the focused symbol
+    srcTargetLine: null,  // Graph: one-shot line to scroll the source viewer to, e.g. from a file-text search hit — consumed by syncSrc() and cleared right after, else it defaults to the focused symbol's own first line
     pin: null,            // a click-pinned node key: spotlight it + its edges
     mapView: "layers",    // Map tab: "layers" | "trace" | "mass"
     traceRoot: null,      // Map/trace: node index of the traced call root
@@ -565,7 +608,7 @@
     mobileRail: false,    // narrow viewport: source tree shown as an overlay, not a column
     mobileInsp: false,    // narrow viewport: inspector shown as an overlay, not a column
     folderScope: "",      // legend: folder path currently drilled into ("" = repo root)
-    legendCollapsed: false, // legend: collapsed to just its header bar
+    legendCollapsed: lsGet("legendCollapsed", true), // legend: collapsed to just its header bar by default; remembers the viewer's choice
     legendPos: null,      // legend: {left, top} px within the canvas once dragged, else default corner
     simScenario: null,    // Simulate: current scenario id
     simStep: 0,           // Simulate: current step index into that scenario's normalized steps
@@ -574,16 +617,52 @@
     simCollapsed: { stage: false, flow: false, log: false, source: false },  // Simulate: per-pane hide toggle
     simLayout: { leftW: null, stageH: null, logH: null },  // Simulate: px overrides once a splitter is dragged, else CSS default
     simSolo: null,        // Simulate: pane key ("stage"/"flow"/"log"/"source") shown full-bleed, else null — dbl-click a pane header
+    routeNote: null,      // set by route() when the hash named a tab/arg that didn't resolve — cleared on the next successful route
+    timelineSha: null,    // Timeline: commit sha deep-linked via "#/timeline/<sha>", scrolled to and highlighted
   };
+  // Traffic (the animated call-flow overlay) is the single biggest cost on a
+  // dense graph — animating 150+ SMIL/CSS edges on a big repo's default view
+  // is what drops a real build to single-digit fps. Default it off past that
+  // point instead of unconditionally on; a small repo still gets it for free.
+  // Measured against the actual default view (File grain, whole graph), not
+  // a raw edge count that ignores this layout's own de-dup/capping. Only
+  // applies when the viewer hasn't already picked one way or the other.
+  if (flowPref == null && state.flow && layoutOverview().links.length > 150) state.flow = false;
 
   // ---- routing ---------------------------------------------------
+  var TAB_LABEL = { graph: "the Graph", arch: "Architecture", map: "Map", sim: "Simulate",
+    learn: "Learn", libs: "Packages", timeline: "Timeline" };
   function parseHash() {
     var h = (location.hash || "#/learn").replace(/^#/, "");
     var parts = h.split("/").filter(Boolean);
     var raw = parts.slice(1).join("/") || "";
     var arg;
     try { arg = decodeURIComponent(raw); } catch (e) { arg = raw; }   // a hand-edited/copied hash can be malformed — never let it kill the route
-    return { tab: parts[0] || "graph", arg: arg };
+    return { tab: parts[0] || "learn", arg: arg };   // "#/" and bare "#" land on Learn, same as no hash at all
+  }
+  // The hash that actually matches what's on screen right now — used to
+  // correct the URL bar (history.replaceState) when the hash we were just
+  // asked to show didn't resolve to anything real. Mirrors go()'s own
+  // encodeURIComponent/"/src"-suffix rules so the two never disagree.
+  function canonicalHash() {
+    var t = state.tab;
+    if (t === "graph") {
+      var arg = state.focus != null ? N[state.focus].key : "";
+      var h = "#/graph" + (arg ? "/" + encodeURIComponent(arg) : "");
+      if (arg && state.srcOpen) h += "/src";
+      return h;
+    }
+    if (t === "learn") return "#/learn" + (state.module && state.module !== ORIENTATION_ID ? "/" + encodeURIComponent(state.module) : "");
+    if (t === "arch") return "#/arch" + (state.archSel ? "/" + encodeURIComponent(state.archSel) : "");
+    if (t === "libs") return "#/libs" + (state.pkg ? "/" + encodeURIComponent(state.pkg) : "");
+    if (t === "map") {
+      var seg = state.mapView;
+      if (state.mapView === "trace" && state.traceRoot != null) seg += "/" + encodeURIComponent(N[state.traceRoot].key);
+      return "#/map/" + seg;
+    }
+    if (t === "sim") return "#/sim" + (state.simScenario ? "/" + encodeURIComponent(state.simScenario) : "");
+    if (t === "timeline") return "#/timeline" + (state.timelineSha ? "/" + encodeURIComponent(state.timelineSha) : "");
+    return "#/" + t;
   }
   function go(tab, arg) {
     var next = "#/" + tab + (arg ? "/" + encodeURIComponent(arg) : "");
@@ -603,8 +682,16 @@
     var prevTab = state.tab;            // read before route() below overwrites it — see
                                          // updateGraphFocus()'s fast path at the bottom
     var r = parseHash();
-    state.tab = ["graph", "arch", "learn", "libs", "timeline", "map", "sim"].indexOf(r.tab) >= 0 ? r.tab : "learn";
+    // Set below whenever the hash names a tab or an argument that doesn't
+    // actually resolve to anything real — the URL then gets corrected
+    // (history.replaceState) to whatever ends up on screen, with a small
+    // note, instead of silently showing a fallback under a wrong-looking URL.
+    var badLink = null;
+    var tabKnown = ["graph", "arch", "learn", "libs", "timeline", "map", "sim"].indexOf(r.tab) >= 0;
+    if (r.tab && !tabKnown) badLink = "tab “" + r.tab + "”";
+    state.tab = tabKnown ? r.tab : "learn";
     if (state.tab === "graph") {
+      requestFit();   // a route change means a new layout — fit state.view to it
       // "#/graph/<key>/src" = that symbol with the source viewer open
       var gArg = r.arg;
       state.srcOpen = false;
@@ -614,6 +701,7 @@
       }
       if (gArg && keyToI[gArg] != null) { state.focus = keyToI[gArg]; state.fileScope = null; }
       else if (!gArg) state.focus = null;
+      else { state.focus = null; badLink = badLink || "symbol “" + gArg + "”"; }
     } else if (state.tab === "learn") {
       // #/learn/<page-id>; no arg lands on Orientation, not the first folder —
       // "nobody understands a codebase entirely" is a better first thing to
@@ -638,20 +726,35 @@
         state.pkg = learnArg;
       } else {
         state.module = ORIENTATION_ID;
+        badLink = badLink || "page “" + learnArg + "”";
       }
     } else if (state.tab === "arch") {
       // #/arch/<item key>; a deep link to a test component turns the tests panel on
       state.archSel = r.arg || null;
+      if (state.archSel && !archItem(state.archSel)) {
+        badLink = badLink || "component “" + state.archSel + "”";
+        state.archSel = null;
+      }
       if (state.archSel && A_COMP[state.archSel] && A_COMP[state.archSel].layer === "tests") state.archShowTests = true;
     } else if (state.tab === "libs") {
       state.pkg = r.arg || null;   // null = the package index (first entry / a landing state)
+      if (state.pkg && !LIB_BY_SLUG[state.pkg]) {
+        badLink = badLink || "package “" + state.pkg + "”";
+        state.pkg = null;
+      }
     } else if (state.tab === "map") {
       var seg = r.arg.split("/");
       if (["layers", "trace", "mass"].indexOf(seg[0]) >= 0) state.mapView = seg[0];
+      else if (!r.arg) state.mapView = "layers";   // "#/map" with no arg always lands on Layers (M14 — Map Back)
+      else badLink = badLink || "map view “" + seg[0] + "”";
       if (state.mapView === "trace") {
         var key = seg.slice(1).join("/");
         if (key && keyToI[key] != null) { state.traceRoot = keyToI[key]; state.traceStep = null; }
-        else if (state.traceRoot == null && traceRoots.length) state.traceRoot = traceRoots[0].i;
+        else if (!key) { if (traceRoots.length) { state.traceRoot = traceRoots[0].i; state.traceStep = null; } }   // "#/map/trace" with no key resets to the default root, even if one was already picked
+        else {
+          badLink = badLink || "trace root “" + key + "”";
+          if (state.traceRoot == null && traceRoots.length) state.traceRoot = traceRoots[0].i;
+        }
       }
     } else if (state.tab === "sim") {
       // "#/sim/<scenario-id>/<step>" — the id itself may contain "/" (e.g. a
@@ -665,11 +768,28 @@
       // of the handful pre-seeded into the rail — this is what makes both
       // Map ▸ "Simulate ▶" and the inspector's "Trace back to entry ▶" work
       // for a symbol outside the top few busiest in the repo.
-      if (scId && ensureScenario(scId)) state.simScenario = scId;
-      else if (!state.simScenario || !simById[state.simScenario])
-        state.simScenario = SIM_SCENARIOS.length ? SIM_SCENARIOS[0].id : null;
+      if (scId && ensureScenario(scId)) {
+        state.simScenario = scId;
+      } else {
+        if (scId) badLink = badLink || "scenario “" + scId + "”";
+        if (!state.simScenario || !simById[state.simScenario]) {
+          // simStartScenario() picks the authored curriculum's lowest-`order`
+          // hero scenario (see its own comment); a bare SIM_SCENARIOS[0] is
+          // just insertion order and, with an authored curriculum, usually
+          // isn't the same scenario at all.
+          var startSc = simStartScenario() || SIM_SCENARIOS[0];
+          state.simScenario = startSc ? startSc.id : null;
+        }
+      }
       state.simStep = hasStep ? parseInt(lastPart, 10) : 0;
       state.simPlaying = false;
+    } else if (state.tab === "timeline") {
+      state.timelineSha = r.arg || null;
+    }
+    state.routeNote = badLink ? ("Link not found (" + badLink + ") — showing " + (TAB_LABEL[state.tab] || state.tab) + ".") : null;
+    if (badLink) {
+      var canon = canonicalHash();
+      if (location.hash !== canon) history.replaceState(null, "", canon);
     }
     // railEl/canvasEl/svgEl only exist once the graph tab has actually
     // rendered at least once — false on first load and on every return trip
@@ -704,11 +824,11 @@
     // <header>/<nav>/<h1> — the app was pure div soup with no landmarks and no
     // heading at all, so a screen reader had nothing to jump to or announce.
     // The h1 is visually hidden: the brand mark next to it already carries
-    // this visually, a second visible "codegraph" would just be noise.
+    // this visually, a second visible "codemap" would just be noise.
     return el("header", { class: "topbar" }, [
-      el("h1", { class: "sr-only", text: "Codegraph Explorer" }),
+      el("h1", { class: "sr-only", text: "codemap Explorer" }),
       el("div", { class: "brand" }, [
-        el("i", { class: "ph ph-graph" }), el("span", { text: "codegraph" }),
+        el("i", { class: "ph ph-graph" }), el("span", { text: "codemap" }),
         el("span", { class: "ver", text: (DATA.generator || "").replace("codemap ", "v") }),
       ]),
       el("nav", { class: "tabs", "aria-label": "Sections" }, tabs),
@@ -730,6 +850,16 @@
         " (" + DATA.behind + " commit" + (DATA.behind === 1 ? "" : "s") + " ahead). Run ",
         el("code", { text: "codemap explore" }), ".",
       ]),
+    ]);
+  }
+  // Shown once, right after route() corrects a hash that didn't resolve to
+  // anything real (see canonicalHash()) — cleared as soon as any later route
+  // succeeds, so it never lingers once the viewer navigates on their own.
+  function linkNoteBanner() {
+    if (!state.routeNote) return null;
+    return el("div", { class: "stale-banner link-note" }, [
+      el("i", { class: "ph ph-warning" }),
+      el("span", { text: state.routeNote }),
     ]);
   }
 
@@ -784,28 +914,43 @@
     node.files.slice().sort(function (a, b) { return a.path < b.path ? -1 : 1; }).forEach(function (f) {
       var fileSel = state.fileScope === f.fi ||
         (state.focus != null && N[state.focus] && N[state.focus].file === f.path);
+      var hasSyms = f.symbols.length > 0;
       frag.appendChild(el("div", {
         class: "trow" + (fileSel ? " sel" : ""),
         style: "padding-left:" + (6 + depth * 11) + "px",
+        title: hasSyms
+          ? f.symbols.length + " symbol" + (f.symbols.length === 1 ? "" : "s")
+          : "no functions or classes captured here",
         on: { click: function () {
-          treeOpen["f:" + f.path] = !treeOpen["f:" + f.path];
           state.fileScope = f.fi;
-          if (f.symbols.length) go("graph", N[f.symbols[0]].key);
-          else renderRail();
+          // the highest fan-in symbol, not just whichever happened to parse
+          // first — same ranking the graph canvas itself uses for a file node.
+          if (hasSyms) { fileAct(f)(); return; }
+          // nothing to focus: still give the click something real to do
+          // instead of silently no-op'ing, via the inline note below.
+          treeOpen["f:" + f.path] = !treeOpen["f:" + f.path];
+          renderRail();
         } },
       }, [
         el("i", { class: fileIcon(f.lang) }),
         el("span", { class: "tname", text: f.path.split("/").pop() }),
-        el("span", { class: "tcount", text: f.symbols.length || "" }),
+        el("span", { class: "tcount tcount-file", text: f.symbols.length || "" }),
       ]));
       var open = treeOpen["f:" + f.path];
       var kids = el("div", { class: "tchildren" + (open ? " open" : "") });
+      if (!hasSyms)
+        kids.appendChild(el("div", { class: "trow-note",
+          style: "padding-left:" + (6 + (depth + 1) * 11 + 6) + "px",
+          text: "no functions or classes captured here" }));
       f.symbols.forEach(function (si) {
         var n = N[si];
+        var isFocused = state.focus === si;
         kids.appendChild(el("div", {
-          class: "trow" + (state.focus === si ? " sel" : "") +
+          class: "trow" + (isFocused ? " sel" : "") +
             (n.fan_in === 0 && n.entry.length === 0 ? " dim" : ""),
           style: "padding-left:" + (6 + (depth + 1) * 11 + 6) + "px",
+          title: n.fan_in + " caller" + (n.fan_in === 1 ? "" : "s"),
+          "data-rail-focus": isFocused ? "1" : null,
           on: { click: function (ev) { ev.stopPropagation(); go("graph", n.key); } },
         }, [
           el("span", { class: "tkind", text: kindLabel(n.kind) }),
@@ -818,14 +963,36 @@
   }
 
   var railEl;
+  var lastRailScrollFocus;   // only scroll on the render right after a focus
+                             // change — not on every incidental re-render
+                             // (an unrelated folder toggle shouldn't yank the
+                             // viewer's scroll position back to it)
   function renderRail() {
     if (!railEl) return;
     var tree = railEl.querySelector(".tree");
     clear(tree);
     tree.appendChild(el("div", { class: "tree-kicker", text: "SOURCE" }));
+    // The tree only opens a folder lazily, as the viewer clicks into it — a
+    // symbol reached any other way (search, a graph node, a caller/callee
+    // row, a deep link) would otherwise sit behind folders still collapsed,
+    // with nothing on screen showing where it actually lives.
+    if (state.focus != null) {
+      var focusedFile = N[state.focus].file;
+      var parts = focusedFile.split("/"), prefix = "";
+      for (var i = 0; i < parts.length - 1; i++) {
+        prefix += parts[i] + "/";
+        treeOpen[prefix] = true;
+      }
+      treeOpen["f:" + focusedFile] = true;
+    }
     var frag = document.createDocumentFragment();
     renderTreeNode(TREE, "", 0, frag);
     tree.appendChild(frag);
+    if (lastRailScrollFocus !== state.focus) {
+      var focusedRow = tree.querySelector("[data-rail-focus]");
+      if (focusedRow && focusedRow.scrollIntoView) focusedRow.scrollIntoView({ block: "nearest" });
+      lastRailScrollFocus = state.focus;
+    }
   }
   function rail() {
     var s = DATA.stats || {};
@@ -934,7 +1101,7 @@
         var c = centers[m.name];
         placed.push({ i: "mod:" + m.name, x: c.x, y: c.y, style: NODE_STYLE.hot,
           label: m.name + "  (" + m.symbol_count + ")", kind: "mod", group: gModuleColor(m.name),
-          act: function () { state.grain = 1; state.view = { x: 0, y: 0, k: 1 }; render(); } });
+          act: function () { state.grain = 1; requestFit(); render(); } });
       });
       var seen = {};
       (DATA.file_edges || []).forEach(function (fe) {
@@ -1014,6 +1181,7 @@
         if (e.tier === 1 && N[e.s].fan_in < 3 && N[e.t].fan_in < 3 && cap++ > 220) return;
         var sd = symDepth(e.s);
         links.push({ a: a, b: b, seed: e.s * 131 + e.t, hot: e.tier === 2,
+          guess: e.confidence === "AMBIGUOUS",
           s: e.s, t: e.t, sk: e.s, tk: e.t, grp: gColorForNode(N[e.s]), fk: gKey(N[e.s].file),
           live: sd >= 0, dep: sd < 0 ? 0 : sd, vol: N[e.t].fan_in });
       });
@@ -1055,7 +1223,7 @@
             : N[idx].fan_in >= 6 ? NODE_STYLE.hot : NODE_STYLE.node;
           placed.push({ i: idx, x: x, y: y, style: style, label: N[idx].name,
             kind: side === "in" ? "caller" : "callee", group: gColorForNode(N[idx]),
-            fk: gKey(N[idx].file) });
+            fk: gKey(N[idx].file), hop: h });
           var src = side === "in" ? idx : f, dst = side === "in" ? f : idx;
           var sd = symDepth(src);
           links.push({ a: side === "in" ? { x: x, y: y } : soma,
@@ -1087,6 +1255,8 @@
 
   function renderGraphSVG() {
     var lay = state.focus != null ? layoutFocus() : layoutOverview();
+    lastLay = lay;
+    if (pendingFit) { fitView(lay); pendingFit = false; }
     var g = el("g", { class: "pz",
       transform: "translate(" + state.view.x + "," + state.view.y + ") scale(" + state.view.k + ")" });
 
@@ -1111,9 +1281,13 @@
         var lx = lay.links[x], ly = lay.links[y];
         return (lx.dep - ly.dep) || (ly.vol - lx.vol);
       });
-      var unbudgeted = state.focus != null || state.grain === 0;   // few links here
-      flowSet = new Set(liveIdx.slice(0, unbudgeted ? liveIdx.length : FLOW_BUDGET));
-      cometSet = new Set(liveIdx.slice(0, unbudgeted ? liveIdx.length : COMET_BUDGET));
+      // The budget used to skip the neuron view and Module grain on the
+      // assumption there are always few links there — a busy entry point's
+      // neuron view, or a repo with a lot of cross-module traffic, breaks
+      // that assumption and re-creates the same fps drop the budget exists
+      // to prevent. Apply it everywhere.
+      flowSet = new Set(liveIdx.slice(0, FLOW_BUDGET));
+      cometSet = new Set(liveIdx.slice(0, COMET_BUDGET));
       flowN = flowSet.size;
     }
 
@@ -1122,15 +1296,19 @@
       if (!lk.a || !lk.b) return;
       var d = dendrite(lk.a, lk.b, lk.seed, { bow: lk.hot ? 0.42 : 0.3 });
       var imp = !!lk.imp;
+      var guess = !!lk.guess;
       var col = imp ? IMPORT_EDGE : (lk.grp || GROUP_OTHER);
       var w = imp ? 1.5 : lk.hot ? 2.8 : lk.thin ? 1.9 : 2.2;
-      var op = imp ? 0.5 : lk.hot ? 0.92 : 0.76;
-      var grp = el("g", { class: "edge" });
+      var op = imp ? 0.5 : guess ? 0.5 : lk.hot ? 0.92 : 0.76;
+      var grp = el("g", { class: "edge" + (guess ? " edge-guess" : "") });
       if (!imp)   // soft colour glow: a run of same-folder edges reads as one strand
         grp.appendChild(el("path", { d: d.d, stroke: col, "stroke-width": w + 4,
           opacity: lk.hot ? 0.16 : 0.09 }));
+      // dashed = a name-only guess, same as an import edge's dash (see the
+      // legend) — no import connects the two files, so this might not be a
+      // real call at all.
       grp.appendChild(el("path", { d: d.d, stroke: col, "stroke-width": w, opacity: op,
-        "stroke-dasharray": imp ? "5 4" : null }));
+        "stroke-dasharray": (imp || guess) ? "5 4" : null }));
       grp.appendChild(el("path", { d: d.b1, stroke: col, "stroke-width": w * 0.38, opacity: op * 0.55 }));
       grp.appendChild(el("path", { d: d.b2, stroke: col, "stroke-width": w * 0.32, opacity: op * 0.38 }));
 
@@ -1177,54 +1355,58 @@
       if (st.halo) wrap.appendChild(el("circle", { cx: p.x, cy: p.y,
         r: Math.max(st.halo, R + 12), fill: st.hc }));
       if (animate && typeof p.i === "number" && entrySet.has(p.i)) {   // where packets are born
+        // a CSS transform/opacity keyframe (compositor-only) — this used to be
+        // two SMIL <animate> children re-tessellating r/opacity every frame,
+        // on every entry point on screen at once.
         var pr = el("circle", { class: "emit", cx: p.x, cy: p.y, r: R + 2,
           fill: "none", stroke: ring, "stroke-width": 1.4 });
-        var b = (-(rnd(p.i + 1) * 2.4)) + "s";
-        pr.appendChild(el("animate", { attributeName: "r", values: (R + 2) + ";" + (R + 17),
-          dur: "2.4s", begin: b, repeatCount: "indefinite" }));
-        pr.appendChild(el("animate", { attributeName: "opacity", values: "0.55;0",
-          dur: "2.4s", begin: b, repeatCount: "indefinite" }));
+        pr.style.animationDelay = (-(rnd(p.i + 1) * 2.4)) + "s";
+        pr.style.setProperty("--emit-scale", ((R + 17) / (R + 2)).toFixed(3));
         wrap.appendChild(pr);
       }
       wrap.appendChild(el("circle", { class: "body", cx: p.x, cy: p.y, r: R,
         fill: st.fill, stroke: ring, "stroke-width": p.kind === "focus" ? 2 : 1.6 }));
-      wrap.appendChild(el("text", { x: p.x, y: p.y + R + 12, "text-anchor": "middle",
+      // a native tooltip on the whole node — the one thing a label-culling
+      // pass (below) can't take away, so a culled label's name is still one
+      // hover away, not just gone.
+      wrap.appendChild(el("title", { text: p.label }));
+      var labelY = p.y + R + 12;
+      var labelEl = el("text", { x: p.x, y: labelY, "text-anchor": "middle",
         "font-size": p.kind === "focus" ? 12 : 10.5,
-        fill: p.kind === "focus" ? "#f5f4ff" : p.dead ? "#595d6c" : "#b2b6ca", text: p.label }));
+        fill: p.kind === "focus" ? "#f5f4ff" : p.dead ? "#595d6c" : "#b2b6ca", text: p.label });
+      wrap.appendChild(labelEl);
+      labelItems.push({ el: labelEl, p: p, y: labelY });
       var act = p.act || (typeof p.i === "number"
         ? function () { go("graph", N[p.i].key); } : null);
       var pinnable = p.i != null && p.kind !== "focus" && p.kind !== "ext";
       wrap.style.cursor = (act || pinnable) ? "pointer" : "default";
-      if (pinnable && IS_TOUCH) {
-        // no click/dblclick disambiguation on touch: one tap goes straight
-        // to the primary action, same as Enter from the keyboard below.
+      if (pinnable) {
+        // one click drills in — the same primary action touch and Enter
+        // already ran. Shift+click pins a spotlight on this node + its
+        // edges instead, without navigating.
         wrap.addEventListener("click", function (ev) {
           ev.stopPropagation();
+          if (ev.shiftKey) { togglePin(p.i); return; }
           if (act) { state.pin = null; act(); } else togglePin(p.i);
-        });
-      } else if (pinnable) {
-        // one click pins a spotlight on this node + its edges; a double click
-        // drills in, the old single-click behaviour. 200ms lets dblclick win.
-        var clickT = 0;
-        wrap.addEventListener("click", function (ev) {
-          ev.stopPropagation();
-          clearTimeout(clickT);
-          clickT = setTimeout(function () { togglePin(p.i); }, 200);
-        });
-        wrap.addEventListener("dblclick", function (ev) {
-          ev.stopPropagation();
-          clearTimeout(clickT);
-          if (act) { state.pin = null; act(); }
         });
       } else if (act) {
         wrap.addEventListener("click", function (ev) { ev.stopPropagation(); act(); });
       }
-      // the click/dblclick split above has no keyboard equivalent — a
-      // keyboard user gets straight to the primary action (drill in, same as
-      // a double click) on Enter/Space; hovering already pins nothing for a
-      // mouse user either, so nothing is lost.
+      // Shift+click has no keyboard equivalent — Enter/Space always drills
+      // in, same as a plain click. Pinning from the keyboard isn't lost:
+      // focus itself already spotlights the node (see the focus/blur
+      // listeners below).
+      //
+      // tabindex="-1", not "0": these used to sit in the natural Tab order —
+      // one stop per node, so reaching the inspector past a few hundred of
+      // them on a real repo took hundreds of presses. The rail (already
+      // fully keyboard-reachable — el()'s own a11y wrapper covers every
+      // .trow) is the real keyboard path through this same tree; a node
+      // stays individually operable (role, label, Enter/Space) for a mouse
+      // or touch user, or anything that focuses it programmatically, it's
+      // just not a Tab stop of its own.
       if (act || pinnable) {
-        wrap.setAttribute("tabindex", "0");
+        wrap.setAttribute("tabindex", "-1");
         wrap.setAttribute("role", "button");
         wrap.setAttribute("aria-label", p.label);
         wrap.addEventListener("keydown", function (ev) {
@@ -1245,12 +1427,41 @@
     return g;
   }
 
+  // Node labels have no collision handling of their own — on a dense cluster
+  // (a busy hub's neuron view, a big module at File/Function grain) they used
+  // to just overlap into an unreadable smear. A greedy pass instead keeps the
+  // most important label at every point of overlap and hides the rest —
+  // never removes the node itself, and a culled label is always one hover (or
+  // its aria-label / <title>, for keyboard and touch) away.
+  function labelImportance(p) {
+    if (p.kind === "focus") return Infinity;
+    var fanIn = typeof p.i === "number" && N[p.i] ? N[p.i].fan_in : 0;
+    var hop = p.hop || 0;   // only the neuron view's rings set this
+    return -hop * 1e6 + fanIn;   // lower hop always outranks any fan-in gap
+  }
+  function cullLabels() {
+    var CHAR_W = 6.2, HALF_H = 6;
+    var ranked = labelItems.slice().sort(function (a, b) {
+      return labelImportance(b.p) - labelImportance(a.p);
+    });
+    var kept = [];
+    ranked.forEach(function (it) {
+      var w = ((it.p.label || "").length * CHAR_W) / 2;
+      var box = { x0: it.p.x - w, x1: it.p.x + w, y0: it.y - HALF_H, y1: it.y + HALF_H };
+      var hit = kept.some(function (k) {
+        return box.x0 < k.x1 && box.x1 > k.x0 && box.y0 < k.y1 && box.y1 > k.y0;
+      });
+      if (hit) it.el.classList.add("label-hidden");
+      else { it.el.classList.remove("label-hidden"); kept.push(box); }
+    });
+  }
+
   // ---- graph paint / pan / zoom ---------------------------------------
   // The scene <g> is built once per structural change (grain, focus, hops,
   // showDead). Pan and zoom only rewrite its `transform` — no relayout, no DOM
   // churn — and hover only nudges opacity. That is what keeps the canvas smooth.
-  var canvasEl, svgEl, emptyEl, sceneG, edgeItems = [], nodeItems = [];
-  var drag = null, panPend = null, panRaf = 0, settleT = 0, lastFlowN = 0, animPaused = false;
+  var canvasEl, svgEl, emptyEl, sceneG, edgeItems = [], nodeItems = [], labelItems = [];
+  var drag = null, panPend = null, panRaf = 0, zoomRaf = 0, settleT = 0, lastFlowN = 0, animPaused = false;
   var lastPlacedN = 0, lastPlacedCapped = false;   // how many nodes the last layout actually placed
   var lastPanMoved = false;   // did the last mouseup end a real pan (vs a bare click)
 
@@ -1267,8 +1478,67 @@
     animPaused = false;
     if (svgEl && svgEl.unpauseAnimations) svgEl.unpauseAnimations();
   }
+  // Unlike switching app tabs (which detaches the canvas entirely, so its
+  // animations already cost nothing), the *browser* tab going to the
+  // background leaves the DOM attached — SMIL and CSS animations keep
+  // running there unless paused explicitly. bound once; safe to call
+  // whether or not the Graph tab happens to be the active app section.
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) { freezeAnims(); if (canvasEl) canvasEl.classList.add("tab-hidden"); }
+    else { thawAnims(); if (canvasEl) canvasEl.classList.remove("tab-hidden"); }
+  });
 
   function clampK(k) { return Math.max(0.3, Math.min(4, k)); }
+  var lastLay = null, pendingFit = true;   // true = the next paint fits state.view to it
+  function requestFit() { pendingFit = true; }
+  // The legend (bottom-right) and the zoom box (bottom-left) float over the
+  // canvas — a fit that ignored them could centre content right behind
+  // either one. Both are already in the DOM by the time a layout paints, so
+  // their real rendered size is measured and converted to viewBox units with
+  // the same scale the svg's own viewBox mapping uses (see vbPoint()).
+  function reservedMargins() {
+    var m = { top: 30, left: 30, right: 30, bottom: 30 };
+    if (!svgEl) return m;
+    var r = svgEl.getBoundingClientRect();
+    var s = Math.min(r.width / VBW, r.height / VBH) || 1;
+    var legendEl = canvasEl && canvasEl.querySelector(".legend");
+    var zEl = canvasEl && canvasEl.querySelector(".zoombox");
+    if (legendEl) {
+      var lr = legendEl.getBoundingClientRect();
+      m.right = Math.max(m.right, lr.width / s + 18);
+      m.bottom = Math.max(m.bottom, lr.height / s + 18);
+    }
+    if (zEl) {
+      var zr = zEl.getBoundingClientRect();
+      m.left = Math.max(m.left, zr.width / s + 18);
+      m.bottom = Math.max(m.bottom, zr.height / s + 18);
+    }
+    return m;
+  }
+  // Fits state.view to whatever a layout actually placed, instead of the old
+  // fixed identity transform — a big repo's overview, or a high-hop neuron
+  // view, routinely spilled outside the 1040x700 viewBox at k=1.
+  function fitView(lay) {
+    var pts = (lay && lay.placed) || [];
+    if (!pts.length) { state.view = { x: 0, y: 0, k: 1 }; return; }
+    var minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    pts.forEach(function (p) {
+      var rad = (p.style && p.style.r) || 8;
+      var top = p.y - rad - 14, bot = p.y + rad + 22;   // label sits below the node
+      var lft = p.x - rad - 26, rgt = p.x + rad + 26;   // and needs side room too
+      if (lft < minX) minX = lft;
+      if (rgt > maxX) maxX = rgt;
+      if (top < minY) minY = top;
+      if (bot > maxY) maxY = bot;
+    });
+    var mg = reservedMargins();
+    var availW = Math.max(160, VBW - mg.left - mg.right);
+    var availH = Math.max(160, VBH - mg.top - mg.bottom);
+    var bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+    var k = clampK(Math.min(availW / bw, availH / bh, 1.6));
+    var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    state.view = { x: mg.left + availW / 2 - cx * k, y: mg.top + availH / 2 - cy * k, k: k };
+  }
   function applyView() {
     if (sceneG) sceneG.setAttribute("transform",
       "translate(" + state.view.x + "," + state.view.y + ") scale(" + state.view.k + ")");
@@ -1289,15 +1559,20 @@
     return { x: (e.clientX - r.left - (r.width - VBW * s) / 2) / s,
              y: (e.clientY - r.top - (r.height - VBH * s) / 2) / s };
   }
-  function liveView() {   // pan/wheel: suspend the eased transition for 1:1 tracking
+  // pan/wheel: suspend the eased transition for 1:1 tracking. `skipApply`
+  // lets a caller that's already driving the visual another way (the pan
+  // CSS-transform proxy above; the rAF-coalesced wheel handler below) skip
+  // the immediate `.pz` attribute write this would otherwise force.
+  function liveView(skipApply) {
     if (canvasEl) canvasEl.classList.add("dragging");
     freezeAnims();
     clearTimeout(settleT);
     settleT = setTimeout(function () {
       if (canvasEl) canvasEl.classList.remove("dragging");
       thawAnims();
+      cullLabels();   // a settled zoom level is worth a fresh declutter pass
     }, 160);
-    applyView();
+    if (!skipApply) applyView();
   }
   function setHighlight(i) {
     if (state.highlight === i) return;
@@ -1313,7 +1588,18 @@
   // spotlight (a hovered or click-pinned node) washes out everything not touching
   // that one node. Neither rebuilds the scene — like pan/zoom this only nudges
   // style.opacity on nodes/edges already in the DOM.
+  //
+  // Coalesced to one pass per animation frame: a fast mouse sweep across a
+  // dense graph fires mouseenter/mouseleave far faster than that, and every
+  // call before was a full pass over every node and edge on screen. Nothing
+  // downstream reads the result synchronously, so every caller just fires
+  // this and moves on — safe to defer.
+  var highlightRaf = 0;
   function applyHighlight() {
+    if (highlightRaf) return;
+    highlightRaf = requestAnimationFrame(function () { highlightRaf = 0; applyHighlightNow(); });
+  }
+  function applyHighlightNow() {
     var h = state.highlight != null ? state.highlight : state.pin;
     if (h != null) {
       var known = new Set(nodeItems.map(function (it) { return it.key; }));
@@ -1370,12 +1656,14 @@
     if (!svgEl) return;
     edgeItems = [];
     nodeItems = [];
+    labelItems = [];
     clear(svgEl);
     sceneG = renderGraphSVG();
     svgEl.appendChild(sceneG);
     if (emptyEl) emptyEl.hidden = lastPlacedN > 0;
     applyView();
     applyHighlight();
+    cullLabels();
   }
 
   // window-level drag listeners: bound once, not per render
@@ -1386,20 +1674,41 @@
     panRaf = requestAnimationFrame(function () {
       panRaf = 0;
       drag.moved = true;
-      state.view.x = drag.vx + (panPend.clientX - drag.x);
-      state.view.y = drag.vy + (panPend.clientY - drag.y);
-      liveView();
+      // Move the already-painted <svg> with a CSS transform (compositor-only,
+      // pure translate needs no transform-origin) instead of rewriting the
+      // `.pz` group's SVG transform attribute on every frame — that attribute
+      // write is what forced a repaint of every one of the (up to hundreds
+      // of) dendrite paths on each mousemove. state.view.x/y and the real
+      // `.pz` attribute are committed once, on mouseup.
+      var dxPx = panPend.clientX - drag.x, dyPx = panPend.clientY - drag.y;
+      if (svgEl) svgEl.style.transform = "translate(" + dxPx + "px," + dyPx + "px)";
+      liveView(true);
     });
   });
   window.addEventListener("mouseup", function () {
     if (!drag && !animPaused) return;
     lastPanMoved = !!(drag && drag.moved);
+    if (drag && drag.moved && svgEl) {
+      svgEl.style.transform = "";
+      svgEl.style.willChange = "";
+      // fold the committed pixel delta into state.view, in viewBox units —
+      // dividing by the viewBox's own render scale is the pan unit fix:
+      // screen pixels were previously added directly as if they were
+      // already viewBox units, so a drag tracked the cursor at the wrong rate
+      // whenever the canvas wasn't rendered at exactly 1 viewBox unit / px.
+      var r = svgEl.getBoundingClientRect();
+      var s = Math.min(r.width / VBW, r.height / VBH) || 1;
+      state.view.x = drag.vx + (panPend.clientX - drag.x) / s;
+      state.view.y = drag.vy + (panPend.clientY - drag.y) / s;
+      applyView();
+    }
     drag = null;
     // covers both a finished drag and a bare click (which armed no settle timer)
     clearTimeout(settleT);
     settleT = setTimeout(function () {
       if (canvasEl) canvasEl.classList.remove("dragging");
       thawAnims();
+      cullLabels();
     }, 120);
   });
 
@@ -1418,15 +1727,15 @@
         if (i) crumb.appendChild(el("i", { class: "ph ph-caret-right" }));
         var last = i === segs.length - 1;
         crumb.appendChild(el("span", {
-          class: last ? "cur seg" : "seg", text: s,
+          class: last ? "cur crumb-part" : "crumb-part", text: s,
           on: last
             ? (fobj ? { click: fileAct(fobj) } : null)
             : { click: crumbFolder(segs.slice(0, i + 1).join("/")) },
         }));
       });
       crumb.appendChild(el("i", { class: "ph ph-caret-right" }));
-      crumb.appendChild(el("span", { class: "cur seg fn", text: n.name + "()",
-        on: { click: function () { state.view = { x: 0, y: 0, k: 1 }; applyView(); } } }));
+      crumb.appendChild(el("span", { class: "cur crumb-part fn", text: n.name + "()",
+        on: { click: function () { fitView(lastLay); applyView(); } } }));
     } else {
       crumb.appendChild(el("span", { class: "cur", text: "all modules" }));
     }
@@ -1464,11 +1773,22 @@
     // "Package" used to be a separate 4th grain, but layoutOverview() rendered
     // it identically to "Module" (both were `grain <= 1`) — a control that lied
     // about having two distinct views. Three real grains now.
+    var GRAIN_ICON = ["ph-cube", "ph-file", "ph-function"];
     var grainSeg = el("div", { class: "seg" },
       ["Module", "File", "Function"].map(function (label, gi) {
-        return el("button", { class: state.grain === gi ? "on" : "",
-          on: { click: function () { state.grain = gi; state.view = { x: 0, y: 0, k: 1 }; render(); } } },
-          [label]);
+        // the label collapses to icon-only under ~1180px (see explore.css) —
+        // aria-label keeps the button's accessible name either way.
+        return el("button", { class: state.grain === gi ? "on" : "", "aria-label": label,
+          on: { click: function () {
+            // the neuron view (a focused symbol) ignores grain entirely, so
+            // clicking Module/File/Function while focused used to do nothing
+            // visible — clear the focus first so the click always lands on
+            // the overview it names.
+            state.grain = gi; requestFit();
+            lsSet("grain", gi);
+            if (state.focus != null) go("graph"); else render();
+          } } },
+          [el("i", { class: "ph " + GRAIN_ICON[gi] }), el("span", { class: "seg-label", text: label })]);
       }));
 
     // hops slider + flow pill repaint the graph in-place (paintGraph(), not the
@@ -1477,9 +1797,10 @@
     var hopReadout = el("b", { class: "mono", text: String(state.hops) });
     var hop = el("div", { class: "hopwrap" }, [
       "hops",
-      el("input", { type: "range", min: "1", max: "4", value: String(state.hops),
+      el("input", { type: "range", min: "1", max: "4", value: String(state.hops), "aria-label": "Call hops",
         on: { input: function (e) {
           state.hops = +e.target.value;
+          lsSet("hops", state.hops);
           hopReadout.textContent = String(state.hops);
           paintGraph(); updateCap();
         } } }),
@@ -1498,6 +1819,7 @@
     var flowPill = el("button", { class: "pill" + (state.flow ? " on" : ""),
       on: { click: function () {
         state.flow = !state.flow;
+        lsSet("flow", state.flow);
         flowPill.classList.toggle("on", state.flow);
         paintGraph(); updateCap(); refreshLegend();
       } } },
@@ -1515,11 +1837,15 @@
       on: { click: function () { state.mobileInsp = true; render(); } } },
       [el("i", { class: "ph ph-info" }), "Details"]) : null;
 
+    // showDead only ever filters *symbol* nodes (see layoutOverview()'s own
+    // `it.kind === "sym"` guard) — at Module or File grain, every item on
+    // screen is a module/file node, so toggling it did nothing visible.
+    var showDeadPill = state.focus == null && state.grain === 2 ? deadPill : null;
     return el("div", { class: "stage-bar" }, [
       filesPill, crumbWrap, grainSeg, state.focus != null ? hop : null,
       el("div", { class: "spacer" }),
       detailsPill, flowPill,
-      state.focus != null ? resetPill : deadPill,
+      state.focus != null ? resetPill : showDeadPill,
     ]);
   }
   function stage() {
@@ -1660,7 +1986,11 @@
       el("span", { class: "lk", text: state.groupBy === "layer" ? "LAYERS" : "FOLDERS" }),
       el("div", { class: "spacer" }),
       el("button", { class: "legend-toggle", "aria-label": state.legendCollapsed ? "Show legend" : "Hide legend",
-        on: { click: function () { state.legendCollapsed = !state.legendCollapsed; refreshLegend(); } } },
+        on: { click: function () {
+          state.legendCollapsed = !state.legendCollapsed;
+          lsSet("legendCollapsed", state.legendCollapsed);
+          refreshLegend();
+        } } },
         [el("i", { class: state.legendCollapsed ? "ph ph-caret-up" : "ph ph-caret-down" })]),
     ]));
     wireLegendDrag(grip, box);
@@ -1677,13 +2007,13 @@
       if (scope) {
         var segs = scope.split("/");
         var pathRow = el("div", { class: "legend-path" }, [
-          el("span", { class: "seg", text: "root", on: { click: function () { openFolder(""); } } }),
+          el("span", { class: "crumb-part", text: "root", on: { click: function () { openFolder(""); } } }),
         ]);
         segs.forEach(function (s, i) {
           pathRow.appendChild(el("i", { class: "ph ph-caret-right" }));
           var last = i === segs.length - 1;
           var upto = segs.slice(0, i + 1).join("/");
-          var attrs = { class: last ? "seg cur" : "seg", text: s };
+          var attrs = { class: last ? "crumb-part cur" : "crumb-part", text: s };
           if (!last) attrs.on = { click: function () { openFolder(upto); } };
           pathRow.appendChild(el("span", attrs));
         });
@@ -1722,6 +2052,8 @@
       "call · thicker = same file",
     ]));
     box.appendChild(el("div", { class: "row" }, [el("span", { class: "sw dash" }), "import / external"]));
+    box.appendChild(el("div", { class: "row" }, [el("span", { class: "sw dash" }),
+      "guessed call — name matched, no import proof (Function view)"]));
     if (state.flow) {
       box.appendChild(el("div", { class: "lk", style: "margin-top:9px", text: "TRAFFIC" }));
       box.appendChild(el("div", { class: "row" }, [
@@ -1747,7 +2079,7 @@
       el("div", { class: "btns" }, [
         zbtn("ph ph-plus", "Zoom in", function () { zoomAt(1.25); }),
         zbtn("ph ph-minus", "Zoom out", function () { zoomAt(1 / 1.25); }),
-        zbtn("ph ph-crosshair", "Reset view", function () { state.view = { x: 0, y: 0, k: 1 }; applyView(); }),
+        zbtn("ph ph-crosshair", "Reset view", function () { fitView(lastLay); applyView(); }),
       ]),
       el("div", { class: "cap" }),
     ]);
@@ -1757,12 +2089,27 @@
   function zbtn(icon, label, fn) {
     return el("button", { "aria-label": label, on: { click: fn } }, [el("i", { class: icon })]);
   }
+  // Re-fit whenever the canvas box itself changes size (a window resize, the
+  // rail/inspector toggling on narrow viewports, …) — the observer is bound
+  // once; each wireCanvas() call below just points it at the current
+  // canvasEl. No relayout, just the same cheap transform-only fit a manual
+  // "Reset view" click runs.
+  var canvasResizeRaf = 0;
+  var canvasRO = window.ResizeObserver ? new ResizeObserver(function () {
+    if (canvasResizeRaf) return;
+    canvasResizeRaf = requestAnimationFrame(function () {
+      canvasResizeRaf = 0;
+      if (lastLay) { fitView(lastLay); applyView(); }
+    });
+  }) : null;
   function wireCanvas() {
+    if (canvasRO) canvasRO.observe(canvasEl);
     canvasEl.addEventListener("mousedown", function (e) {
       if (e.target.closest(".gnode")) return;
       e.preventDefault();
       drag = { x: e.clientX, y: e.clientY, vx: state.view.x, vy: state.view.y };
       canvasEl.classList.add("dragging");
+      if (svgEl) svgEl.style.willChange = "transform";
       freezeAnims();
     });
     canvasEl.addEventListener("click", function (e) {   // click the backdrop = unpin
@@ -1780,7 +2127,11 @@
       e.preventDefault();
       var p = vbPoint(e);
       zoomToward(p.x, p.y, e.deltaY < 0 ? 1.12 : 1 / 1.12);
-      liveView();
+      liveView(true);
+      // a trackpad's smooth wheel can fire well past 60Hz — coalesce the
+      // `.pz` attribute write (the expensive part) to once per paint instead
+      // of once per event; the cheap state.view math above still runs live.
+      if (!zoomRaf) zoomRaf = requestAnimationFrame(function () { zoomRaf = 0; applyView(); });
     }, { passive: false });
   }
 
@@ -1801,10 +2152,10 @@
         text: "Pick a symbol in the tree or the graph to inspect its callers, blast radius and source." }));
       var idleDeps = DATA.dependencies || [];
       if (idleDeps.length) body.appendChild(depPanel(idleDeps));
-      return el("aside", { class: "insp", "aria-label": "Symbol details" }, [head, body, foot]);
+      return el("aside", { class: "insp", id: "insp-panel", tabindex: "-1", "aria-label": "Symbol details" }, [head, body, foot]);
     }
     var n = N[state.focus];
-    var reachIn = reachSet(state.focus, inAdj);
+    var reachIn = reachSet(state.focus, inAdjSure);
     var filesHit = new Set();
     reachIn.forEach(function (i) { filesHit.add(N[i].file); });
     var totalFiles = (DATA.stats && DATA.stats.files) || 1;
@@ -1817,15 +2168,15 @@
       var exSeen = {};
       var ex = el("div", { class: "insp-explain" }, [
         el("div", { class: "lbl", text: "WHAT THIS DOES" }),
-        el("p", {}, termNodes(n.explain.what, exTerms, exSeen)),
+        el("p", {}, proseNodes(n.explain.what, exTerms, exSeen)),
       ]);
       if (n.explain.why)
-        ex.appendChild(el("p", { class: "why" }, termNodes(n.explain.why, exTerms, exSeen)));
+        ex.appendChild(el("p", { class: "why" }, proseNodes(n.explain.why, exTerms, exSeen)));
       body.appendChild(ex);
     }
 
     body.appendChild(el("div", { class: "statgrid" }, [
-      card("FAN-IN", n.fan_in), card("FAN-OUT", n.fan_out),
+      card("FAN-IN", n.fan_in, n.fan_in_guess), card("FAN-OUT", n.fan_out, n.fan_out_guess),
       card("CHURN", n.churn), card("TIER", tierOf(n.file)),
     ]));
 
@@ -1915,12 +2266,19 @@
     var copyBtn = el("button", { class: "btn", text: "Copy key" });
     copyBtn.addEventListener("click", function () { copyText(n.key, copyBtn); });
     foot.appendChild(copyBtn);
-    return el("aside", { class: "insp", "aria-label": "Symbol details" }, [head, body, foot]);
+    return el("aside", { class: "insp", id: "insp-panel", tabindex: "-1", "aria-label": "Symbol details" }, [head, body, foot]);
   }
-  function card(l, v) {
-    return el("div", { class: "statcard" }, [
+  function card(l, v, guess) {
+    var kids = [
       el("div", { class: "lbl", text: l }), el("div", { class: "val", text: v == null ? "0" : String(v) }),
-    ]);
+    ];
+    // a repo-wide name guess (no import evidence, no self/class match) is
+    // never folded into the number above it — shown separately so it can't
+    // be mistaken for a confident count, same reasoning as the dashed edges
+    // on the canvas (see the legend).
+    if (guess) kids.push(el("div", { class: "muted", text: "+" + guess + " guessed", title:
+      "Also referenced by name only, with no import connecting the two files — shown, not counted." }));
+    return el("div", { class: "statcard" }, kids);
   }
   // "Read the git history when a line makes no sense — someone wrote a reason
   // down" (teacher's principle 6). codemap captures intent at commit time
@@ -1951,7 +2309,15 @@
     var H = 190, Wd = 30, loc = f.loc;
     var syms = f.symbols.map(function (i) { return N[i]; })
       .sort(function (a, b) { return a.line[0] - b.line[0]; });
-    var covered = syms.reduce(function (s, m) { return s + (m.line[1] - m.line[0] + 1); }, 0);
+    // union of line ranges, not a plain sum — syms includes every nested
+    // symbol too (a class's own span already contains its methods'), so
+    // summing used to double-count and could read over 100%.
+    var covered = 0, coveredEnd = -1;
+    syms.forEach(function (m) {
+      var s = m.line[0], e = m.line[1];
+      if (s > coveredEnd) { covered += e - s + 1; coveredEnd = e; }
+      else if (e > coveredEnd) { covered += e - coveredEnd; coveredEnd = e; }
+    });
     var svg = el("svg", { class: "anatomy", width: Wd, height: H, viewBox: "0 0 " + Wd + " " + H });
     svg.appendChild(el("rect", { x: 0, y: 0, width: Wd, height: H, rx: 3,
       fill: "var(--color-neutral-900)" }));
@@ -2058,7 +2424,9 @@
   // graph is unweighted. One BFS feeds both the inspector's "ON PATH FROM"
   // label (chainLabel() below) and a reverse scenario (originScenario(),
   // further down): "I see this — what made it?" is that same chain, played
-  // instead of just read.
+  // instead of just read. Confident edges only (outAdjSure) — this is what
+  // "Trace back to entry ▶" then *plays*, so a guessed edge here used to be
+  // able to walk a whole false call chain and present it as the real path.
   function shortestEntryChain(target) {
     var entries = N.filter(function (n) { return n.entry.length; }).map(function (n) { return n.i; });
     if (!entries.length) return null;
@@ -2069,7 +2437,7 @@
       while (q.length) {
         var u = q.shift();
         if (u === target) break;
-        (outAdj[u] || []).forEach(function (v) { if (!prev.has(v)) { prev.set(v, u); q.push(v); } });
+        (outAdjSure[u] || []).forEach(function (v) { if (!prev.has(v)) { prev.set(v, u); q.push(v); } });
       }
       if (!prev.has(target)) return;
       var chain = [], c = target;
@@ -2268,8 +2636,20 @@
       history.replaceState(null, "", "#/graph/" + encodeURIComponent(N[state.focus].key));
     syncSrc();
   }
+  // One Esc key, one job at a time — closes whichever of these is actually
+  // open, nearest/most-modal first, and never more than one per press. The
+  // palette has its own capture-phase handler (below) that always runs
+  // first regardless of registration order, since capture always precedes
+  // bubble; this covers everything Esc should close once the palette isn't
+  // the thing on top.
   window.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && state.srcOpen && !paletteOpen && state.tab === "graph") closeSource();
+    if (e.key !== "Escape" || paletteOpen) return;
+    if (state.srcOpen && state.tab === "graph") { closeSource(); return; }
+    if (state.mobileRail || state.mobileInsp) {
+      state.mobileRail = false; state.mobileInsp = false; render(); return;
+    }
+    if (activeTip) { hideTip(); return; }
+    if (state.pin != null) { state.pin = null; applyHighlight(); }
   });
 
   function srcViewer(n) {
@@ -2382,7 +2762,12 @@
     var n = N[state.focus], pane = srcViewer(n);
     if (old) old.replaceWith(pane);
     else stageEl.appendChild(pane);
-    var body = pane.querySelector(".srcbody"), top = pane.querySelector('.sl[data-l="' + n.line[0] + '"]');
+    // one-shot: a file-text search hit wants the exact matched line, not the
+    // anchor symbol's own first line — consumed here so it never leaks into
+    // a later, unrelated open of the same pane.
+    var targetLine = state.srcTargetLine != null ? state.srcTargetLine : n.line[0];
+    state.srcTargetLine = null;
+    var body = pane.querySelector(".srcbody"), top = pane.querySelector('.sl[data-l="' + targetLine + '"]');
     if (body && top) body.scrollTop = Math.max(0, top.offsetTop - body.clientHeight * 0.22);
     if (body) body.dispatchEvent(new Event("scroll"));
   }
@@ -2408,6 +2793,58 @@
     inText.sort(function (a, b) { return symSpan(a) - symSpan(b); });
     return named.concat(inText);
   }
+  // Every embedded file's lines that fall OUTSIDE any symbol's own range —
+  // imports, module-level constants, a docstring at the top, config files
+  // with no captured symbols at all. searchNodes() above only ever looks
+  // inside a symbol's own source, so this text used to be unsearchable even
+  // though it's sitting right there, embedded, on screen. Computed once per
+  // file and cached, like srcLower() above.
+  var fileGapCache = {};
+  function fileGapLines(f) {
+    if (!(f.fi in fileGapCache)) {
+      var lines = fileLines(f.fi), out = [];
+      if (lines) {
+        var covered = new Array(lines.length + 1);
+        f.symbols.forEach(function (si) {
+          var n = N[si];
+          for (var ln = Math.max(1, n.line[0]); ln <= Math.min(lines.length, n.line[1]); ln++) covered[ln] = true;
+        });
+        for (var i = 1; i <= lines.length; i++) {
+          var text = lines[i - 1];
+          if (!covered[i] && text.trim()) out.push({ line: i, text: text.trim() });
+        }
+      }
+      fileGapCache[f.fi] = out;
+    }
+    return fileGapCache[f.fi];
+  }
+  // one hit per matching file (the first gap line it matches on) — a big
+  // config file matching on every line would otherwise flood the results.
+  function searchFiles(q) {
+    var hits = [];
+    FILES.forEach(function (f) {
+      var gaps = fileGapLines(f);
+      for (var i = 0; i < gaps.length; i++) {
+        if (gaps[i].text.toLowerCase().indexOf(q) >= 0) {
+          hits.push({ kind: "file", file: f, line: gaps[i].line, text: gaps[i].text });
+          break;
+        }
+      }
+    });
+    return hits;
+  }
+  // the symbol whose own range is closest to `line` — used to anchor the
+  // (symbol-centric) source viewer on a gap-line hit that belongs to no
+  // symbol itself.
+  function nearestSymbolTo(f, line) {
+    var best = null, bestD = Infinity;
+    (f.symbols || []).forEach(function (si) {
+      var n = N[si];
+      var d = line < n.line[0] ? n.line[0] - line : line > n.line[1] ? line - n.line[1] : 0;
+      if (d < bestD) { bestD = d; best = si; }
+    });
+    return best;
+  }
   function openPalette() {
     if (paletteOpen) return;
     paletteOpen = true;
@@ -2421,9 +2858,12 @@
     // searches what's actually in the page (whole files up to [explore]
     // max_source_bytes, capped excerpts past that), so a real miss still
     // deserves a plain explanation rather than reading as "that text doesn't exist".
-    var empty = el("li", { class: "palette-empty",
-      text: "No match in any symbol name, file, docstring, or the source in this page " +
-        "— it may be in a file too large to embed (see max_source_bytes).", hidden: true });
+    var missText = "No match in any symbol name, file, docstring, or the source in this page";
+    missText += unembeddedFileCount > 0
+      ? " — it may be in one of the " + unembeddedFileCount + " file" +
+        (unembeddedFileCount === 1 ? "" : "s") + " too large to embed (see max_source_bytes)."
+      : ".";
+    var empty = el("li", { class: "palette-empty", text: missText, hidden: true });
     var back = el("div", { class: "palette-back", role: "dialog", "aria-modal": "true",
       on: { click: function (e) { if (e.target === back) closeP(); } } },
       [el("div", { class: "palette" }, [input, list])]);
@@ -2458,28 +2898,52 @@
     }
     function refresh() {
       var q = input.value.toLowerCase().trim();
-      matches = (q ? searchNodes(q) : N).slice(0, 60);
+      // symbol matches first (named, then in-text), file-level text last —
+      // a file whose match is inside a symbol already surfaced that symbol.
+      matches = (q ? searchNodes(q).concat(searchFiles(q)) : N).slice(0, 60);
       sel = 0;
       clear(list);
       if (!matches.length) { list.appendChild(empty); empty.hidden = false; return; }
-      matches.forEach(function (n, i) {
-        var nameHit = (n.qual + " " + n.file).toLowerCase().indexOf(q) >= 0;
-        var row = el("div", { class: "palette-row" }, [
-          el("span", { class: "rk", text: kindLabel(n.kind) }),
-          el("span", { text: n.qual }),
-          el("span", { class: "pth", text: n.file }),
-        ]);
+      matches.forEach(function (hit, i) {
+        var isFile = hit.kind === "file";
+        var row = isFile
+          ? el("div", { class: "palette-row" }, [
+              el("span", { class: "rk", text: "file" }),
+              el("span", { text: hit.file.path.split("/").pop() }),
+              el("span", { class: "pth", text: hit.file.path }),
+            ])
+          : el("div", { class: "palette-row" }, [
+              el("span", { class: "rk", text: kindLabel(hit.kind) }),
+              el("span", { text: hit.qual }),
+              el("span", { class: "pth", text: hit.file }),
+            ]);
         var kids = [row];
-        if (q && !nameHit) {
-          var hit = findMatchLine(n, q);
-          if (hit) kids.push(el("div", { class: "palette-hit",
-            text: hit.length > 90 ? hit.slice(0, 90) + "…" : hit }));
+        if (isFile) {
+          kids.push(el("div", { class: "palette-hit",
+            text: hit.text.length > 90 ? hit.text.slice(0, 90) + "…" : hit.text }));
+        } else {
+          var nameHit = (hit.qual + " " + hit.file).toLowerCase().indexOf(q) >= 0;
+          if (q && !nameHit) {
+            var line = findMatchLine(hit, q);
+            if (line) kids.push(el("div", { class: "palette-hit",
+              text: line.length > 90 ? line.slice(0, 90) + "…" : line }));
+          }
         }
         list.appendChild(el("li", { class: i === sel ? "on" : "",
-          on: { click: function () { pick(n); } } }, kids));
+          on: { click: function () { pick(hit); } } }, kids));
       });
     }
-    function pick(n) { closeP(); go("graph", n.key); }
+    function pick(hit) {
+      closeP();
+      if (hit.kind !== "file") { go("graph", hit.key); return; }
+      // anchor the (symbol-centric) source viewer on whichever symbol sits
+      // closest to the matched line, then scroll straight to that line —
+      // the file itself may have no symbols at all, so this can fail.
+      var si = nearestSymbolTo(hit.file, hit.line);
+      if (si == null) { state.fileScope = hit.file.fi; go("graph"); return; }
+      state.srcTargetLine = hit.line;
+      go("graph", N[si].key + "/src");
+    }
     function mark() {
       Array.prototype.forEach.call(list.children, function (li, i) {
         li.className = i === sel ? "on" : "";
@@ -2506,6 +2970,10 @@
     var wrap = el("div", { class: "tl-wrap" });
     (DATA.timeline || []).forEach(function (c) {
       var touched = state.touched && c.touched.some(function (i) { return state.touched.has(i); });
+      // "#/timeline/<sha>" deep link — accept either the full sha or the
+      // short form shown on the card, since that's what a viewer would
+      // actually copy.
+      var deepLinked = state.timelineSha && (c.sha === state.timelineSha || c.short === state.timelineSha);
       var bars = el("div", { class: "tl-bars" });
       [["s", c.counts.structural, "structural"], ["b", c.counts.behavioral, "behavioral"],
        ["c", c.counts.cosmetic, "cosmetic"]].forEach(function (p) {
@@ -2540,7 +3008,8 @@
             else go("graph");
           } } }) : null,
       ];
-      wrap.appendChild(el("div", { class: "tl-item" + (touched ? " touch" : "") }, kids));
+      wrap.appendChild(el("div", { id: "tl-" + c.sha,
+        class: "tl-item" + (touched ? " touch" : "") + (deepLinked ? " hl" : "") }, kids));
     });
     if (!(DATA.timeline || []).length)
       wrap.appendChild(el("div", { class: "tl-empty", role: "status",
@@ -2570,6 +3039,20 @@
   function fitText(s, w, cpx) {
     var max = Math.max(1, Math.floor(w / (cpx || 6.6)));
     return s.length <= max ? s : s.slice(0, Math.max(1, max - 1)) + "…";
+  }
+  // Same char-width estimate as fitText, but wraps onto up to 2 lines instead
+  // of ellipsis-truncating to 1 — an authored architecture title shouldn't
+  // get cut off just because the box is a fixed width. Only truly extreme
+  // input still ellipses, on the second line, as a last resort.
+  function wrapTitle(s, w, cpx) {
+    var max = Math.max(1, Math.floor(w / (cpx || 6.6)));
+    if (s.length <= max) return [s];
+    var breakAt = s.lastIndexOf(" ", max);
+    if (breakAt < Math.floor(max * 0.4)) breakAt = max;   // no good word break nearby — hard-split
+    var line1 = s.slice(0, breakAt).trim();
+    var rest = s.slice(breakAt).trim();
+    var line2 = rest.length <= max ? rest : rest.slice(0, Math.max(1, max - 1)) + "…";
+    return [line1, line2];
   }
 
   // squarified treemap (Bruls/Huizing/van Wijk), compact recursion
@@ -2633,10 +3116,8 @@
   // ── 1. Layer cake ── "what shape is this system" ─────────────────────
   function layerCake() {
     var hide = state.hideTests;
-    // matches "tests/…" AND "pkg/tests/…" — a top-level-only check missed any
-    // nested tests dir, which stayed in the cake with "hide tests" turned on.
     var visible = FILES.filter(function (f) {
-      return !(hide && /(^|\/)tests\//.test(f.path));
+      return !(hide && isTestPath(f.path));
     });
     var vis = {};
     visible.forEach(function (f) { vis[f.fi] = true; });
@@ -2705,10 +3186,13 @@
           "stroke-width": b.cyc ? 2 : 1.1 }));
         if (b.cyc)
           gEl.appendChild(el("text", { x: x + 7, y: y + 15, class: "cake-cyc", text: "↺" }));
-        if (w > 34)
+        var cakeLbl = fitText(b.cyc ? "cycle · " + b.files.length : b.label, w - 10);
+        // a block too narrow to fit at least ~6 real characters just shows a
+        // 1-2 letter fragment ("f…") that reads as noise, not a name — skip
+        // painting it and rely on the <title> (already on gEl) for hover/tap.
+        if (w > 34 && cakeLbl.replace(/…$/, "").length >= 6)
           gEl.appendChild(el("text", { x: x + w / 2, y: y + h / 2 + 1, "text-anchor": "middle",
-            "dominant-baseline": "middle", class: "cake-name",
-            text: fitText(b.cyc ? "cycle · " + b.files.length : b.label, w - 10) }));
+            "dominant-baseline": "middle", class: "cake-name", text: cakeLbl }));
         if (w > 78)
           gEl.appendChild(el("text", { x: x + w / 2, y: y + h + 12, "text-anchor": "middle",
             class: "cake-loc", text: b.loc + " loc" }));
@@ -2779,14 +3263,25 @@
     var order = [root], qi = 0;
     while (qi < order.length) {
       var u = order[qi++], du = depth.get(u);
-      (outAdj[u] || []).forEach(function (v) {
+      // confident edges only (outAdjSure) — an AMBIGUOUS one used to be able
+      // to walk this trace straight from production code into an unrelated
+      // same-named method, even a test file's.
+      (outAdjSure[u] || []).forEach(function (v) {
         if (!depth.has(v)) { depth.set(v, du + 1); order.push(v); }
       });
     }
     var cols = [];
     depth.forEach(function (d, i) { (cols[d] = cols[d] || []).push(i); });
     var maxD = cols.length - 1;
-    var thin = order.length < 8;   // frontier died early — dynamic dispatch ahead
+    // a short trace on its own means nothing — a small repo or a shallow
+    // root looks identical. Only call it out when a real leaf in the trace
+    // shows an actual dynamic-dispatch pattern in its own source.
+    var dynLeaf = null;
+    for (var li = 0; li < order.length && !dynLeaf; li++) {
+      var leafU = order[li];
+      if ((outAdjSure[leafU] || []).length) continue;
+      if (classifyUnresolvedCalls(N[leafU]) === "dynamic") dynLeaf = N[leafU];
+    }
 
     var BUDGET = 12, COLW = 208, ROWH = 44, TOP = 30, LEFT = 24;
     var shown = {}, colShown = [];
@@ -2798,7 +3293,7 @@
       colShown[d] = { list: take, hidden: (open ? 0 : Math.max(0, ranked.length - take.length)) };
     });
     var maxRows = colShown.reduce(function (m, c) { return Math.max(m, c.list.length + (c.hidden ? 1 : 0)); }, 1);
-    var W = LEFT * 2 + (maxD + 1) * COLW + (thin ? 220 : 0);
+    var W = LEFT * 2 + (maxD + 1) * COLW + (dynLeaf ? 220 : 0);
     var Hh = TOP * 2 + maxRows * ROWH;
     var yOf = {}, xOf = {};
     colShown.forEach(function (c, d) {
@@ -2855,10 +3350,10 @@
       }
     });
 
-    if (thin) {
+    if (dynLeaf) {
       var lastLine = null;
-      (N[root].excerpt || "").split("\n").forEach(function (ln) {
-        if (/\(/.test(ln) && !/^\s*(def|class|@)/.test(ln)) lastLine = ln.trim();
+      (srcOf(dynLeaf) || "").split("\n").forEach(function (ln) {
+        if (SIM_DYN_RE.test(ln)) lastLine = ln.trim();
       });
       var bx = LEFT + (maxD + 1) * COLW, by = TOP + maxRows * ROWH / 2 - 34;
       var dg = el("g", { class: "trace-dispatch" });
@@ -2866,7 +3361,7 @@
         fill: "var(--color-surface-2)", stroke: "var(--color-accent-700)" }));
       dg.appendChild(el("text", { x: bx + 12, y: by + 20, class: "trace-nm", text: "⚡ dynamic dispatch" }));
       dg.appendChild(el("text", { x: bx + 12, y: by + 38, class: "trace-fl",
-        text: "the indexer can't follow this" }));
+        text: dynLeaf.name + " — the indexer can't follow this" }));
       if (lastLine)
         dg.appendChild(el("text", { x: bx + 12, y: by + 55, class: "trace-code",
           text: lastLine.length > 26 ? lastLine.slice(0, 25) + "…" : lastLine }));
@@ -2948,23 +3443,33 @@
         gc.x + GAP, gc.y + LBL, Math.max(0, gc.w - GAP * 2), Math.max(0, gc.h - LBL - GAP));
       hiddenZero += grp.files.filter(function (f) { return !(f.loc > 0); }).length;
       inner.forEach(function (fc) {
-        var f = fc.item.f, dead = fileAllDead(f.fi), cw = Math.max(0, fc.w - GAP);
+        var f = fc.item.f, dead = fileAllDead(f.fi) && !isTestPath(f.path),
+            cw = Math.max(0, fc.w - GAP), ch = Math.max(0, fc.h - GAP);
         var cell = el("g", { class: "mass-cell",
           on: { click: function () { fileAct(f)(); } } }, [
           el("title", { text: f.path.split("/").pop() + " · " + (f.loc || 0) + " loc · " +
             (churnOf[f.fi] || 0) + " commits" + (dead ? " · every function unreachable" : "") }),
         ]);
-        cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw,
-          height: Math.max(0, fc.h - GAP), rx: 3, fill: churnFill(f.fi) }));
+        cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw, height: ch, rx: 3, fill: churnFill(f.fi) }));
         if (dead)
-          cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw,
-            height: Math.max(0, fc.h - GAP), rx: 3, fill: "url(#cm-hatch)" }));
+          cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw, height: ch, rx: 3, fill: "url(#cm-hatch)" }));
         if (cw > 40 && fc.h > 20) {
-          cell.appendChild(el("text", { x: fc.x + 5, y: fc.y + 13, class: "mass-nm",
+          // fitText already keeps each line inside its own estimated-width
+          // budget, but a clipPath is a hard backstop against the sub-label
+          // ("N loc · dead") still bleeding past the cell's real edge on a
+          // narrow squarify slice, where the char-width estimate can be off
+          // by a pixel or two — same idea as the Architecture boxes below.
+          var clipId = "mc-" + f.fi;
+          defs.appendChild(el("clipPath", { id: clipId }, [
+            el("rect", { x: fc.x, y: fc.y, width: cw, height: ch }),
+          ]));
+          var labels = el("g", { "clip-path": "url(#" + clipId + ")" });
+          labels.appendChild(el("text", { x: fc.x + 5, y: fc.y + 13, class: "mass-nm",
             text: fitText(f.path.split("/").pop(), cw - 8, 5.8) }));
           if (fc.h > 34)
-            cell.appendChild(el("text", { x: fc.x + 5, y: fc.y + 25, class: "mass-sub",
-              text: (f.loc || 0) + " loc" + (dead ? " · dead" : "") }));
+            labels.appendChild(el("text", { x: fc.x + 5, y: fc.y + 25, class: "mass-sub",
+              text: fitText((f.loc || 0) + " loc" + (dead ? " · dead" : ""), cw - 8, 5.6) }));
+          cell.appendChild(labels);
         }
         svg.appendChild(cell);
       });
@@ -3018,7 +3523,11 @@
   var A_HUE = { entry: "#d55181", views: "#199e70", api: "#c98500", logic: "#3987e5",
                 data: "#d95926", shared: GROUP_OTHER, tests: GROUP_OTHER };
   var A_SERVICE_HUE = "#9085e9", A_ACTOR_HUE = "#b2b6ca", A_UP_HUE = "#e66767";
-  var A_BOX_W = 140, A_BOX_H = 48, A_GAP = 12, A_BAND_PAD = 14, A_BAND_HEAD = 32,
+  // A_BOX_H has room for a 2-line title + the subtitle line below it — every
+  // box gets this height (the row/band layout below shares one height per
+  // row), so a long authored title never has to ellipsis down to one line;
+  // a short title just leaves a little breathing room under it instead.
+  var A_BOX_W = 140, A_BOX_H = 60, A_GAP = 12, A_BAND_PAD = 14, A_BAND_HEAD = 32,
       A_ROW_GAP = 52, A_MAIN_W = 700, A_SIDE_W = 184, A_SIDE_GAP = 54, A_PAD = 20,
       A_CLOUD_W = 150, A_CLOUD_H = 64, A_CYL_W = 118, A_CYL_H = 66, A_UP_MAX = 12,
       A_SEAM = 18, A_SEAM_WIDE = 46;
@@ -3506,8 +4015,11 @@
         el("title", { text: c.path + "\n" + c.evidence.join("\n") }),
         el("rect", { x: p.x, y: p.y, width: p.w, height: p.h, rx: 6, class: "frame", stroke: hue }),
         el("rect", { x: p.x, y: p.y, width: 4, height: p.h, rx: 2, fill: hue }),
-        el("text", { x: p.x + 13, y: p.y + 20, class: "arch-bt", text: fitText(c.title, p.w - 20, 6.6) }),
-        el("text", { x: p.x + 13, y: p.y + 36, class: "arch-bs", fill: c.tech.length ? archLight(hue) : null,
+        el("text", { x: p.x + 13, y: p.y + 18, class: "arch-bt" },
+          wrapTitle(c.title, p.w - 20, 6.6).map(function (ln, li) {
+            return el("tspan", { x: p.x + 13, dy: li === 0 ? 0 : 13 }, [ln]);
+          })),
+        el("text", { x: p.x + 13, y: p.y + p.h - 10, class: "arch-bs", fill: c.tech.length ? archLight(hue) : null,
           text: fitText(sub, p.w - 20, 5.9) }),
       ]);
       if (c.entries.length)
@@ -3817,9 +4329,10 @@
   // is exact and instant and a deep link always renders the same frame.
 
   function excerptLineAt(n, line) {
-    if (!n.excerpt || !line || !n.line) return null;
+    var src = srcOf(n);
+    if (!src || !line || !n.line) return null;
     var idx = line - n.line[0];
-    var lines = n.excerpt.split("\n");
+    var lines = src.split("\n");
     return idx >= 0 && idx < lines.length ? lines[idx] : null;
   }
   function condFor(callerN, line) {
@@ -3830,13 +4343,33 @@
     if (/^\s*try\b/.test(code)) return { kind: "try", text: "only if nothing above this raises" };
     return null;
   }
-  function looksLikeCall(line) { return /\(/.test(line) && !/^\s*(def|class|@)/.test(line); }
+  // A dead end with zero resolved calls is either genuine dynamic dispatch
+  // (the target is looked up at runtime — getattr, a dict/list lookup then
+  // immediately called, a callback stashed on an attribute like the CLI's
+  // own `args.func(args)`) or just a leaf that only calls code outside this
+  // repo (stdlib, a third-party client, …) — two different, both honest,
+  // messages. Any line with a bare `(` used to count as "maybe dynamic
+  // dispatch", which fired on almost every real function.
+  var SIM_DYN_RE = /\bgetattr\s*\(|\]\s*\(|\.(?:func|fn|handler|callback|command|action|cb)\s*\(/;
+  function classifyUnresolvedCalls(n) {
+    var src = srcOf(n);
+    if (!src) return null;
+    var sawCall = false, sawDynamic = false;
+    src.split("\n").forEach(function (ln) {
+      if (/^\s*(def|class|@)/.test(ln)) return;
+      if (SIM_DYN_RE.test(ln)) { sawDynamic = true; sawCall = true; return; }
+      if (/\(/.test(ln)) sawCall = true;
+    });
+    if (sawDynamic) return "dynamic";
+    if (sawCall) return "external";
+    return null;
+  }
 
   var SIM_BUDGET = 90, SIM_DEPTH_CAP = 7;
   function deriveSteps(rootI) {
     var steps = [], onStack = {};
     function visit(i, fromI, line, conf, depth) {
-      if (steps.length >= SIM_BUDGET) return;
+      if (steps.length >= SIM_BUDGET) { steps.truncated = true; return; }
       var n = N[i];
       var recursive = !!onStack[i];
       var cond = fromI != null ? condFor(N[fromI], line) : null;
@@ -3857,10 +4390,17 @@
       } else if (depth >= SIM_DEPTH_CAP) {
         steps.push({ t: "note", node: i, user: "", code: "trace depth limit reached here." });
       } else {
-        var calls = (outCalls[i] || []).slice(0, 8);
+        // AMBIGUOUS calls (no import evidence, matched by name alone) never
+        // get walked into here — a derived scenario used to be able to dive
+        // straight into an unrelated same-named method (even a test file's)
+        // and narrate it as if it were the real call.
+        var calls = (outCalls[i] || []).filter(function (c) { return c.conf !== "AMBIGUOUS"; }).slice(0, 8);
         if (!calls.length) {
-          var dyn = (n.excerpt || "").split("\n").some(looksLikeCall);
-          if (dyn) steps.push({ t: "note", node: i, user: "", code: "⚡ dynamic dispatch — the indexer can't follow this call." });
+          var unresolvedKind = classifyUnresolvedCalls(n);
+          if (unresolvedKind === "dynamic")
+            steps.push({ t: "note", node: i, user: "", code: "⚡ dynamic dispatch — the indexer can't follow this call." });
+          else if (unresolvedKind === "external")
+            steps.push({ t: "note", node: i, user: "", code: "end of the line — only calls code outside this repo." });
         }
         onStack[i] = true;
         calls.forEach(function (c) { visit(c.t, i, c.line, c.conf, depth + 1); });
@@ -4052,7 +4592,13 @@
     return out;
   }
   function scenarioSteps(sc) {
-    if (!sc._norm) sc._norm = normalizeSteps(sc._raw || (sc._raw = deriveSteps(sc.root)));
+    if (!sc._norm) {
+      if (!sc._raw) {
+        sc._raw = deriveSteps(sc.root);
+        if (sc._raw.truncated) sc.truncated = true;
+      }
+      sc._norm = normalizeSteps(sc._raw);
+    }
     return sc._norm;
   }
   function simCurrent() { return state.simScenario ? simById[state.simScenario] : null; }
@@ -4157,8 +4703,8 @@
     return stack.map(function (ni) { return N[ni].name; }).join("  ›  ");
   }
   function buildTraceLog(m) {
-    var crumb = el("div", { class: "sim-log-crumb",
-      text: traceLogCrumb(m.steps[0] && m.steps[0].stack) });
+    var crumbText = traceLogCrumb(m.steps[0] && m.steps[0].stack);
+    var crumb = el("div", { class: "sim-log-crumb", title: crumbText, text: crumbText });
     var scroll = el("div", { class: "sim-log-scroll" });
     m.logRows = m.steps.map(function (st, k) {
       var n = N[st.node];
@@ -4170,6 +4716,7 @@
         el("span", { class: "sim-log-glyph", text: SIM_LOG_GLYPH[st.t] || "·" }),
         el("span", { class: "sim-log-name", text: n.name }),
         el("span", { class: isOut ? "sim-log-out" : "sim-log-code",
+          title: isOut ? st.emit.text : (st.code || ""),
           text: isOut ? st.emit.text : (st.code || "") }),
       ]);
       scroll.appendChild(row);
@@ -4210,12 +4757,13 @@
       el("i", { class: fileIcon(fileByPath[n.file] ? fileByPath[n.file].lang : "") }),
       el("span", { text: n.file }),
     ]));
-    if (!n.excerpt) {
+    var src = srcOf(n);
+    if (!src) {
       box.appendChild(el("div", { class: "sim-source-empty", text: "source not captured for this symbol" }));
       return box;
     }
     var body = el("div", { class: "sim-source-body" });
-    n.excerpt.split("\n").forEach(function (ln, i) {
+    src.split("\n").forEach(function (ln, i) {
       var lineNo = n.line[0] + i;
       body.appendChild(el("div", { class: "sim-line" + (lineNo === activeLine ? " active" : "") }, [
         el("span", { class: "sim-lineno", text: String(lineNo) }),
@@ -4238,6 +4786,16 @@
         [(st.cond.kind === "for" || st.cond.kind === "while" ? "↻ " : st.cond.kind === "try" ? "⚠ " : "◇ ") + st.cond.text]));
     if (st.conf === "AMBIGUOUS")
       box.appendChild(el("div", { class: "sim-narr-cond", text: "◇ one of several same-named targets — shown as the most likely" }));
+    if (st.t === "call" && st.from != null && st.line != null && N[st.from]) {
+      var callerN = N[st.from], callLine = st.line;
+      box.appendChild(el("div", { class: "sim-narr-callsite",
+        on: { click: function () {
+          state.srcTargetLine = callLine;
+          go("graph", callerN.key + "/src");
+        } } },
+        [el("i", { class: "ph ph-arrow-square-out" }),
+          "called from " + callerN.name + ", line " + callLine]));
+    }
     (st.libs || []).forEach(function (lib) {
       var blurb = lib.here || lib.general;
       box.appendChild(el("div", { class: "sim-narr-lib",
@@ -4246,6 +4804,27 @@
           el("b", { text: lib.name }), " — " + (blurb || "open in Learn ▸")]));
     });
     return box;
+  }
+  // A step's narration box height varies with how much text/cond/libs it
+  // carries; sizing it per-step made the whole panes grid visibly resize as
+  // you scrubbed. Instead, size it once per scenario to its tallest step
+  // (capped — a pathological step with five library blurbs shouldn't blow
+  // the layout up either), and let anything past that scroll internally.
+  function estimateNarrHeight(st) {
+    var rows = 2;   // the user + code rows are always rendered, even as "—"
+    if (st.cond) rows++;
+    if (st.conf === "AMBIGUOUS") rows++;
+    var libN = (st.libs || []).length;
+    rows += libN;
+    var h = 22 + rows * 20 + libN * 6;   // box padding + ~1 line/row, libs add their own border+padding
+    if ((st.user || "").length > 60) h += 19;   // a long sentence typically wraps to a 2nd line
+    if ((st.code || "").length > 60) h += 19;
+    return h;
+  }
+  function narrBoxHeight(steps) {
+    var max = 0;
+    steps.forEach(function (st) { max = Math.max(max, estimateNarrHeight(st)); });
+    return Math.max(56, Math.min(160, max));
   }
 
   // ── adaptive Stage surface ──────────────────────────────────────────
@@ -4272,27 +4851,31 @@
   var SIM_DB_PATH_RE = /(^|\/)(db|repository|dao|models?|queries|store)(\/|$)/i;
   var SIM_JOB_EXCERPT_RE = /threading\.Thread|asyncio\.create_task|\.delay\(|\.apply_async\(/;
   var SIM_JOB_NAME_RE = /(worker|task|job|queue|celery|cron)/i;
-  var SIM_RENDER_RE = /render_template|render\(|TemplateResponse|redirect\(/;
-  var SIM_API_RESP_RE = /jsonify|JSONResponse|res\.json|serialize/;
+  // deliberately narrow: only text that's actual evidence of an HTML
+  // response (a template render call, or a literal <html> tag), not any
+  // `.render(` (React components call that too) or a bare `redirect(` (an
+  // API redirects just as often as a page does)
+  var SIM_HTML_RE = /render_template|HTMLResponse|res\.render|<html/i;
   var SIM_WRITE_RE = /open\([^)]*["']w|\.write\(|\.write_text\(|to_csv|json\.dump/;
   function simSurfaceFromContent(n) {
     if (!n) return null;
-    var file = n.file || "", excerpt = n.excerpt || "", name = n.name || "";
+    var file = n.file || "", excerpt = srcOf(n) || "", name = n.name || "";
     if (SIM_UI_FILE_RE.test(file) || SIM_UI_PATH_RE.test(file) || SIM_UI_EXCERPT_RE.test(excerpt)) return "ui";
     if (SIM_DB_EXCERPT_RE.test(excerpt) || SIM_DB_PATH_RE.test(file)) return "db";
     if (SIM_JOB_EXCERPT_RE.test(excerpt) || SIM_JOB_NAME_RE.test(file) || SIM_JOB_NAME_RE.test(name)) return "job";
     if (SIM_WRITE_RE.test(excerpt)) return "file";
     return null;
   }
+  // A route defaults to "api" — most routes in a codebase worth simulating
+  // are JSON endpoints — and only reads as "browser" (a rendered page) when
+  // the source actually shows evidence of an HTML response.
   function simSurfaceForRoute(n) {
-    var excerpt = n.excerpt || "";
-    if (SIM_API_RESP_RE.test(excerpt)) return "api";
     var entry = (n.entry && n.entry[0]) || "";
     var detail = entry.split(":").slice(1).join(":");     // "POST /tools/refresh-data/"
     var path = detail.replace(/^\S+\s+/, "");              // strip the leading method
     if (/^\/api(\/|$)/i.test(path)) return "api";
-    if (SIM_RENDER_RE.test(excerpt)) return "browser";
-    return "browser";   // a route with no stronger signal reads as a page, not raw JSON
+    if (SIM_HTML_RE.test(srcOf(n) || "")) return "browser";
+    return "api";
   }
   function simSurfaceFromEntry(n) {
     if (!n || !n.entry || !n.entry.length) return null;
@@ -4342,6 +4925,30 @@
     return text;
   }
 
+  // steps use a 1-based depth (root call = 1); "done" = the last step, back
+  // at the root frame, and not still entering a call.
+  function simDoneAt(steps, i) {
+    return i === steps.length - 1 && steps[i].depth <= 1 && steps[i].t !== "call";
+  }
+  // the last `return <expr>` in the root's own source — a plain-text stand-in
+  // for "what this call actually produced" when no authored/recorded emit
+  // says so explicitly.
+  function summarizeReturn(n) {
+    var src = n && srcOf(n);
+    if (!src) return null;
+    var last = null;
+    src.split("\n").forEach(function (ln) {
+      var m = ln.match(/^\s*return\b\s*(.*)$/);
+      if (m) last = m[1].replace(/[;]+\s*$/, "").trim();
+    });
+    if (!last) return null;
+    return last.length > 60 ? last.slice(0, 59) + "…" : last;
+  }
+  function simFinishedText(n) {
+    var summary = summarizeReturn(n);
+    return summary ? "200 · returned " + summary : "200 · done";
+  }
+
   function terminalStage(sc, steps, i, surface) {
     var box = el("div", { class: "sim-term" });
     box.appendChild(el("div", { class: "sim-term-hd" }, [
@@ -4354,10 +4961,7 @@
       if (em && stepEmitSurface(steps[k], surface) === "terminal")
         body.appendChild(el("div", { class: "sim-term-line" + (em.stream === "stderr" ? " err" : ""), text: em.text }));
     }
-    // steps use a 1-based depth (root call = 1); "done" = last step, back at the
-    // root frame, and not still entering a call
-    var done = i === steps.length - 1 && steps[i].depth <= 1 && steps[i].t !== "call";
-    if (!done) body.appendChild(el("span", { class: "sim-term-cursor" }));
+    if (!simDoneAt(steps, i)) body.appendChild(el("span", { class: "sim-term-cursor" }));
     box.appendChild(body);
     return box;
   }
@@ -4378,10 +4982,14 @@
       }
     }
     if (!lines.length) {
-      var waiting = N[steps[i].node];
-      page.appendChild(el("div", { class: "sim-browser-spinner" }));
-      page.appendChild(el("div", { class: "sim-browser-wait",
-        text: "waiting on the server" + (waiting ? " — " + waiting.name + " is still running" : "") }));
+      if (simDoneAt(steps, i)) {
+        page.appendChild(el("div", { class: "sim-browser-line", text: simFinishedText(N[steps[i].node]) }));
+      } else {
+        var waiting = N[steps[i].node];
+        page.appendChild(el("div", { class: "sim-browser-spinner" }));
+        page.appendChild(el("div", { class: "sim-browser-wait",
+          text: "waiting on the server" + (waiting ? " — " + waiting.name + " is still running" : "") }));
+      }
     } else {
       lines.forEach(function (text) { page.appendChild(el("div", { class: "sim-browser-line", text: text })); });
     }
@@ -4405,8 +5013,15 @@
     if (!msgs.length) {
       box.appendChild(el("div", { class: "sim-api-card" }, [el("div", { class: "sim-api-lbl", text: "REQUEST" }),
         el("div", { class: "sim-api-body", text: triggerText || "…" })]));
-      box.appendChild(el("div", { class: "sim-api-card sim-api-pending" }, [el("div", { class: "sim-api-lbl", text: "RESPONSE" }),
-        el("div", { class: "sim-api-body", text: "waiting…" })]));
+      if (simDoneAt(steps, i)) {
+        var doneText = simFinishedText(N[steps[i].node]);
+        var doneLbl = el("div", { class: "sim-api-lbl" }, ["RESPONSE",
+          el("span", { class: "sim-api-status sim-api-status-2xx", text: "200" })]);
+        box.appendChild(el("div", { class: "sim-api-card" }, [doneLbl, el("div", { class: "sim-api-body", text: doneText })]));
+      } else {
+        box.appendChild(el("div", { class: "sim-api-card sim-api-pending" }, [el("div", { class: "sim-api-lbl", text: "RESPONSE" }),
+          el("div", { class: "sim-api-body", text: "waiting…" })]));
+      }
     } else {
       msgs.forEach(function (text, idx) {
         var status = text.match(/\b([1-5])\d\d\b/);
@@ -4442,13 +5057,14 @@
       if (em && stepEmitSurface(steps[j], surface) === "ui") blocks.appendChild(el("div", { class: "sim-ui-block", text: em.text }));
     }
     if (blocks.childNodes.length) box.appendChild(blocks);
-    box.appendChild(el("div", { class: "sim-ui-footer", text: "mounting · step " + (i + 1) + " of " + steps.length }));
+    box.appendChild(el("div", { class: "sim-ui-footer",
+      text: simDoneAt(steps, i) ? "mounted" : "mounting · step " + (i + 1) + " of " + steps.length }));
     return box;
   }
   function jobStage(sc, steps, i, surface) {
     var box = el("div", { class: "sim-job" });
     var st = steps[i];
-    var done = i === steps.length - 1 && st.depth <= 1 && st.t !== "call";
+    var done = simDoneAt(steps, i);
     var state = i === 0 ? "queued" : (done ? "done" : "running");
     box.appendChild(el("div", { class: "sim-job-hd" }, [
       el("span", { class: "sim-job-pill sim-job-pill-" + state, text: state }),
@@ -4474,7 +5090,9 @@
       if (/^(BEGIN|COMMIT|ROLLBACK)\b/i.test(text)) list.appendChild(el("div", { class: "sim-db-marker", text: "● " + text.toUpperCase() }));
       else { list.appendChild(el("div", { class: "sim-db-stmt", text: text })); count++; }
     }
-    if (!list.childNodes.length) list.appendChild(el("div", { class: "sim-db-stmt pending", text: "waiting on the database…" }));
+    if (!list.childNodes.length)
+      list.appendChild(el("div", { class: "sim-db-stmt pending",
+        text: simDoneAt(steps, i) ? "done" : "waiting on the database…" }));
     box.appendChild(list);
     box.appendChild(el("div", { class: "sim-db-footer", text: count + " statement" + (count === 1 ? "" : "s") }));
     return box;
@@ -4487,7 +5105,8 @@
     }
     if (!rows.length)
       return el("div", { class: "sim-file sim-file-empty" }, [
-        el("i", { class: "ph ph-file-text sim-file-icon" }), el("div", { class: "sim-file-name", text: "…" }),
+        el("i", { class: "ph ph-file-text sim-file-icon" }),
+        el("div", { class: "sim-file-name", text: simDoneAt(steps, i) ? "done" : "…" }),
       ]);
     var box = el("div", { class: "sim-file" });
     rows.forEach(function (text) {
@@ -4577,8 +5196,10 @@
     var sc = simStartScenario();
     if (!sc) return null;
     var here = sc.id === state.simScenario;
+    // already on it: a click here used to still navigate to "#/sim/<id>"
+    // (no step suffix), silently resetting you back to step 0 mid-run
     return el("div", { class: "sim-start" + (here ? " here" : ""),
-      on: { click: function () { go("sim", sc.id); } } }, [
+      on: { click: function () { if (!here) go("sim", sc.id); } } }, [
       el("i", { class: "ph ph-flag" }),
       el("div", {}, [
         el("div", { class: "sim-start-lbl", text: here ? "You're on it" : "If you follow only one, follow this one" }),
@@ -4602,7 +5223,7 @@
     box.appendChild(el("div", { class: "sim-legend" }, [
       el("div", { class: "row" }, [el("i", { class: "ph ph-lightning" }), "derived — computed from the call graph, not a real run"]),
       el("div", { class: "row" }, [el("i", { class: "ph ph-pencil-simple" }), "authored — written for this course"]),
-      el("div", { class: "row" }, [el("i", { class: "ph ph-record" }), "recorded — a real `codemap trace` run"]),
+      el("div", { class: "row" }, [el("i", { class: "ph ph-record" })].concat(codeify("recorded — a real `codemap trace` run"))),
     ]));
     return box;
   }
@@ -4774,7 +5395,8 @@
     });
     grip.addEventListener("pointermove", function (e) {
       if (!drag) return;
-      var w = Math.max(220, Math.min(drag.rowW - 220 - 9, drag.startW + (e.clientX - drag.x)));
+      // right column's own floor is 280px + the 9px grip itself
+      var w = Math.max(260, Math.min(drag.rowW - 289, drag.startW + (e.clientX - drag.x)));
       leftEl.style.flex = "0 0 " + w + "px";
       state.simLayout.leftW = w;
     });
@@ -4805,6 +5427,26 @@
     grip.addEventListener("pointercancel", end);
   }
 
+  // keep the active node visible *within the flow pane's own scroller* —
+  // same reasoning as scrollLogRowIntoView: Element.scrollIntoView() would
+  // walk up and drag .sim-pane-body / .sim-body along with it too.
+  function scrollFlowNodeIntoView(m, ni) {
+    var pos = m.layout.pos[ni];
+    var scroller = m.paneWraps.flow.wrap.querySelector(".sim-pane-body");
+    if (!pos || !scroller) return;
+    var cx = pos.x + 8, cy = pos.y + 14;   // the node dot's own center (see buildSimFlow)
+    var sw = scroller.clientWidth, sh = scroller.clientHeight;
+    if (!sw || !sh) return;
+    var visible = cx >= scroller.scrollLeft && cx <= scroller.scrollLeft + sw &&
+      cy >= scroller.scrollTop && cy <= scroller.scrollTop + sh;
+    if (visible) return;
+    scroller.scrollTo({
+      left: Math.max(0, Math.min(scroller.scrollWidth - sw, cx - sw / 2)),
+      top: Math.max(0, Math.min(scroller.scrollHeight - sh, cy - sh / 2)),
+      behavior: reduceMotion ? "auto" : "smooth",
+    });
+  }
+
   var simMount = null;   // the currently mounted scenario's live DOM refs — rebuilt by
                           // simTab() on every scenario switch, mutated in place by every
                           // step change so play/scrub never tears down (and never re-lays-out) the DOM.
@@ -4830,11 +5472,16 @@
       m.flow.edgeEls[key].setAttribute("class", "sim-edge" + (stepReached(m.steps, i, to) ? " lit" : ""));
     });
     if (animate && !reduceMotion) fireCallToken(m, st);
+    scrollFlowNodeIntoView(m, st.node);
 
     paintTraceLog(m, i);
 
     clear(m.sourceBox);
-    m.sourceBox.appendChild(sourcePane(n, st.line || (n.line ? n.line[0] : null)));
+    // st.line, when set, is the call-site line in the CALLER's file, not a
+    // line inside n's own body — highlighting n's own first line is the
+    // honest "where execution is" marker; the call site itself surfaces as
+    // its own "called from X, line N" link in the narration pane instead.
+    m.sourceBox.appendChild(sourcePane(n, n.line ? n.line[0] : null));
 
     clear(m.narrBox);
     m.narrBox.appendChild(narrationPane(st));
@@ -4852,6 +5499,9 @@
   var simTimer = null;
   function simPlay() {
     if (!simMount || state.simPlaying) return;
+    // pressing Play right after a run finished restarts it — the old
+    // behaviour just silently re-paused on the same, already-last step
+    if (state.simStep >= simMount.steps.length - 1) simSetStep(0);
     state.simPlaying = true;
     syncTransport(simMount);
     simTick();
@@ -4891,8 +5541,8 @@
     if (!sc)
       return el("div", { class: "sim-empty" }, [
         el("i", { class: "ph ph-play-circle" }),
-        el("p", { text: "No scenarios yet — open a busy symbol in Map ▸ Run trace and press " +
-          "“Simulate ▶”, write .codemap/scenarios.json, or run `codemap trace`." }),
+        el("p", {}, codeify("No scenarios yet — open a busy symbol in Map ▸ Run trace and press " +
+          "“Simulate ▶”, write .codemap/scenarios.json, or run `codemap trace`.")),
       ]);
     var steps = scenarioSteps(sc);
     var i = Math.max(0, Math.min(steps.length - 1, state.simStep));
@@ -4904,7 +5554,7 @@
     var flowBody = el("div", { class: "sim-flowbody" }, [flow.svg]);
     var logBox = el("div", { class: "sim-logbody" });
     var sourceBox = el("div", { class: "sim-sourcebody" });
-    var narrBox = el("div", { class: "sim-narrbox" });
+    var narrBox = el("div", { class: "sim-narrbox", style: "height:" + narrBoxHeight(steps) + "px" });
     var transportBox = el("div", { class: "sim-transportbox" });
 
     var stagePane = simPaneWrap("stage", stageBox);
@@ -4931,13 +5581,13 @@
 
     var notes = [];
     if (sc.crashed) notes.push(el("div", { class: "sim-crash" }, [el("i", { class: "ph ph-warning" }), "the recorded run raised: " + sc.crashed]));
-    if (sc.truncated) notes.push(el("div", { class: "sim-note" }, ["trace truncated to the first " + steps.length + " steps"]));
+    if (sc.truncated) notes.push(el("div", { class: "sim-note" }, ["showing the first " + SIM_BUDGET + " calls"]));
     if (sc.source === "derived")
       notes.push(el("div", { class: "sim-note" },
-        ["⚡ This is a prediction from the code's structure, not something that actually ran — " +
+        codeify("⚡ This is a prediction from the code's structure, not something that actually ran — " +
          "branches and loops are shown as possibilities, not the choices a real run would make. " +
          "Want the real thing? `codemap trace --name \"" + sc.title + "\" -- <command>` records an " +
-         "actual run of this and replays it here, call by call."]));
+         "actual run of this and replays it here, call by call.")));
 
     simMount = { sc: sc, steps: steps, layout: layout, flow: flow,
       stageBox: stageBox, logBox: logBox, sourceBox: sourceBox, narrBox: narrBox,
@@ -5141,14 +5791,18 @@
     LIB_SECTIONS.forEach(function (sec) {
       var items = LIB_ENTRIES.filter(function (e) { return e.section === sec.key; });
       if (q) items = items.filter(function (e) {
-        return (e.name + " " + e.kind).toLowerCase().indexOf(q) >= 0;
+        // e.kind is the on-row label ("built-in", "third-party", "internal
+        // module") — include the section's own name too, so typing "stdlib"
+        // or "standard" (the section is titled "Standard library") finds
+        // every built-in even though neither word appears in "built-in".
+        return (e.name + " " + e.kind + " " + sec.key + " " + sec.label).toLowerCase().indexOf(q) >= 0;
       });
       if (!items.length) return;
       any = true;
       pkgNavListEl.appendChild(el("div", { class: "lib-navsec", text: sec.label + " · " + items.length }));
       items.forEach(function (e) {
         pkgNavListEl.appendChild(el("div", { class: "mlink" + (e.slug === cur.slug ? " active" : ""),
-          title: libDescribed(e) ? null : "no description yet",
+          title: libDescribed(e) ? e.name : e.name + " — no description yet",
           on: { click: function () { go("libs", e.slug); } } },
           [libDescribed(e) ? null : el("span", { class: "lib-dot", text: "○ " }), e.name]));
       });
@@ -5175,9 +5829,18 @@
   function renderOrientation() {
     var pageSeen = {};   // one dedupe set for every glossary term shown on this page
     var wrap = el("div", {}, [
-      el("div", { class: "module-num", text: "0" }),
       el("div", { class: "module-title", text: "Start here" }),
     ]);
+
+    // an authored walkthrough.json intro means there's real, project-specific
+    // copy to open with — "what this actually is" beats the generic framing
+    // paragraph below as the very first thing a reader sees.
+    if (WT.intro && WT.intro.what) {
+      var projectIntro = el("div", { class: "screen" }, [el("p", {}, proseNodes(WT.intro.what, GLOSS, pageSeen))]);
+      if (WT.intro.sides && Object.keys(WT.intro.sides).length)
+        projectIntro.appendChild(orientLink("learn", "parts", "Start with the parts of this app →"));
+      wrap.appendChild(projectIntro);
+    }
 
     var intro = el("div", { class: "screen" });
     intro.appendChild(el("p", { text:
@@ -5230,8 +5893,7 @@
       el("div", { class: "orient-move", on: { click: function () { go("sim"); } } },
         [el("i", { class: "ph ph-play" }), el("div", {}, [
           el("b", { text: "Run it and watch the order things happen in." }),
-          " The Simulate tab predicts that from the code; `codemap trace` records the real thing.",
-        ])]),
+        ].concat(codeify(" The Simulate tab predicts that from the code; `codemap trace` records the real thing.")))]),
     ]);
     wrap.appendChild(moves);
 
@@ -5334,7 +5996,6 @@
     var authored = LIB_AUTHORED[e.name] || {};
     var general = authored.general || libBlurb(e.name);
     var wrap = el("div", {}, [
-      el("div", { class: "module-num", text: e.scope === "internal" ? "repo" : e.section === "stdlib" ? "std" : "pkg" }),
       el("div", { class: "module-title", text: e.name }),
       el("div", { class: "module-sub", text: e.scope === "internal"
         ? "internal module · " + e.files + " file" + (e.files === 1 ? "" : "s") + " · " + e.symbols + " symbols"
@@ -5344,8 +6005,8 @@
     var g = el("div", { class: "screen" }, [el("h3", { text: "In general" })]);
     g.appendChild(general
       ? el("p", {}, proseNodes(general, GLOSS, pageSeen))
-      : el("p", { class: "lib-missing", text: "No description bundled for “" + e.name +
-          "”. Add a `general` line to .codemap/libraries.json." }));
+      : el("p", { class: "lib-missing" }, codeify("No description bundled for “" + e.name +
+          "”. Add a `general` line to .codemap/libraries.json.")));
     wrap.appendChild(g);
 
     var h = el("div", { class: "screen" }, [el("h3", { text: "In this codebase" })]);
@@ -5357,9 +6018,9 @@
         h.appendChild(libFileLinks(e.scope === "internal" ? "Files: " : "Imported by ", files));
       else
         h.appendChild(el("p", { class: "lib-missing", text: "No import sites recorded in the graph." }));
-      h.appendChild(el("p", { class: "lib-hint", text: e.scope === "internal"
+      h.appendChild(el("p", { class: "lib-hint" }, codeify(e.scope === "internal"
         ? "Add a `here` line to .codemap/libraries.json describing what this module is responsible for."
-        : "Add a `here` line to .codemap/libraries.json describing the job this package does here." }));
+        : "Add a `here` line to .codemap/libraries.json describing the job this package does here.")));
     }
     wrap.appendChild(h);
 
@@ -5428,6 +6089,22 @@
       return el("span", { class: "sf inert", text: r.file.path });
     }
     return el("span", { class: "sf inert", text: r.text });
+  }
+  // A folder page's "Start reading here" (walkthrough.json's read_first) is a
+  // stronger pointer than an ordinary `see` reference — it means "open the
+  // actual file and start at the top", not "jump to this symbol's inspector
+  // card". Same key resolution as seeKeyEl, but always opens the source
+  // viewer at line 1 of the file, anchored on the file's top (highest
+  // fan-in) symbol when given a bare file path rather than a specific one.
+  function readFirstEl(k) {
+    var r = resolveSeeKey(k);
+    var key = r.kind === "node" ? r.node.key : r.kind === "file" ? fileTopSymbol(r.file) : null;
+    if (!key) return seeKeyEl(k);   // nothing to anchor a source viewer on — same inert fallback as any other `see` key
+    var label = r.kind === "node" ? r.node.qual + "  (" + r.node.file + ")" : r.file.path;
+    return el("span", { class: "sf", text: label, on: { click: function () {
+      state.srcTargetLine = 1;
+      go("graph", key + "/src");
+    } } });
   }
   // render a normalized see-list ([{group, keys}] — see walkthrough.py's
   // _norm_see) as one or more labelled step lists. `group: null` (the flat-
@@ -5516,12 +6193,18 @@
       return;
     }
     shown.forEach(function (f) {
+      // a filtered list mixes folders from anywhere in the tree, so the
+      // usual depth-indent (which implies "nested under the row above") would
+      // actively mislead, and two folders that share a last segment
+      // ("components/budget" vs. "services/budget") both just read as
+      // "budget" — show the full path instead, unindented, while filtering.
       walkNavListEl.appendChild(el("div", {
         class: "mlink" + (curId === f.path ? " active" : ""),
-        style: "padding-left:" + (9 + Math.max(0, f.depth - 1) * 14) + "px",
+        style: "padding-left:" + (q ? 9 : 9 + Math.max(0, f.depth - 1) * 14) + "px",
         title: f.reach === "orphan" ? "nothing imports this — check its page" : null,
         on: { click: function () { go("learn", f.path); } },
-      }, [f.reach === "orphan" ? el("span", { class: "lib-dot", text: "○ " }) : null, f.name]));
+      }, [f.reach === "orphan" ? el("span", { class: "lib-dot", text: "○ " }) : null,
+          q ? f.path : f.name]));
     });
   }
 
@@ -5529,7 +6212,6 @@
     var pageSeen = {};   // one dedupe set for every glossary term shown on this page
     var intro = WT.intro || {};
     var wrap = el("div", {}, [
-      el("div", { class: "module-num", text: "1" }),
       el("div", { class: "module-title", text: "The parts of this app" }),
     ]);
     if (intro.what)
@@ -5560,7 +6242,6 @@
     var pageSeen = {};   // one dedupe set for every glossary term shown on this page
     var cats = WT.categories || [];
     var wrap = el("div", {}, [
-      el("div", { class: "module-num", text: "2" }),
       el("div", { class: "module-title", text: "What this app is made of" }),
     ]);
     cats.forEach(function (cat) {
@@ -5578,11 +6259,17 @@
   function renderFolderEntry(folder) {
     var pageSeen = {};   // one dedupe set for every glossary term shown on this page
     var wtFolder = (WT.folders && WT.folders[folder.path]) || {};
+    // folder.file_count is direct files only; folder.total_files also counts
+    // every subfolder folded under this page (a folder with sub-pages of its
+    // own still lists them separately in the rail, so both numbers are real
+    // — this used to show file_count alone, which disagreed with the bigger
+    // total Orientation quotes for the very same folder.
+    var directNote = folder.file_count !== folder.total_files
+      ? " (" + folder.file_count + " directly in this folder)" : "";
     var wrap = el("div", {}, [
-      el("div", { class: "module-num", text: String(folder.depth) }),
       el("div", { class: "module-title", text: folder.name }),
-      el("div", { class: "module-sub", text: folder.file_count + " file" + (folder.file_count === 1 ? "" : "s") +
-        " · " + folder.symbol_count + " symbol" + (folder.symbol_count === 1 ? "" : "s") }),
+      el("div", { class: "module-sub", text: folder.total_files + " file" + (folder.total_files === 1 ? "" : "s") +
+        directNote + " · " + folder.symbol_count + " symbol" + (folder.symbol_count === 1 ? "" : "s") }),
     ]);
 
     var purposeScreen = el("div", { class: "screen" }, [el("h3", { text: "What this is for" })]);
@@ -5590,7 +6277,7 @@
       purposeScreen.appendChild(el("p", {}, proseNodes(wtFolder.purpose, GLOSS, pageSeen)));
     } else {
       var depNames = (folder.deps || []).map(function (d) { return d.name; });
-      var sentence = folder.file_count + " file" + (folder.file_count === 1 ? "" : "s") +
+      var sentence = folder.total_files + " file" + (folder.total_files === 1 ? "" : "s") + directNote +
         (folder.langs && folder.langs.length ? " (" + folder.langs.join(", ") + ")" : "") +
         (depNames.length ? ", using: " + depNames.slice(0, 8).join(", ") + (depNames.length > 8 ? "…" : "") : "") + ".";
       purposeScreen.appendChild(el("p", { class: "lib-missing" }, proseNodes(sentence, GLOSS, pageSeen)));
@@ -5600,7 +6287,7 @@
     if (wtFolder.read_first)
       wrap.appendChild(el("div", { class: "screen" }, [
         el("h3", { text: "Start reading here" }),
-        el("p", {}, [seeKeyEl(wtFolder.read_first)]),
+        el("p", {}, [readFirstEl(wtFolder.read_first)]),
       ]));
 
     // an authored note always wins over the raw derived orphan hedge; never both.
@@ -5685,9 +6372,14 @@
       var terms = Object.keys(glossary).filter(Boolean)
         .sort(function (a, b) { return b.length - a.length; });
       if (!terms.length) return [document.createTextNode(str)];
-      var re = new RegExp("\\b(" + terms.map(function (t) {
+      // (?<![.\/@-]) / (?![.\/@-]) on top of \b: a plain word boundary treats
+      // ".", "/", "@" and "-" as boundaries too, so "state" inside a file
+      // path ("src/state/reducer.js"), a package name ("react-router-dom" —
+      // "dom"), or a handle ("user@state.gov") used to light up as a glossary
+      // term even though it's not a word there at all.
+      var re = new RegExp("(?<![.\\/@-])\\b(" + terms.map(function (t) {
         return t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      }).join("|") + ")\\b");
+      }).join("|") + ")\\b(?![.\\/@-])");
       var out = [], rest = str, m, wrapped = false;
       while (!wrapped) {
         m = rest.match(re);
@@ -5766,7 +6458,41 @@
   });
 
   // ---- render ------------------------------------------
-  function render() {
+  // render() tears down and rebuilds the whole page every time it's called —
+  // and it's called from all over (every pill/button/toggle that mutates
+  // state and wants a clean repaint, not just route()) — so any rail the
+  // viewer had scrolled down used to silently jump back to the top on the
+  // next unrelated click. Wrap the real renderer so every call site gets
+  // scroll preservation for free, without having to know about it.
+  var SCROLL_RAILS = [
+    { list: ".sim-rail-list", active: ".sim-scenario.active" },
+    { list: ".learn-nav-list", active: ".mlink.active" },   // shared by Learn and Packages — only one is ever in the DOM at once
+    { list: ".tl", active: null },
+  ];
+  function preserveScroll(fn) {
+    // a fresh "#/timeline/<sha>" deep link already drives its own scroll (see
+    // renderNow()'s timeline branch) — let it, instead of snapping back to
+    // wherever the pane happened to be scrolled before the link was followed.
+    var rails = state.tab === "timeline" && state.timelineSha
+      ? SCROLL_RAILS.filter(function (r) { return r.list !== ".tl"; })
+      : SCROLL_RAILS;
+    var saved = rails.map(function (r) {
+      var node = document.querySelector(r.list);
+      return node ? node.scrollTop : null;
+    });
+    fn();
+    rails.forEach(function (r, i) {
+      var node = document.querySelector(r.list);
+      if (!node) return;
+      if (saved[i] != null) node.scrollTop = saved[i];
+      else if (r.active) {
+        var act = node.querySelector(r.active);
+        if (act) act.scrollIntoView({ block: "nearest" });
+      }
+    });
+  }
+  function render() { preserveScroll(renderNow); }
+  function renderNow() {
     clear(APP);
     // model.build() returns {empty:true} with none of the usual keys (no
     // stats/nodes/files/…) when the DB has no index yet. The CLI already
@@ -5776,7 +6502,7 @@
     if (DATA.empty) {
       APP.appendChild(el("div", { class: "empty-index" }, [
         el("i", { class: "ph ph-database" }),
-        el("p", { text: "No index yet — run `codemap scan` first, then `codemap explore`." }),
+        el("p", {}, codeify("No index yet — run `codemap scan` first, then `codemap explore`.")),
       ]));
       return;
     }
@@ -5784,6 +6510,8 @@
     frag.appendChild(topbar());
     var banner = staleBanner();
     if (banner) frag.appendChild(banner);
+    var noteBanner = linkNoteBanner();
+    if (noteBanner) frag.appendChild(noteBanner);
     if (state.tab === "graph") {
       var railNode = rail(), inspNode = inspector();
       railNode.classList.toggle("open", state.mobileRail);
@@ -5795,7 +6523,19 @@
       var backdrop = el("div", { class: "mobile-backdrop" + (mobileOpen ? " show" : ""),
         "aria-label": "Close panel",
         on: { click: function () { state.mobileRail = false; state.mobileInsp = false; render(); } } });
-      frag.appendChild(el("main", { class: "view" }, [railNode, stage(), inspNode, backdrop]));
+      // hidden until focused (Tab from the topbar lands here first) — with
+      // graph nodes out of the tab order and the rail's tree potentially
+      // dozens of rows deep, this is the fast way past both straight to the
+      // inspector, not a replacement for either.
+      var skipLink = el("a", { class: "skip-link", href: "#insp-panel", text: "Skip to inspector",
+        on: { click: function (e) {
+          e.preventDefault();   // href is a real fragment id, but this app owns
+                                 // the hash for its own routing — never let a
+                                 // plain navigation touch location.hash
+          var t = document.getElementById("insp-panel");
+          if (t) t.focus();
+        } } });
+      frag.appendChild(el("main", { class: "view" }, [skipLink, railNode, stage(), inspNode, backdrop]));
     } else if (state.tab === "arch")
       frag.appendChild(el("main", { class: "view" }, [archTab()]));
     else if (state.tab === "map")
@@ -5811,6 +6551,10 @@
     APP.appendChild(frag);
     updateCap();
     syncSrc();
+    if (state.tab === "timeline" && state.timelineSha) {
+      var tlCard = document.querySelector(".tl-item.hl");   // see timelineTab() — matches full or short sha
+      if (tlCard) tlCard.scrollIntoView({ block: "center", behavior: reduceMotion ? "auto" : "smooth" });
+    }
   }
 
   // Cheap path for "still on the Graph tab, just picked a different symbol
@@ -5827,6 +6571,18 @@
   // the very first load, and any return trip from another tab, still gets
   // the full render().
   function updateGraphFocus() {
+    // route() may have just set/cleared state.routeNote (e.g. a bad symbol
+    // key on an otherwise graph-to-graph navigation) — this fast path skips
+    // the full render() that would normally repaint the banner, so patch it
+    // in place the same way the stage bar and inspector are patched below.
+    var oldNote = document.querySelector(".link-note");
+    var freshNote = linkNoteBanner();
+    if (oldNote && freshNote) oldNote.replaceWith(freshNote);
+    else if (oldNote && !freshNote) oldNote.remove();
+    else if (!oldNote && freshNote) {
+      var topbarEl = document.querySelector(".topbar");
+      if (topbarEl) topbarEl.insertAdjacentElement("afterend", freshNote);
+    }
     var stageEl = canvasEl.closest(".stage");
     var oldBar = stageEl && stageEl.querySelector(".stage-bar");
     if (oldBar) oldBar.replaceWith(stageBar());

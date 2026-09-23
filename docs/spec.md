@@ -1,7 +1,7 @@
 # codemap — Change Explainer for AI-Assisted Codebases
 
 **Spec version:** 2.0 (supersedes 1.0 — architecture changed, do not follow v1)
-**Status:** Implemented through M19 (see §8 Milestones, §17) — this document is a
+**Status:** Implemented through M21 (see §8 Milestones, §18, §19) — this document is a
 design record, not a task list; treat it as historical context for *why* the
 code is shaped the way it is, not a to-do.
 **Audience:** contributors, and Claude Code when extending the implementation
@@ -554,6 +554,12 @@ resolution graphify has for JS/TS specifically (tsconfig `paths`/`baseUrl`,
 workspace packages, `index.*` barrels) — a substantial, JS/TS-specific
 undertaking on its own, separate from the general three-tier mechanism above.
 
+> **Superseded by §19.** "Confidence is metadata, not a filter" held only
+> through M17. M21 (§19) replaces it: `refs.receiver` now decides whether an
+> edge exists **at all**, not just how it's labelled, and
+> `test_confidence_never_changes_which_edges_exist` was rewritten to express
+> the new contract instead of the old one.
+
 ---
 
 ## 16. Simulate tab (M18)
@@ -781,7 +787,10 @@ tagged `down` (the expected direction: a higher layer imports a lower one),
 rank, Views and API, drawn sideways across the seam between their two bands), or
 `side` (touches the side panel). Actors come from the entry points of non-side components:
 *Internet* (route/controller), *User's screen* (screen/layout/UI root),
-*Terminal* (cli/script, or a `main` in the entry layer) and *Scheduler* (task).
+*Terminal* (cli/script, or a `main` in the entry or shared layer — wherever a
+standalone `__main__` guard's file happened to land) and *Scheduler* (task —
+a `@shared_task`/`@task`/`@scheduled_job` decorator, or a plain
+`add_job(...)`/`BackgroundScheduler()`/`schedule.every(...)` call).
 The overview's stack line lists languages at ≥ 8% of non-test lines, then up
 to 6 `stack` vendors (top layer first), then every store and service.
 
@@ -829,6 +838,70 @@ the counters hide below 1100px.
   what `architecture.json`'s `stores`/`services` fill;
 - any claim that the layering is *correct*. A dashed box is a guess and says
   so.
+
+---
+
+## 19. Receiver-aware call resolution (M21)
+
+A user test on real builds found M17's tier alone wasn't enough: every
+`x.get()` in a repo resolved to the same `WalletClient.get`, because tier 3
+matches on name only, repo-wide, with no idea what `get` was actually called
+*on*. M21 fixes this at the source instead of hiding it in the UI: **schema
+v3** adds `refs.receiver TEXT` (`schema.sql`), and `SCHEMA_VERSION = 3`'s
+migration (`db.py`) sets a `reparse_all` meta flag so the next worktree sync
+(`indexer._index_worktree`) ignores its content-hash shortcut exactly once —
+existing rows keep NULL (treated as a bare call, the old permissive
+behaviour) until that reparse fills them in.
+
+`parsing._receiver_of()` classifies what a call was made on, structurally, so
+none of the 12 per-language `tags.scm` query files change:
+
+| Receiver | Meaning |
+|---|---|
+| `-` | a bare call — the name node's parent *is* the call node |
+| `self` | `self`/`cls`/`this`/`super` (`_SELF_LIKE`) |
+| `N:<name>` | a capitalized identifier — a class or a module alias |
+| `v:<name>` | a lowercase identifier — a local, param or module alias |
+| `x` | anything else: a chained attribute, a call result, a subscript — deliberately never guessed further |
+
+`impact.call_graph` branches on it instead of falling through a single
+name-only ladder:
+
+- **`self`** — only a method of the *same class*, same file, resolves
+  (`EXTRACTED`). No enclosing class, no edge.
+- **`N:X`** — only `X.<name>` resolves, same-file (`EXTRACTED`) or through
+  this file's own import evidence (`INFERRED`/`AMBIGUOUS`); no repo-wide
+  fallback.
+- **`v:x` / `x`** — import evidence only, never a repo-wide guess, and not at
+  all when the name is on `_STOP_METHOD_NAMES` (`get`, `set`, `then`, `json`,
+  `split`, …) — built-in container/IO method names that exist on too many
+  unrelated types to trust without a real type.
+- **`-` (bare, or a pre-v3 row with no receiver yet)** — the original M17
+  three tiers, unchanged: same-file, then import evidence, then a repo-wide
+  `AMBIGUOUS` guess. A bare name has nothing to be precise about, so this
+  stays the permissive fallback.
+
+Two guards apply to every branch: the candidate must be in the same
+**language family** as the caller (`_LANG_FAMILY` in `impact.py` — a `.ts`
+calling a `.js` helper is fine, a `.py` "calling" a same-named `.ts` method is
+not), and non-test code never resolves into a test file (test code may still
+call into production or other test code freely).
+
+`from X import Y as Z` aliases (`_py_import_aliases`) redirect a bare call to
+`Z(...)` back to the symbol actually named `Y`, so an alias no longer reads
+as unresolvable dynamic dispatch on the Simulate tab.
+
+**Confidence now decides whether an edge exists**, not just how it's drawn —
+the opposite of M17's guarantee (§15). The explorer still shows which tier
+won (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`) so a guess stays visibly a guess:
+Graph draws an `AMBIGUOUS` edge dashed; fan-in/fan-out, blast radius, the
+entry path and Simulate's derived scenarios all count confident edges only,
+with a "+N guessed" note where that matters. `entrypoints.py` also gained
+APScheduler/`schedule` detection (`add_job(...)`, `BackgroundScheduler()`,
+`schedule.every(...)`) for the Scheduler actor, and records a `main` entry
+for every `__main__` guard so a standalone script gets a Terminal actor
+wherever its file landed (`entry` or `shared`), not only inside the entry
+layer — see §18.
 
 ---
 

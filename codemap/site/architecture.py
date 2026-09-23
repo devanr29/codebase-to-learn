@@ -95,7 +95,14 @@ _STEM_TOKENS: dict[str, set[str]] = {
              "migrations", "migration", "entities", "entity", "storage", "persistence",
              "queries"},
     "shared": {"config", "settings", "utils", "util", "helpers", "helper", "constants", "types",
-               "conf", "logging", "logger", "middleware", "plugins"},
+               "conf", "logging", "logger", "middleware", "plugins",
+               # tooling config filenames that don't happen to contain the word
+               # "config" as a `._-`-delimited token of their own: tsconfig.json,
+               # .eslintrc*, .babelrc*, .prettierrc*, .editorconfig, .npmrc,
+               # jsconfig.json, .stylelintrc, .browserslistrc, .nvmrc.
+               "tsconfig", "jsconfig", "eslintrc", "eslint", "babelrc", "babel",
+               "prettierrc", "prettier", "editorconfig", "npmrc", "stylelintrc",
+               "browserslistrc", "nvmrc", "pyproject"},
 }
 _W_ENTRY = 4.0      # a detected entry point of a decisive kind
 _W_MAIN = 2.0       # a bare `__main__` guard — scripts have one too, so weaker than a folder
@@ -344,9 +351,8 @@ def _tokens(s: str) -> set[str]:
 
 def _is_test(path: str) -> bool:
     pp = PurePosixPath(path)
-    stem = pp.name.rsplit(".", 1)[0] if "." in pp.name else pp.name
     parent = path.rsplit("/", 1)[0] if "/" in path else ""
-    return bool(_TEST_LIKE_RE.search(parent) or _TEST_STEM_RE.match(stem.lower()))
+    return bool(_TEST_LIKE_RE.search(parent) or _TEST_STEM_RE.match(pp.stem.lower()))
 
 
 def _score_file(
@@ -362,7 +368,12 @@ def _score_file(
 
     path = f["path"]
     pp = PurePosixPath(path)
-    stem = pp.name.rsplit(".", 1)[0] if "." in pp.name else pp.name
+    # PurePosixPath.stem, not a manual rsplit(".", 1) — a bare dotfile with no
+    # further suffix (".eslintrc", ".babelrc", ".env") has exactly one dot, at
+    # position 0, so a naive rsplit on "." there yields an *empty* stem and
+    # contributes no signal at all. pathlib already treats a leading dot as
+    # not-an-extension, the same rule File Explorer/Finder use.
+    stem = pp.stem
 
     if _is_test(path):
         bump("tests", 100.0, "test file")
@@ -809,16 +820,34 @@ def build(
     actors: dict[str, dict] = {}
     for fi, kinds in entry_by_fi.items():
         cid = comp_of.get(fi)
-        if cid is None or comp_by_id[cid]["layer"] in SIDE:
+        if cid is None:
             continue
+        comp_layer = comp_by_id[cid]["layer"]
         for kind, detail in kinds:
             if kind in ("route", "controller"):
+                if comp_layer in SIDE:
+                    continue
                 aid, label, akind = "internet", "Internet", "web"
             elif kind in ("screen", "layout") or (kind == "main" and _UI_MAIN_RE.search(detail)):
+                if comp_layer in SIDE:
+                    continue
                 aid, label, akind = "device", "User's screen", "ui"
             elif kind == "task":
+                # a job registration's own file commonly lands in Logic or
+                # the side panel (scripts/utils) — neither disqualifies it;
+                # only a test fixture faking a scheduler call should be
+                # ignored.
+                if comp_layer == "tests":
+                    continue
                 aid, label, akind = "scheduler", "Scheduler", "jobs"
-            elif kind in ("cli", "script") or (kind == "main" and comp_by_id[cid]["layer"] == "entry"):
+            elif kind in ("cli", "script") or (
+                kind == "main" and comp_layer in ("entry", "shared")
+            ):
+                # a standalone script's __main__ guard is Terminal-worthy
+                # wherever the file landed: "entry" when nothing else claims
+                # it, "shared" when it's tooling (scripts/, a migration, a
+                # seed script) — that's most of them, by nature of being a
+                # one-off with no other code importing it.
                 aid, label, akind = "terminal", "Terminal", "cli"
             else:
                 continue

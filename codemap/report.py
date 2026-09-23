@@ -7,6 +7,7 @@ disabled; when M8 is on, the narrative replaces the bullet lines only.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timezone
 
@@ -46,17 +47,61 @@ def _callers_of(change: semdiff.Change, impacts: dict[str, Impact] | None) -> in
     return int(change.details.get("impact", {}).get("callers", 0))
 
 
+_PAIRS = {"(": ")", "[": "]", "{": "}", "<": ">"}
+_CLOSERS = set(_PAIRS.values())
+_IDENT_RE = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def _split_top_level(s: str) -> list[str]:
+    """Split ``s`` on commas that aren't nested inside ``()``/``[]``/``{}``/
+    ``<>`` — a plain ``sig.split(",")`` tears a destructured or generic
+    parameter in half (``{ label, value }: Props`` -> two bogus "params")."""
+    parts, depth, cur = [], 0, []
+    for ch in s:
+        if ch in _PAIRS:
+            depth += 1
+        elif ch in _CLOSERS:
+            depth = max(0, depth - 1)
+        if ch == "," and depth == 0:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append("".join(cur))
+    return parts
+
+
+def _param_names(sig: str) -> list[str]:
+    """Parameter names out of a normalized signature's parens. A destructured
+    parameter (``{ label, value, trend }: Props``, a TS/JS convention for
+    "named options") expands to its own member names — the closest thing it
+    has to individual parameter identities — instead of being torn apart by
+    a naive comma split, or read as one opaque blob."""
+    if "(" not in sig or ")" not in sig:
+        return []
+    inner = sig[sig.index("(") + 1 : sig.rindex(")")]
+    names: list[str] = []
+    for raw in _split_top_level(inner):
+        p = raw.strip()
+        if not p:
+            continue
+        if p[0] in "{[":
+            close = _PAIRS[p[0]]
+            end = p.rfind(close)
+            body = p[1:end] if end > 0 else p[1:]
+            names.extend(m.group(0) for m in _IDENT_RE.finditer(body))
+            continue
+        name = p.split("=")[0].split(":")[0].strip().lstrip(".*")
+        if name:
+            names.append(name)
+    return names
+
+
 def _sig_delta(details: dict) -> str:
     frm, to = details.get("from", ""), details.get("to", "")
-
-    def params(sig: str) -> list[str]:
-        if "(" not in sig or ")" not in sig:
-            return []
-        inner = sig[sig.index("(") + 1 : sig.rindex(")")]
-        return [p.split("=")[0].split(":")[0].strip() for p in inner.split(",") if p.strip()]
-
-    added = [p for p in params(to) if p not in params(frm)]
-    removed = [p for p in params(frm) if p not in params(to)]
+    added = [p for p in _param_names(to) if p not in _param_names(frm)]
+    removed = [p for p in _param_names(frm) if p not in _param_names(to)]
     bits = []
     if added:
         bits.append("added " + ", ".join(f"`{p}`" for p in added))

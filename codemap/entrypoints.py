@@ -38,8 +38,17 @@ _PY_ROUTE = re.compile(
     r"@(?P<obj>[\w.]+)\.(?P<attr>route|" + "|".join(_HTTP_VERBS) + r")\b\s*\(?\s*(?P<arg>['\"][^'\"]*['\"])?"
 )
 _PY_CLI = re.compile(r"@(?P<obj>[\w.]+)\.(command|group)\b")
-_PY_TASK = re.compile(r"@(?P<obj>[\w.]+\.)?(shared_task|task)\b")
+_PY_TASK = re.compile(r"@(?P<obj>[\w.]+\.)?(shared_task|task|scheduled_job)\b")
 _PY_FASTAPI_DEP = re.compile(r"@(?P<obj>[\w.]+)\.(websocket)\b")
+_PY_METHODS = re.compile(r"methods\s*=\s*\[(?P<list>[^\]]*)\]")
+
+# APScheduler's job registration isn't a decorator (`@scheduled_job` above IS,
+# and already covered) — `add_job(...)` / `BackgroundScheduler()` /
+# `schedule.every(...)` are plain calls, matched by scheduler_symbol_ranges()
+# below (byte offsets into the whole file, since it isn't decorator text).
+_PY_SCHEDULER_CALL = re.compile(
+    rb"\.add_job\(|BackgroundScheduler\(|BlockingScheduler\(|\bschedule\.every\("
+)
 
 _TS_ROUTE = re.compile(
     r"@(Get|Post|Put|Patch|Delete|Options|Head|All)\s*\(\s*(?P<arg>['\"][^'\"]*['\"])?"
@@ -47,8 +56,31 @@ _TS_ROUTE = re.compile(
 _TS_CONTROLLER = re.compile(r"@Controller\s*\(\s*(?P<arg>['\"][^'\"]*['\"])?")
 
 
-def from_decorators(decorators: str | None, lang: str) -> tuple[str, str] | None:
-    """Return ``(kind, detail)`` if any decorator marks an entry point."""
+def _py_route_methods(line: str, verb: str) -> str:
+    """``methods=[...]`` on a ``.route(...)`` decorator, else the verb itself
+    for ``.get``/``.post``/etc., else Flask's own default (``GET`` — plus the
+    HEAD/OPTIONS it adds silently, not worth spelling out here)."""
+    if verb != "route":
+        return verb.upper()
+    m = _PY_METHODS.search(line)
+    if not m:
+        return "GET"
+    names = [p.strip(" '\"") for p in m.group("list").split(",")]
+    names = list(dict.fromkeys(n.upper() for n in names if n))
+    return ", ".join(names) if names else "GET"
+
+
+def from_decorators(
+    decorators: str | None, lang: str, blueprint_prefixes: dict[str, str] | None = None
+) -> tuple[str, str] | None:
+    """Return ``(kind, detail)`` if any decorator marks an entry point.
+
+    ``blueprint_prefixes`` (optional, see ``blueprint_prefixes()`` below):
+    a Flask route's ``@bp.route(...)`` object name, looked up against
+    ``app.register_blueprint(bp, url_prefix=...)`` calls found anywhere in
+    the repo, so the label carries the real mount path instead of just the
+    route's own suffix.
+    """
     if not decorators:
         return None
     for line in decorators.splitlines():
@@ -57,8 +89,12 @@ def from_decorators(decorators: str | None, lang: str) -> tuple[str, str] | None
             m = _PY_ROUTE.match(line)
             if m:
                 verb = m.group("attr")
-                method = "ANY" if verb == "route" else verb.upper()
+                method = _py_route_methods(line, verb)
                 path = (m.group("arg") or "").strip("'\"") or "/"
+                obj_name = m.group("obj").rsplit(".", 1)[-1]
+                prefix = (blueprint_prefixes or {}).get(obj_name, "")
+                if prefix and prefix != "/":
+                    path = prefix.rstrip("/") + (path if path.startswith("/") else f"/{path}")
                 return "route", f"{method} {path}"
             if _PY_CLI.match(line):
                 return "cli", line
@@ -79,6 +115,41 @@ def from_decorators(decorators: str | None, lang: str) -> tuple[str, str] | None
 
 _SCRIPTS_RE = re.compile(r"(?P<name>[\w.-]+)\s*=\s*['\"](?P<target>[\w.]+):(?P<func>[\w.]+)['\"]")
 _DOCKER_RE = re.compile(r"^\s*(CMD|ENTRYPOINT)\s+(.+)$", re.MULTILINE)
+
+_BP_CALL_RE = re.compile(r"register_blueprint\(\s*(?P<args>[^)]*)\)")
+_BP_PREFIX_RE = re.compile(r"url_prefix\s*=\s*(['\"])(?P<prefix>[^'\"]*)\1")
+
+
+def blueprint_prefixes(all_paths: list[str], read_bytes) -> dict[str, str]:
+    """Flask ``app.register_blueprint(bp, url_prefix="/api")`` calls,
+    repo-wide, as ``{blueprint variable name: prefix}``. Best-effort (a
+    single-line call, the common case; a value containing ``)`` defeats the
+    non-nested paren match). Keyed by the blueprint's bare variable name
+    rather than by file, so a route decorated ``@bp.route(...)`` in the file
+    that *defines* the blueprint picks up the prefix from wherever it's
+    actually *registered* (usually a different file, ``app.py``) — the same
+    name is what makes the registration work in the first place.
+
+    ``all_paths``/``read_bytes`` mirror ``frontend_roots()``'s signature so
+    the same call works against a git commit or the live worktree."""
+    out: dict[str, str] = {}
+    for path in all_paths:
+        if PurePosixPath(path).suffix != ".py":
+            continue
+        blob = read_bytes(path)
+        if not blob:
+            continue
+        text = blob.decode("utf-8", "replace")
+        if "register_blueprint" not in text:
+            continue
+        for m in _BP_CALL_RE.finditer(text):
+            args = m.group("args")
+            var = args.split(",", 1)[0].strip().rsplit(".", 1)[-1]
+            if not var.isidentifier():
+                continue
+            pm = _BP_PREFIX_RE.search(args)
+            out[var] = pm.group("prefix") if pm else ""
+    return out
 
 
 def repo_scripts(root, sha: str) -> list[tuple[str, str, str]]:
@@ -104,6 +175,20 @@ def dockerfile_commands(root, sha: str) -> list[str]:
     if not blob:
         return []
     return [m.group(0).strip() for m in _DOCKER_RE.finditer(blob.decode("utf-8", "replace"))]
+
+
+def scheduler_symbol_ranges(source: bytes) -> list[tuple[int, int]]:
+    """Byte spans in ``source`` where a background job gets registered by a
+    plain call — ``add_job(...)``, ``BackgroundScheduler()``,
+    ``schedule.every(...)`` — matched directly against the file's own bytes
+    so a caller (``indexer._write_parsed``) can tie a hit to whichever
+    symbol's own ``[start_byte, end_byte)`` contains it, the same way
+    ``parsing._main_guard_calls`` locates a ``__main__`` guard's callees.
+    The decorator form (``@shared_task``/``@scheduled_job``) is already
+    covered by ``from_decorators`` — this is only the plain-call cousin.
+    Matched against the raw bytes (not a decoded string) so offsets line up
+    exactly with ``Symbol.start_byte``/``end_byte``."""
+    return [(m.start(), m.end()) for m in _PY_SCHEDULER_CALL.finditer(source)]
 
 
 # --------------------------------------------------------------- frontend roots

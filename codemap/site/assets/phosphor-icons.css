@@ -76,6 +76,10 @@
   content: "\e1d6";
 }
 
+.ph.ph-cube:before {
+  content: "\e1da";
+}
+
 .ph.ph-database:before {
   content: "\e1de";
 }
@@ -86,6 +90,10 @@
 
 .ph.ph-eye-slash:before {
   content: "\e224";
+}
+
+.ph.ph-file:before {
+  content: "\e230";
 }
 
 .ph.ph-file-c:before {
@@ -138,6 +146,10 @@
 
 .ph.ph-folder-open:before {
   content: "\e256";
+}
+
+.ph.ph-function:before {
+  content: "\ebe4";
 }
 
 .ph.ph-gauge:before {
@@ -303,6 +315,10 @@
   content: "\e1d6";
 }
 
+.ph-fill.ph-cube:before {
+  content: "\e1da";
+}
+
 .ph-fill.ph-database:before {
   content: "\e1de";
 }
@@ -313,6 +329,10 @@
 
 .ph-fill.ph-eye-slash:before {
   content: "\e224";
+}
+
+.ph-fill.ph-file:before {
+  content: "\e230";
 }
 
 .ph-fill.ph-file-c:before {
@@ -365,6 +385,10 @@
 
 .ph-fill.ph-folder-open:before {
   content: "\e256";
+}
+
+.ph-fill.ph-function:before {
+  content: "\ebe4";
 }
 
 .ph-fill.ph-gauge:before {

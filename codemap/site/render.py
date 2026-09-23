@@ -20,8 +20,14 @@ def _asset(name: str) -> str:
 
 
 def _title(data: dict) -> str:
-    short = data.get("commit_short") or ""
-    return f"Codegraph {short}".strip()
+    """The browser tab's title: the repo's own folder name, so multiple
+    builds (or multiple repos) are actually distinguishable in a tab strip —
+    ``"Codegraph <sha-or-'worktree'>"`` was identical across every repo, since
+    a worktree graph's commit_short is always the literal string
+    ``"worktree"`` (indexer.WORKTREE_SHA)."""
+    root = data.get("root") or ""
+    name = Path(root).name if root else ""
+    return f"{name} · codemap" if name else "codemap"
 
 
 def _slim(data: dict) -> dict:

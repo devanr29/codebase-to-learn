@@ -14,6 +14,7 @@ records its ``tier`` and whether "no callers" is real or just unresolvable here.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -24,6 +25,45 @@ from .config import Config
 from .languages.registry import spec_for_path
 
 EXTRACTED, INFERRED, AMBIGUOUS = "EXTRACTED", "INFERRED", "AMBIGUOUS"
+
+# Same two patterns codemap/site/architecture.py and folders.py use to keep a
+# test file out of the Architecture tests layer / "Hide tests" — duplicated
+# here (rather than imported) because impact.py is core and those two live
+# under site/, which depends on core, not the other way around.
+_TEST_LIKE_RE = re.compile(r"(^|/)(tests?|__tests__|spec|e2e)(/|$)", re.IGNORECASE)
+_TEST_STEM_RE = re.compile(r"^(test_.*|.*_test|conftest)$|\.(test|spec)$")
+
+# Grammars grouped so a call can resolve across file extensions that are
+# really the same language (a .ts calling into a .js helper), but never
+# across genuinely different ones (Python calling "into" TypeScript just
+# because both happen to define a method of the same name).
+_LANG_FAMILY = {
+    "javascript": "js", "typescript": "js", "tsx": "js",
+    "python": "py", "go": "go", "rust": "rust", "java": "java",
+    "csharp": "csharp", "ruby": "ruby", "php": "php", "c": "c", "cpp": "cpp",
+}
+
+# Built-in container/IO/collection method names that exist on countless
+# unrelated types (dict.get, list.append, a Promise.then, str.split, a
+# response object's .json()...). Without type inference there's no way to
+# tell a call to one of these apart from a genuine same-named repo method, so
+# a receiver that isn't self/a resolved class name never matches one of
+# these — even with import evidence. A real hit stays reachable through a
+# direct self/Class.method reference; a missed one is far cheaper than the
+# false "everyone calls WalletClient.get" edge this list exists to prevent.
+_STOP_METHOD_NAMES = frozenset(
+    """get set add remove update items keys values pop popitem append extend
+    insert clear copy count index sort reverse read write open close send
+    recv post put patch delete json text encode decode split join strip
+    lstrip rstrip format replace find match search run start stop next
+    value wait done result cancel then catch finally push shift unshift
+    slice splice map filter reduce forEach toString valueOf
+    hasOwnProperty""".split()
+)
+
+_PY_ALIAS_RE = re.compile(
+    r"^from\s+[\w.]+\s+import\s+(?P<name>\w+)\s+as\s+(?P<alias>\w+)\s*$"
+)
 
 # change types whose impact is worth computing — a change to something that
 # already had dependents. A brand-new symbol has no N-1 graph node, so
@@ -115,25 +155,80 @@ def _imports_by_file(
     return out
 
 
+def _is_test_path(path: str) -> bool:
+    name = path.rsplit("/", 1)[-1]
+    stem = name.rsplit(".", 1)[0] if "." in name else name
+    parent = path.rsplit("/", 1)[0] if "/" in path else ""
+    return bool(_TEST_LIKE_RE.search(parent) or _TEST_STEM_RE.match(stem.lower()))
+
+
+def _owner_of(key: str) -> str | None:
+    """The class/namespace a method key belongs to — ``"WalletClient"`` for
+    ``file.py::WalletClient.get``, ``None`` for a bare top-level function."""
+    q = _qualname(key)
+    return q.rsplit(".", 1)[0] if "." in q else None
+
+
+def _py_import_aliases(conn: sqlite3.Connection, sha: str) -> dict[str, dict[str, str]]:
+    """Python ``from X import Y as Z`` aliases at ``sha``, as
+    ``{importer file path: {local alias Z: original name Y}}`` — lets a bare
+    call to ``_ok(...)`` (``from api_common import ok as _ok``) redirect to
+    the symbol actually named ``ok``, instead of never matching anything
+    (and, on the explorer's Simulate tab, being mistaken for dynamic
+    dispatch). Module aliases (``import numpy as np``) aren't included —
+    there's no single symbol to redirect *to*, only a file, which the
+    ordinary import-evidence path already covers via the bare name itself."""
+    out: dict[str, dict[str, str]] = {}
+    for r in conn.execute(
+        "SELECT f.path AS path, i.raw AS raw FROM imports i "
+        "JOIN files f ON f.id = i.file_id WHERE i.commit_sha = ? AND f.lang = 'python'",
+        (sha,),
+    ):
+        m = _PY_ALIAS_RE.match(r["raw"])
+        if m and m.group("name") != m.group("alias"):
+            out.setdefault(r["path"], {})[m.group("alias")] = m.group("name")
+    return out
+
+
 def call_graph(
     conn: sqlite3.Connection, sha: str, aliases: list[resolve.TsAlias] | None = None
 ) -> nx.DiGraph:
     """Directed graph of symbol keys; an edge ``caller -> callee`` for every
-    reference, resolved in three tiers (spec M15) — each edge carries a
-    ``confidence`` attribute recording which one won, but which edges exist
-    is unchanged from before this tier was added: confidence is metadata, not
-    a filter.
+    reference that resolves, each carrying a ``confidence`` (spec M15,
+    receiver-aware resolution): unlike the tier a symbol's *language* gets
+    (``languages/registry.py``), this is a hint for the UI, not a filter —
+    Graph shows a low-confidence edge dashed, blast-radius / Simulate leave
+    it out, but it still counts as "reachable" for someone reading the raw
+    graph. What determines whether an edge exists **at all** is
+    ``refs.receiver`` (``parsing._receiver_of`` — what the call was made
+    *on*), which is the actual fix for the false-positive problem tier alone
+    never solved: two same-named methods on unrelated classes, or a
+    dict/response/string method matched against a same-named repo function,
+    used to both resolve as confidently as a real same-file call.
 
-    1. **EXTRACTED** — a same-named symbol in the caller's own file. The T2
-       "same-file call edge" rule; removes most T1 false positives from
-       common helper names.
-    2. **INFERRED** — nothing in the caller's own file, but exactly one
-       same-named symbol lives in a file the caller actually imports
-       (``resolve.resolve_imports``, the same machinery the explorer's file
-       graph already uses).
-    3. **AMBIGUOUS** — the T1 fallback: every same-named symbol repo-wide,
-       whether that's one candidate with no import evidence connecting it or
-       several genuinely competing ones.
+    - **receiver "self"/cls/this/...**: only a method of the *same class*,
+      in the same file, ever resolves — ``EXTRACTED``. No class -> no edge.
+    - **receiver "N:X"** (a capitalized name — a class, or a module alias):
+      only a symbol literally owned by ``X`` (``X.<name>``), reached either
+      in the same file (``EXTRACTED``) or through this file's own import
+      evidence (``INFERRED``/``AMBIGUOUS``). No such match falls through to
+      the next rule instead of guessing further.
+    - **receiver "v:x" / "x"** (a local variable, or any other expression —
+      no type information to go on): import evidence only, **never** a
+      repo-wide guess, and not at all for a name on ``_STOP_METHOD_NAMES``
+      (``.get``, `.then`, `.json`, ...) — those exist on too many unrelated
+      types to trust without knowing what the receiver actually is.
+    - **receiver "-" (bare call, or a pre-schema-v3 row with no receiver
+      recorded yet)**: the original three tiers, unchanged — same-file
+      ``EXTRACTED``, then import-evidence ``INFERRED``/``AMBIGUOUS``, then a
+      repo-wide ``AMBIGUOUS`` guess. A bare name has no object to be precise
+      about, so this stays the permissive fallback it always was.
+
+    Every rule above also requires: the candidate is in the same *language
+    family* as the caller (``_LANG_FAMILY`` — a .ts calling a .js helper is
+    fine, a .py "calling" a .ts method by coincidence of name is not), and
+    non-test code never resolves into a test file (test code may still call
+    into production or other test code freely).
     """
     g = nx.DiGraph()
     id_to_key: dict[int, str] = {}
@@ -148,35 +243,116 @@ def call_graph(
         g.add_node(r["key"])
 
     imports_by_file = _imports_by_file(conn, sha, aliases=aliases)
+    py_aliases = _py_import_aliases(conn, sha)
+
+    _fam_cache: dict[str, str | None] = {}
+    _test_cache: dict[str, bool] = {}
+
+    def fam(path: str) -> str | None:
+        if path not in _fam_cache:
+            spec = spec_for_path(path)
+            _fam_cache[path] = _LANG_FAMILY.get(spec.name) if spec else None
+        return _fam_cache[path]
+
+    def is_test(path: str) -> bool:
+        if path not in _test_cache:
+            _test_cache[path] = _is_test_path(path)
+        return _test_cache[path]
 
     for r in conn.execute(
-        "SELECT from_symbol_id, target_name FROM refs "
+        "SELECT from_symbol_id, target_name, receiver FROM refs "
         "WHERE commit_sha = ? AND from_symbol_id IS NOT NULL",
         (sha,),
     ):
         src = id_to_key.get(r["from_symbol_id"])
         if src is None:
             continue
-        candidates = [k for k in name_to_keys.get(r["target_name"], ()) if k != src]
+        target_name = r["target_name"]
+        receiver = r["receiver"] or "-"  # NULL = a pre-v3 row, resolved the old way
+        src_path = _path_of(src)
+
+        candidates_all = [k for k in name_to_keys.get(target_name, ()) if k != src]
+        alias_only = False
+        if not candidates_all and receiver == "-":
+            original = py_aliases.get(src_path, {}).get(target_name)
+            if original:
+                candidates_all = [k for k in name_to_keys.get(original, ()) if k != src]
+                alias_only = True
+        if not candidates_all:
+            continue
+
+        src_fam = fam(src_path)
+        src_is_test = is_test(src_path)
+        candidates = [
+            k for k in candidates_all
+            if fam(_path_of(k)) == src_fam and (src_is_test or not is_test(_path_of(k)))
+        ]
         if not candidates:
             continue
 
-        same_file = [k for k in candidates if _path_of(k) == _path_of(src)]
-        if same_file:
-            for dst in same_file:
-                g.add_edge(src, dst, confidence=EXTRACTED)
+        if alias_only:
+            # only valid through the one import that named it — no same-file
+            # guess (if it were same-file, the plain name would've matched
+            # already) and no repo-wide fallback.
+            imported = imports_by_file.get(src_path, ())
+            via_import = [k for k in candidates if _path_of(k) in imported]
+            if len(via_import) == 1:
+                g.add_edge(src, via_import[0], confidence=INFERRED)
             continue
 
-        imported = imports_by_file.get(_path_of(src), ())
+        if receiver == "self":
+            owner = _owner_of(src)
+            if owner is not None:
+                for dst in candidates:
+                    if _path_of(dst) == src_path and _owner_of(dst) == owner:
+                        g.add_edge(src, dst, confidence=EXTRACTED)
+            continue
+
+        if receiver.startswith("N:"):
+            obj = receiver[2:]
+            direct = [k for k in candidates if _owner_of(k) == obj]
+            same_file_direct = [k for k in direct if _path_of(k) == src_path]
+            if same_file_direct:
+                for dst in same_file_direct:
+                    g.add_edge(src, dst, confidence=EXTRACTED)
+                continue
+            imported = imports_by_file.get(src_path, ())
+            via_import_direct = [k for k in direct if _path_of(k) in imported]
+            if via_import_direct:
+                confidence = INFERRED if len(via_import_direct) == 1 else AMBIGUOUS
+                for dst in via_import_direct:
+                    g.add_edge(src, dst, confidence=confidence)
+                continue
+            receiver = "x"  # no "<Name>.<method>" match — fall through below
+
+        if receiver == "-":
+            same_file = [k for k in candidates if _path_of(k) == src_path]
+            if same_file:
+                for dst in same_file:
+                    g.add_edge(src, dst, confidence=EXTRACTED)
+                continue
+            imported = imports_by_file.get(src_path, ())
+            via_import = [k for k in candidates if _path_of(k) in imported]
+            if via_import:
+                confidence = INFERRED if len(via_import) == 1 else AMBIGUOUS
+                for dst in via_import:
+                    g.add_edge(src, dst, confidence=confidence)
+                continue
+            for dst in candidates:
+                g.add_edge(src, dst, confidence=AMBIGUOUS)
+            continue
+
+        # "v:x" / "x" / an "N:X" with no direct match: import evidence only,
+        # never a repo-wide guess, and never at all for a stoplisted name —
+        # see the docstring above.
+        if target_name in _STOP_METHOD_NAMES:
+            continue
+        imported = imports_by_file.get(src_path, ())
         via_import = [k for k in candidates if _path_of(k) in imported]
         if via_import:
             confidence = INFERRED if len(via_import) == 1 else AMBIGUOUS
             for dst in via_import:
                 g.add_edge(src, dst, confidence=confidence)
-            continue
-
-        for dst in candidates:
-            g.add_edge(src, dst, confidence=AMBIGUOUS)
     return g
 
 

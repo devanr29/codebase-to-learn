@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -52,6 +52,24 @@ def migrate(conn: sqlite3.Connection) -> int:
         if "raw_hash" not in cols:
             conn.execute("ALTER TABLE symbol_versions ADD COLUMN raw_hash TEXT")
         version = 2
+
+    if version < 3:
+        # refs.receiver (what a call was made on — self / Class / local var /
+        # opaque expression / bare) lets call_graph() (impact.py) tell
+        # `body.get(...)` apart from `self.get(...)`, instead of matching any
+        # same-named method repo-wide. Existing rows get NULL, which
+        # call_graph() treats as a bare call (the old, permissive behaviour)
+        # — safe, just less precise until the file is reparsed. `reparse_all`
+        # tells the next worktree sync (`indexer._index_worktree`) to ignore
+        # its content-hash shortcut exactly once, so the live graph a fresh
+        # `codemap scan` renders gets full receiver data without requiring a
+        # full git-history rewalk (`scan()` still resumes incrementally there
+        # — see indexer.py's module docstring on why that split is cheap).
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(refs)")}
+        if "receiver" not in cols:
+            conn.execute("ALTER TABLE refs ADD COLUMN receiver TEXT")
+        set_meta(conn, "reparse_all", "1")
+        version = 3
 
     conn.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "

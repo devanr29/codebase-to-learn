@@ -87,7 +87,14 @@ Useful flags:
 - the Package / Module / File / Function buttons change what a dot means
 - drag the background to pan; scroll to zoom
 - the +/−/recenter buttons are bottom-left
-- click any dot (or a tree symbol) to **focus** it
+- click any dot (or a tree symbol) to **focus** it; <kbd>Shift</kbd>+click a
+  dot instead to pin a spotlight on it and its edges without navigating away
+  from what you're currently looking at
+- the **Traffic** pill (top bar) animates call flow along the edges. It's on
+  by default on a small repo; past ~150 edges in the default view it starts
+  **off** instead, since animating that many edges is what drops a big
+  repo's graph to single-digit fps — click the pill any time to turn it back
+  on, and the viewer's choice is remembered
 
 **Focus = the neuron view.** The focused symbol sits in the middle. Everything
 that calls it fans out to the left (afferent); everything it calls fans right
@@ -95,18 +102,25 @@ that calls it fans out to the left (afferent); everything it calls fans right
 at a time. The "Whole graph" button clears the focus.
 
 **Right inspector**, for the focused symbol:
-- fan-in / fan-out counts
+- fan-in / fan-out counts — calls the tool is confident about (a same-class
+  `self.x()`, a same-file call, or cross-file with an import connecting the
+  two files). A same-named call with no such evidence (`body.get(...)`
+  matching some unrelated `WalletClient.get` purely by name) is never folded
+  into these numbers; when there are any, a small "+N guessed" note under the
+  count says so instead
 - a file-anatomy strip: the whole file as a bar, each symbol a block at its
   real line range, coloured by kind — the empty gaps are module-level code
-- a blast-radius bar: "editing this reaches N callers across M files"
+- a blast-radius bar: "editing this reaches N callers across M files",
+  confident calls only, out to the same hop limit `codemap`'s own impact
+  analysis uses (`impact_depth`, §12)
 - **history** — how many commits actually changed this symbol and, for the
   most recent one, the reason someone recorded at the time (never a guess —
   `codemap` captures intent, it doesn't reverse-engineer it, same source as
   the Timeline tab's intent line, §8)
-- the shortest path from an entry point (e.g. `GET /report` → … → `fetch`),
-  with a **"Trace back to entry ▶"** link that plays that exact chain as a
-  Simulate scenario instead of just printing it (hidden when this symbol *is*
-  the entry point — there's nothing to walk back through)
+- the shortest confident path from an entry point (e.g. `GET /report` → … →
+  `fetch`), with a **"Trace back to entry ▶"** link that plays that exact
+  chain as a Simulate scenario instead of just printing it (hidden when this
+  symbol *is* the entry point — there's nothing to walk back through)
 - a "Trace calls from here" link into the Map tab's Run trace (§6)
 - the symbol's source: a numbered, syntax-coloured preview of its first 30
   lines, a **View source** button (the source viewer, below), and an "Open in
@@ -130,8 +144,13 @@ scrolled into view.
   show just the symbol's own excerpt, and the panel says so
 
 **Legend** (bottom-right) — read this:
-- **purple edge** = a same-file call the tool is confident about (tier 2)
-- **grey edge** = a cross-file guess by name (tier 1, may be over-broad)
+- edges are coloured by folder (or by layer in Layer mode, below); a
+  **thicker** edge is a same-file call
+- a **dashed** edge is either an import/external reference, or — at Function
+  grain — a guessed call: the name matched somewhere in the repo with no
+  import connecting the two files, so it might not be a real call at all.
+  These never count toward fan-in/fan-out, blast radius, or an entry path
+  (above); Simulate and the Map tab's Run trace skip them too
 - module-level calls are **not** drawn at all
 - **Folder | Layer** switch — colours the dots and edges by folder (the
   default) or by the architecture layer the Architecture tab (§5) placed each

@@ -71,10 +71,16 @@ calls an LLM.
   dependency injection, and wrapping decorators are invisible or distorted in
   the graph — the Map tab's Run trace marks where a chain hits one of these
   instead of silently stopping.
-- Caller resolution is name-based, narrowed by same-file and then by import
-  evidence (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`, shown per edge) — false
-  positives and false negatives both remain possible, especially outside
-  Python/TypeScript/JavaScript.
+- Caller resolution is receiver-aware: a `self.x()`/`Class.x()` call only
+  resolves against that class, and a call on a variable needs import
+  evidence to resolve at all (a stoplist of common container/IO names like
+  `.get`/`.then`/`.json` blocks even that). A **bare call**, with no receiver
+  in front of it, still falls back to a repo-wide name match when nothing
+  more specific applies, so false positives remain possible there — always
+  within the same language family, never into a test file from production
+  code. Confidence (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`) is shown per edge;
+  the Graph tab draws an `AMBIGUOUS` edge dashed and leaves it out of
+  fan-in/fan-out and blast radius.
 - Go and Rust methods show up with a flat name, not `Type.method` — see
   [`docs/spec.md`](docs/spec.md) §14.
 - A folder that contains no file in an indexed language (docs-only, data-only,

@@ -4,6 +4,82 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.5] — 2026-09-23
+
+A user test on three real builds found the Graph, Timeline and most of
+Simulate couldn't be trusted (name-based call links inflating fan-in and
+inventing scenarios that ran production code into test fakes), the Graph was
+the slowest tab, a single click didn't focus, and the legend covered nodes.
+This release fixes all of it, by phase.
+
+### Added
+- **Receiver-aware call resolution** (schema v3) — a call now records what it
+  was made *on* (`self`, a class name, a local variable, or bare), so
+  `body.get(...)` no longer links to an unrelated `WalletClient.get` just
+  because the names match. A `self.x()` only resolves to that class's own
+  method; a variable's method call needs import evidence to resolve at all.
+  Fan-in/fan-out, blast radius, the entry path, and Simulate's derived
+  scenarios now count confident edges only; a same-name-only guess is drawn
+  dashed in the Graph and never silently folded into a count. Opening an
+  index built before this release triggers one forced re-parse to backfill
+  the new data. See `docs/spec.md` §19.
+- **Terminal and Scheduler actors** on the Architecture tab — every
+  `__main__` guard now gets a Terminal entry (wherever its file landed), and
+  APScheduler/`schedule` registrations (`add_job`, `BackgroundScheduler`,
+  `schedule.every`) are detected as Scheduler tasks.
+
+### Changed
+- **Graph tab** — a single click now focuses a symbol (it used to pin);
+  <kbd>Shift</kbd>+click pins instead. The graph fits itself to the canvas
+  after every layout and on resize; the legend starts collapsed to its
+  header so it no longer covers nodes. The "Traffic" call-flow animation
+  defaults off on a graph with more than ~150 visible edges (it was
+  unconditionally on, which dropped a big repo to single-digit fps) and
+  pauses while the tab is hidden; panning/zooming now composites instead of
+  re-laying out. Labels get a greedy collision pass instead of overlapping
+  freely. The toolbar no longer overflows at narrow widths, and the left
+  rail keeps its scroll position and expands to the focused symbol.
+- **Simulate tab** — opens on a real default scenario instead of an empty
+  state; the narration/flow/source panes no longer resize on every step; the
+  source pane shows the whole file, not just a short excerpt; the call-stack
+  snapshot pane is replaced by a scrollable trace log with a breadcrumb of
+  the live stack. The ⚡ dynamic-dispatch marker now only flags real dynamic
+  patterns (`getattr`, subscript calls, calling a variable) instead of any
+  short call chain.
+- Rail scroll position is now preserved across tab switches (Simulate, Learn,
+  Packages, Timeline); Map's "Back" resets to the default view instead of
+  staying on whatever was last opened; routing corrects an unresolved tab or
+  argument with a small "link not found — showing X" note instead of just
+  showing the wrong thing silently.
+- Route entry-point labels now show the actual HTTP methods and blueprint
+  prefix (`GET, POST /api/chat`) instead of always `ANY /chat`.
+- Config files (`tsconfig.json`, `.eslintrc`, …) now land in the Architecture
+  tab's Shared layer instead of being misplaced by a `pathlib.Path.stem`
+  bug that also missed bare dotfiles.
+
+### Fixed
+- Timeline: a commit-message intent no longer repeats the commit subject, and
+  a changed function signature no longer garbles destructured parameters
+  into a headline.
+- File anatomy could read over 100% when a file had overlapping symbol
+  ranges; the top bar's "cycles" count now matches the Map tab's (file-import
+  cycles, not call-graph cycles).
+- The Packages filter now matches "stdlib"/"standard" against built-in
+  packages; a monorepo subdirectory import path no longer produces a false
+  "nothing imports this" marker.
+- Glossary term matching no longer fires inside a path or package name
+  (`a.b`, `@scope/pkg`); the inspector runs code-formatting before term
+  matching instead of after.
+
+### Accessibility
+- Faint UI text (rail counts, keyboard-shortcut hints, section labels, pane
+  titles, legend headers, the zoom box caption) is raised to at least a
+  4.5:1 contrast ratio against its background, and section/pane label text
+  is no longer smaller than 11px.
+- Text that's clipped with an ellipsis (a package name in the Packages rail,
+  a trace-log row's code and the live call-stack breadcrumb in Simulate) now
+  shows the full text on hover via `title`.
+
 ## [0.2.4] — 2026-09-22
 
 ### Added

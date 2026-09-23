@@ -5,6 +5,8 @@ marking on the results.
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from codemap import config, db, impact, indexer, semdiff
@@ -91,3 +93,46 @@ def test_impact_summary_persisted_on_changes(indexed):
     changes = semdiff.load_changes(conn, repo.sha("i2-leaf-body"))
     leaf = next(c for c in changes if c.symbol_key == "svc/data.py::db_query")
     assert leaf.details.get("impact", {}).get("callers") == 4
+
+
+def test_scheduler_call_and_unresolved_main_guard_both_get_entry_points(tmp_path):
+    """A plain APScheduler add_job() call (no decorator) still produces a
+    "task" entry point, and a __main__ guard whose call target lives outside
+    this file (a Flask app's own .run() method, not a local symbol) still
+    anchors to this file's own first symbol instead of being dropped."""
+    _git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=str(tmp_path), capture_output=True, text=True, check=True
+    )
+    _git("init", "-q")
+    _git("config", "user.email", "t@e.com")
+    _git("config", "user.name", "t")
+    _git("config", "commit.gpgsign", "false")
+    (tmp_path / "scheduler.py").write_text(
+        "def register_jobs(sched):\n"
+        "    sched.add_job(lambda: None, 'interval', minutes=5)\n"
+    )
+    (tmp_path / "main.py").write_text(
+        "from flask import Flask\n\n"
+        "def create_app():\n"
+        "    return Flask(__name__)\n\n"
+        "app = create_app()\n\n"
+        "if __name__ == '__main__':\n"
+        "    app.run(debug=True)\n"
+    )
+    _git("add", "-A")
+    _git("commit", "-q", "-m", "seed")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(tmp_path), capture_output=True, text=True
+    ).stdout.strip()
+
+    cfg = config.load(tmp_path)
+    conn = db.connect(cfg.db_path)
+    db.migrate(conn)
+    indexer.scan(conn, cfg, until=sha)
+
+    eps = impact.entry_points(conn, sha)
+    assert ("task", "scheduler job registration") in eps.get("scheduler.py::register_jobs", [])
+    # no local `run` symbol exists in main.py — the guard's call target is
+    # Flask's own app.run() — so the entry point falls back to this file's
+    # own first-defined symbol rather than being silently dropped.
+    assert any(k == "main" for k, _d in eps.get("main.py::create_app", []))

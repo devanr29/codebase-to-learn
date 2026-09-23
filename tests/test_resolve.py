@@ -62,6 +62,43 @@ def test_never_targets_itself():
     assert r.target is None
 
 
+def test_absolute_import_resolves_against_a_monorepo_subdirectory():
+    # "app" doesn't sit at the repo root — it's under backend/, the way it
+    # would be if backend/ were added to sys.path (a pyproject package-dir,
+    # running from inside it, PYTHONPATH). A resolver that only tries
+    # repo-root-relative stems leaves this unresolved, and the target file
+    # then wrongly reads as "nothing imports this" even though it's imported.
+    paths = {"backend/app/routes/users.py", "backend/app/services/billing.py"}
+    r = resolve.resolve_imports(
+        [("backend/app/routes/users.py", "from app.services.billing import charge")], paths
+    )[0]
+    assert r.target == "backend/app/services/billing.py"
+    assert r.external is False
+
+
+def test_absolute_import_prefers_the_base_closest_to_the_importer():
+    # two unrelated services each have their own "app" package — resolving
+    # backend_a's own import should never jump into backend_b's namesake.
+    paths = {
+        "backend_a/app/routes/users.py", "backend_a/app/services/billing.py",
+        "backend_b/app/services/billing.py",
+    }
+    r = resolve.resolve_imports(
+        [("backend_a/app/routes/users.py", "from app.services.billing import charge")], paths
+    )[0]
+    assert r.target == "backend_a/app/services/billing.py"
+
+
+def test_absolute_import_still_prefers_the_repo_root_first():
+    # a root-level "app" package still wins over a same-named monorepo
+    # subdirectory — the subdirectory search only kicks in as a fallback.
+    paths = {"app/services/billing.py", "backend/app/services/billing.py", "backend/app/routes/users.py"}
+    r = resolve.resolve_imports(
+        [("backend/app/routes/users.py", "from app.services.billing import charge")], paths
+    )[0]
+    assert r.target == "app/services/billing.py"
+
+
 def test_import_kind_classification():
     paths = {"app/core.py", "app/util.py", "web/api.ts"}
     out = {

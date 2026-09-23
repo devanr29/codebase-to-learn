@@ -71,7 +71,25 @@ def _entries(paths: set[str]) -> list[discovery.FileEntry]:
     return out
 
 
-def _py_candidates(mod: str, importer: str, raw: str) -> list[str]:
+def _pkg_bases(paths: set[str]) -> dict[str, set[str]]:
+    """segment name -> every directory that directly holds a file/subdirectory
+    with that name, e.g. ``"backend/app/routes/users.py"`` records
+    ``bases["app"] |= {"backend"}``. Used to resolve an absolute Python import
+    (``import app.routes.users``) when the package it names doesn't sit at the
+    repo root — a monorepo ``backend/`` (or ``src/``, ``server/``, ...) added
+    to ``sys.path`` some other way (a ``pyproject`` ``package-dir``, running
+    from inside it, ``PYTHONPATH``) resolves imports exactly the same way."""
+    bases: dict[str, set[str]] = {}
+    for p in paths:
+        segs = p.split("/")
+        for i in range(len(segs) - 1):   # exclude the filename itself
+            bases.setdefault(segs[i], set()).add("/".join(segs[:i]))
+    return bases
+
+
+def _py_candidates(
+    mod: str, importer: str, raw: str, pkg_bases: dict[str, set[str]] | None = None
+) -> list[str]:
     importer_pkg = PurePosixPath(importer).parent
     ups = len(mod) - len(mod.lstrip("."))
     if ups:
@@ -91,6 +109,21 @@ def _py_candidates(mod: str, importer: str, raw: str) -> list[str]:
         stems = ["/".join(parts)]
         if len(parts) > 1:
             stems.append("/".join(parts[:-1]))  # `from pkg.mod import name`
+        # repo-root-relative stems above try first (the common case, and
+        # unchanged); these are extra candidates for the monorepo case, tried
+        # only when nothing at the root matches — closest-to-the-importer
+        # base first, since that's the far more likely intended package when
+        # more than one directory happens to hold the same top-level name.
+        if pkg_bases and parts:
+            importer_str = str(importer_pkg)
+            bases = sorted(
+                pkg_bases.get(parts[0], ()),
+                key=lambda b: (0 if importer_str == b or importer_str.startswith(b + "/") else 1, b),
+            )
+            for base_dir in bases:
+                stems.append("/".join([base_dir, *parts]))
+                if len(parts) > 1:
+                    stems.append("/".join([base_dir, *parts[:-1]]))
 
     out: list[str] = []
     for stem in stems:
@@ -133,6 +166,7 @@ def resolve_imports(
     """
     paths = set(file_paths)
     internal = _internal_names(_entries(paths))
+    pkg_bases = _pkg_bases(paths)
     aliases = aliases or []
     out: list[ResolvedImport] = []
     for importer, raw in pairs:
@@ -159,7 +193,7 @@ def resolve_imports(
             out.append(ResolvedImport(importer, raw, None, bool(external), kind, mod))
             continue
         cands = (
-            _py_candidates(mod, importer, raw)
+            _py_candidates(mod, importer, raw, pkg_bases)
             if lang == "python"
             else _ts_candidates(mod, importer)
         )

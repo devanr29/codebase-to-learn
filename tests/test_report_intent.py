@@ -18,6 +18,37 @@ def _idx(repo, tmp_path, until):
     return cfg, conn
 
 
+# ------------------------------------------------------------ _sig_delta
+
+
+def test_sig_delta_plain_params():
+    d = {"from": "f(a, b)", "to": "f(a, b, c)"}
+    assert report._sig_delta(d) == "added `c`"
+
+
+def test_sig_delta_destructured_prop_isnt_torn_in_half():
+    """The bug: a naive comma split on `({ label, value, trend }: Props)`
+    used to read `trend }` and `{ label` as if they were parameter names."""
+    d = {
+        "from": "StatCard({ label, value }: Props)",
+        "to": "StatCard({ label, value, trend, tileIndex }: Props)",
+    }
+    delta = report._sig_delta(d)
+    assert delta == "added `trend`, `tileIndex`"
+    assert "}" not in delta and "{" not in delta
+
+
+def test_sig_delta_handles_removed_member_and_rest_spread():
+    d = {"from": "f({ a, b, ...rest })", "to": "f({ a })"}
+    delta = report._sig_delta(d)
+    assert "removed `b`, `rest`" == delta
+
+
+def test_sig_delta_falls_back_to_the_whole_signature_when_nothing_named_changed():
+    d = {"from": "f(a: int)", "to": "f(a: str)"}
+    assert report._sig_delta(d) == "`f(a: int)` -> `f(a: str)`"
+
+
 # ------------------------------------------------------------------- M6 intent
 
 

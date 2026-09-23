@@ -55,6 +55,7 @@ class Ref:
     target_name: str
     line: int
     from_key: str | None        # enclosing symbol key, None at module level
+    receiver: str = "-"         # what the call was made on — see _receiver_of()
 
 
 @dataclass
@@ -125,6 +126,57 @@ def _raw_error_spans(root_node) -> list[tuple[int, int, int, int]]:
     return out
 
 
+# Identifiers that mean "the object this method is defined on", across the
+# languages codemap indexes — Python self/cls, JS/TS this/super, Ruby self,
+# PHP $this. A call through one of these is the only receiver shape trusted
+# to mean "this class's own method" in call_graph() (impact.py).
+_SELF_LIKE = frozenset({"self", "cls", "this", "super", "Self", "$this", "$self"})
+
+
+def _receiver_of(name_node, call_node, source: bytes) -> str:
+    """Classify what a call's name was found *on*, structurally — no
+    per-language field names, so every grammar's attribute/member/selector
+    wrapper is handled the same way without touching the 12 query files:
+
+    - the name node's parent IS the call node itself (the `function:` field
+      is the bare identifier) -> a bare call, receiver ``"-"``
+    - otherwise the parent is the attribute/member/selector node; its first
+      named child that isn't the name is the receiver expression:
+      - a self-like identifier (see ``_SELF_LIKE``) -> ``"self"``
+      - a capitalized identifier (a class name, or a `Ns.Thing` alias) ->
+        ``"N:<name>"``
+      - a lowercase identifier (a local/param/module alias) -> ``"v:<name>"``
+      - anything else (a chained attribute, a call result, a subscript, an
+        object literal) -> ``"x"`` — opaque, deliberately never a class or
+        variable hint call_graph() could over-trust
+
+    This is intentionally conservative: `self.x.get()` (chained past one
+    level) and `super().method()` (the receiver is a *call*, not a bare
+    identifier) both fall into "x" rather than being guessed at further.
+    """
+    if name_node is None:
+        return "-"
+    parent = name_node.parent
+    if parent is None or (parent.start_byte, parent.end_byte) == (call_node.start_byte, call_node.end_byte):
+        return "-"
+    receiver_node = None
+    for i in range(parent.named_child_count):
+        child = parent.named_child(i)
+        if (child.start_byte, child.end_byte) != (name_node.start_byte, name_node.end_byte):
+            receiver_node = child
+            break
+    if receiver_node is None:
+        return "-"
+    rtype = receiver_node.type
+    if rtype.endswith("identifier") or rtype == "variable_name":
+        text = _text(source, receiver_node).strip()
+        if text in _SELF_LIKE:
+            return "self"
+        bare = text.lstrip("$")
+        return f"N:{bare}" if bare[:1].isupper() else f"v:{bare}"
+    return "x"
+
+
 def _enclosing(defs: list[Symbol], start: int, end: int) -> Symbol | None:
     """Innermost symbol whose byte range strictly contains [start, end)."""
     best: Symbol | None = None
@@ -157,7 +209,7 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
     raw_defs: list[dict] = []
     doc_nodes: list = []
     decorator_nodes: list = []
-    call_items: list[tuple[str, object]] = []
+    call_items: list[tuple[str, object, object]] = []
     import_nodes: list = []
 
     for _pattern, caps in QueryCursor(query).matches(tree.root_node):
@@ -183,17 +235,20 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
             decorator_nodes.extend(caps["decorator"])
         elif "reference.call" in caps:
             if caps.get("name"):
-                call_items.append((_text(source, caps["name"][0]), caps["reference.call"][0]))
+                name_node = caps["name"][0]
+                call_items.append((_text(source, name_node), caps["reference.call"][0], name_node))
         elif "reference.render" in caps:
             # JSX composition folds into the same call-graph edges as an
             # ordinary call — a rendered <Component/> IS a reference to it.
             # Keep only capitalized names: that's the JSX convention that
             # separates a component (`<TodayCard/>`) from an intrinsic host
             # element (`<div/>`), which the grammar itself doesn't encode.
+            # There's no receiver concept for JSX composition, so the name
+            # node is left out here — the ref below always treats it as bare.
             if caps.get("name"):
                 name = _text(source, caps["name"][0])
                 if name[:1].isupper():
-                    call_items.append((name, caps["reference.render"][0]))
+                    call_items.append((name, caps["reference.render"][0], None))
         elif "import" in caps:
             import_nodes.extend(caps["import"])
 
@@ -287,13 +342,14 @@ def _parse_into(pf: ParsedFile, rel_path: str, source: bytes, spec: LanguageSpec
         sym.decorators = [_norm_ws(_text(source, d)) for d in reversed(chain)]
 
     # --- references -------------------------------------------------------
-    for target_name, cnode in call_items:
+    for target_name, cnode, name_node in call_items:
         host = _enclosing(symbols, cnode.start_byte, cnode.end_byte)
         pf.refs.append(
             Ref(
                 target_name=target_name,
                 line=cnode.start_point[0] + 1,
                 from_key=host.key if host else None,
+                receiver=_receiver_of(name_node, cnode, source),
             )
         )
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 from codemap import config, db, indexer
 from codemap.impact import call_graph
@@ -68,6 +69,107 @@ def test_timeline_covers_indexed_commits_with_headlines(fixture_impact_repo, tmp
     sig = next(c for c in data["timeline"] if c["short"] == fixture_impact_repo.sha("i3-sig-partial")[:7])
     assert "build_report" in (sig["headline"] or "")
     assert sig["intent"]["source"] == "commit_message"
+    # single-line commit message: the subject IS the whole "intent" — the
+    # card must not print it a second time under intent.text (see the
+    # multi-line case below for when there genuinely is more to show).
+    assert sig["intent"]["text"] == ""
+
+
+def test_timeline_intent_text_is_the_body_not_the_subject_again(tmp_path):
+    """A multi-line commit message used to duplicate its own subject line as
+    the "intent" line — this is the fix: intent.text is the body only."""
+    _git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=str(tmp_path), capture_output=True, text=True, check=True
+    )
+    _git("init", "-q")
+    _git("config", "user.email", "t@e.com")
+    _git("config", "user.name", "t")
+    _git("config", "commit.gpgsign", "false")
+    (tmp_path / "a.py").write_text("def f():\n    return 1\n")
+    _git("add", "-A")
+    _git("commit", "-q", "-m", "add ignore", "-m", "explains why in more detail")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(tmp_path), capture_output=True, text=True
+    ).stdout.strip()
+
+    cfg = config.load(tmp_path)
+    conn = db.connect(cfg.db_path)
+    db.migrate(conn)
+    indexer.scan(conn, cfg, until=sha)
+    data = model.build(conn, cfg)
+
+    card = next(c for c in data["timeline"] if c["short"] == sha[:7])
+    assert card["subject"] == "add ignore"
+    assert card["intent"]["text"] == "explains why in more detail"
+
+
+def test_cycles_stat_counts_file_import_cycles_not_symbol_call_cycles(tmp_path):
+    """Map's Layers view (the only place "cycles" is drawn) only ever cycles
+    over *files* that import each other. Two functions calling each other
+    within one file (no import at all) used to inflate this same top-bar
+    stat, because it was counted from the symbol-level call graph instead."""
+    _git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=str(tmp_path), capture_output=True, text=True, check=True
+    )
+    _git("init", "-q")
+    _git("config", "user.email", "t@e.com")
+    _git("config", "user.name", "t")
+    _git("config", "commit.gpgsign", "false")
+    (tmp_path / "a.py").write_text("from b import g\n\ndef f():\n    return g()\n")
+    (tmp_path / "b.py").write_text("from a import f\n\ndef g():\n    return f()\n")
+    (tmp_path / "solo.py").write_text(
+        "def ping():\n    return pong()\n\ndef pong():\n    return ping()\n"
+    )
+    _git("add", "-A")
+    _git("commit", "-q", "-m", "seed")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(tmp_path), capture_output=True, text=True
+    ).stdout.strip()
+
+    cfg = config.load(tmp_path)
+    conn = db.connect(cfg.db_path)
+    db.migrate(conn)
+    indexer.scan(conn, cfg, until=sha)
+    data = model.build(conn, cfg)
+
+    assert data["stats"]["cycles"] == 1
+
+
+def test_fan_in_excludes_ambiguous_guesses(tmp_path):
+    """A repo-wide name guess (AMBIGUOUS) must not blend into fan_in — it's
+    the exact mechanism that used to make a dict `.get()` inflate an
+    unrelated class's method into looking like the busiest symbol in the
+    repo. It's still visible, just separately, as fan_in_guess."""
+    _git = lambda *args: subprocess.run(  # noqa: E731
+        ["git", *args], cwd=str(tmp_path), capture_output=True, text=True, check=True
+    )
+    _git("init", "-q")
+    _git("config", "user.email", "t@e.com")
+    _git("config", "user.name", "t")
+    _git("config", "commit.gpgsign", "false")
+    (tmp_path / "a.py").write_text(
+        "def helper():\n    return 1\n\ndef caller():\n    return helper()\n"
+    )
+    (tmp_path / "b.py").write_text("def helper():\n    return 2\n")
+    (tmp_path / "c.py").write_text("def other():\n    return helper()\n")
+    _git("add", "-A")
+    _git("commit", "-q", "-m", "seed")
+    sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=str(tmp_path), capture_output=True, text=True
+    ).stdout.strip()
+
+    cfg = config.load(tmp_path)
+    conn = db.connect(cfg.db_path)
+    db.migrate(conn)
+    indexer.scan(conn, cfg, until=sha)
+    data = model.build(conn, cfg)
+    by_key = {n["key"]: n for n in data["nodes"]}
+
+    assert by_key["a.py::helper"]["fan_in"] == 1        # caller()'s same-file EXTRACTED call
+    assert by_key["a.py::helper"]["fan_in_guess"] == 1  # other()'s repo-wide AMBIGUOUS guess
+    assert by_key["b.py::helper"]["fan_in"] == 0
+    assert by_key["b.py::helper"]["fan_in_guess"] == 1
+    assert data["impact_depth"] == cfg.impact_depth
 
 
 def test_model_is_deterministic_apart_from_built_at(fixture_impact_repo, tmp_path):

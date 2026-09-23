@@ -219,6 +219,78 @@ const router = createBrowserRouter([
     assert by_path == {"/": "Home", "/about": "About"}
 
 
+# ------------------------------------------------------------- from_decorators
+
+
+def test_flask_route_reads_methods_instead_of_always_saying_any():
+    assert entrypoints.from_decorators('@api_bp.route("/chat", methods=["POST"])', "python") == (
+        "route", "POST /chat",
+    )
+    # methods=[...] with several verbs, de-duplicated and order-preserved
+    assert entrypoints.from_decorators(
+        '@api_bp.route("/x", methods=["GET", "POST", "GET"])', "python"
+    ) == ("route", "GET, POST /x")
+    # no methods= at all: Flask's own default is GET, not "ANY"
+    assert entrypoints.from_decorators('@app.route("/plain")', "python") == ("route", "GET /plain")
+    # .get()/.post() shorthand still reads the verb straight from the decorator
+    assert entrypoints.from_decorators('@app.post("/create")', "python") == ("route", "POST /create")
+
+
+def test_flask_route_gets_its_blueprint_prefix():
+    assert entrypoints.from_decorators(
+        '@api_bp.route("/chat", methods=["POST"])', "python", {"api_bp": "/api"}
+    ) == ("route", "POST /api/chat")
+    # no matching blueprint registration -> no prefix, unchanged
+    assert entrypoints.from_decorators(
+        '@api_bp.route("/chat")', "python", {}
+    ) == ("route", "GET /chat")
+    # a blueprint registered with no url_prefix at all -> unchanged
+    assert entrypoints.from_decorators(
+        '@api_bp.route("/chat")', "python", {"api_bp": ""}
+    ) == ("route", "GET /chat")
+
+
+def test_blueprint_prefixes_reads_register_blueprint_calls():
+    files = {
+        "app.py": b'app.register_blueprint(api_bp, url_prefix="/api")\n'
+                  b'app.register_blueprint(budget_bp, url_prefix="/api/budget")\n'
+                  b"app.register_blueprint(admin.bp)\n",
+        "api.py": b'@api_bp.route("/chat")\ndef chat(): pass\n',
+    }
+    prefixes = entrypoints.blueprint_prefixes(list(files), files.get)
+    assert prefixes == {"api_bp": "/api", "budget_bp": "/api/budget", "bp": ""}
+
+
+def test_a_get_and_a_post_on_the_same_path_are_distinct_routes():
+    """The apparent-duplicate-row bug: two different handler functions, each
+    decorated with its own methods=, used to both collapse to "ANY /events"
+    and look like the same route twice."""
+    assert entrypoints.from_decorators(
+        '@app.route("/events", methods=["GET"])', "python"
+    ) == ("route", "GET /events")
+    assert entrypoints.from_decorators(
+        '@app.route("/events", methods=["POST"])', "python"
+    ) == ("route", "POST /events")
+
+
+def test_scheduled_job_decorator_is_a_task():
+    assert entrypoints.from_decorators("@scheduled_job('interval', minutes=5)", "python") == (
+        "task", "@scheduled_job('interval', minutes=5)",
+    )
+
+
+def test_scheduler_symbol_ranges_finds_plain_registration_calls():
+    src = b"def register_jobs(sched):\n    sched.add_job(sync, 'interval', minutes=5)\n"
+    spans = entrypoints.scheduler_symbol_ranges(src)
+    assert len(spans) == 1
+    start, end = spans[0]
+    assert src[start:end] == b".add_job("
+    # BackgroundScheduler()/BlockingScheduler()/schedule.every( all count too
+    assert len(entrypoints.scheduler_symbol_ranges(b"s = BackgroundScheduler()\n")) == 1
+    assert len(entrypoints.scheduler_symbol_ranges(b"schedule.every(10).minutes.do(job)\n")) == 1
+    assert entrypoints.scheduler_symbol_ranges(b"def f():\n    return 1\n") == []
+
+
 def test_render_root_unwraps_strict_mode_to_find_the_real_app():
     src = """
 ReactDOM.createRoot(document.getElementById('root')).render(

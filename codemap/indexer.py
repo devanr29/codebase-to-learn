@@ -269,6 +269,7 @@ def _write_parsed(
     status: str,
     internal_roots: set[str],
     frontend_roots: list[entrypoints.FrontendRoot],
+    blueprint_prefixes: dict[str, str] | None = None,
 ) -> None:
     _clear_file_rows(conn, file_id, sha)
     loc = source.count(b"\n") + (1 if source and not source.endswith(b"\n") else 0)
@@ -307,8 +308,8 @@ def _write_parsed(
         from_id = key_to_id.get(ref.from_key) if ref.from_key else None
         conn.execute(
             "INSERT INTO refs(commit_sha, from_symbol_id, target_name, target_symbol_id, "
-            "resolved, tier, line) VALUES(?,?,?,?,?,?,?)",
-            (sha, from_id, ref.target_name, None, 0, 1, ref.line),
+            "resolved, tier, line, receiver) VALUES(?,?,?,?,?,?,?,?)",
+            (sha, from_id, ref.target_name, None, 0, 1, ref.line, ref.receiver),
         )
 
     for imp in pf.imports:
@@ -322,20 +323,50 @@ def _write_parsed(
     # --- entry points (decorator- and __main__-based; always tied to a symbol)
     name_to_key = {s.name: s.key for s in pf.symbols}
     for sym in pf.symbols:
-        hit = entrypoints.from_decorators("\n".join(sym.decorators), pf.lang)
+        hit = entrypoints.from_decorators("\n".join(sym.decorators), pf.lang, blueprint_prefixes)
         if hit:
             kind, detail = hit
             conn.execute(
                 "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
                 (sha, key_to_id[sym.key], kind, detail),
             )
+    main_resolved = False
     for callee in pf.main_calls:
         key = name_to_key.get(callee)
         if key:
+            main_resolved = True
             conn.execute(
                 "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
                 (sha, key_to_id[key], "main", f"__main__ @ {pf.path}"),
             )
+    if not main_resolved and pf.main_calls and pf.symbols:
+        # the guard's call(s) target something outside this file — an
+        # imported runner, a framework method like `app.run()` — so there's
+        # no local symbol by that name to point to. Anchor the entry point
+        # to this file's own first-defined symbol instead of dropping it
+        # silently: a Terminal actor (architecture.py) and a Graph/Simulate
+        # "this is how the app starts" link both need *some* symbol to land
+        # on, and this script clearly is a __main__ entry point either way.
+        anchor = min(pf.symbols, key=lambda s: s.start_byte)
+        conn.execute(
+            "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+            (sha, key_to_id[anchor.key], "main", f"__main__ @ {pf.path}"),
+        )
+
+    if pf.lang == "python":
+        seen_task_syms: set[str] = set()
+        for start, _end in entrypoints.scheduler_symbol_ranges(source):
+            owner = min(
+                (s for s in pf.symbols if s.start_byte <= start < s.end_byte),
+                key=lambda s: s.end_byte - s.start_byte,
+                default=None,
+            )
+            if owner is not None and owner.key not in seen_task_syms:
+                seen_task_syms.add(owner.key)
+                conn.execute(
+                    "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+                    (sha, key_to_id[owner.key], "task", "scheduler job registration"),
+                )
 
     # --- frontend entry points: file-based routing (reliable) + registration
     #     regexes (best-effort) — see entrypoints.py's module docstring
@@ -376,8 +407,8 @@ def _carry_forward(conn: sqlite3.Connection, file_id: int, src_sha: str, dst_sha
         (dst_sha, src_sha, file_id),
     )
     conn.execute(
-        "INSERT INTO refs(commit_sha, from_symbol_id, target_name, target_symbol_id, resolved, tier, line) "
-        "SELECT ?, from_symbol_id, target_name, target_symbol_id, resolved, tier, line "
+        "INSERT INTO refs(commit_sha, from_symbol_id, target_name, target_symbol_id, resolved, tier, line, receiver) "
+        "SELECT ?, from_symbol_id, target_name, target_symbol_id, resolved, tier, line, receiver "
         "FROM refs WHERE commit_sha=? AND from_symbol_id IN "
         "(SELECT id FROM symbols WHERE file_id=?)",
         (dst_sha, src_sha, file_id),
@@ -443,9 +474,10 @@ def index_commit(
     entries = discovery.iter_commit(root, sha, cfg)
     internal_roots = _internal_names(entries)
     present_paths = {e.path for e in entries}
-    froots = entrypoints.frontend_roots(
-        gitio.ls_tree(root, sha), lambda p: gitio.show_bytes(root, sha, p)
-    )
+    tree_paths = gitio.ls_tree(root, sha)
+    read_tree_bytes = lambda p: gitio.show_bytes(root, sha, p)  # noqa: E731
+    froots = entrypoints.frontend_roots(tree_paths, read_tree_bytes)
+    bp_prefixes = entrypoints.blueprint_prefixes(tree_paths, read_tree_bytes)
 
     changed: dict[str, str] = {}   # path -> A|M
     renamed_from: dict[str, str] = {}
@@ -483,7 +515,7 @@ def index_commit(
         if blob is None:
             continue
         pf = parse_source(path, blob, spec_for_path(path))
-        _write_parsed(conn, sha, fid, pf, blob, changed.get(path, "A"), internal_roots, froots)
+        _write_parsed(conn, sha, fid, pf, blob, changed.get(path, "A"), internal_roots, froots, bp_prefixes)
         stats.files_parsed += 1
         if not pf.ok:
             stats.errors.append((path, pf.error or "parse error"))
@@ -570,10 +602,23 @@ def _index_worktree(
     entries = discovery.iter_worktree(cfg)
     internal_roots = _internal_names(entries)
     present = {e.path for e in entries}
-    froots = entrypoints.frontend_roots(
-        discovery.raw_worktree_paths(root), lambda p: discovery.read_worktree_bytes(root, p)
-    )
+    worktree_paths = discovery.raw_worktree_paths(root)
+    read_worktree = lambda p: discovery.read_worktree_bytes(root, p)  # noqa: E731
+    froots = entrypoints.frontend_roots(worktree_paths, read_worktree)
+    bp_prefixes = entrypoints.blueprint_prefixes(worktree_paths, read_worktree)
 
+    # A schema migration (db.migrate) can ask, once, for every file to be
+    # treated as changed regardless of its content hash — e.g. schema v3 adds
+    # refs.receiver, which only a reparse fills in. Cheaper than rewalking
+    # full git history (see index_commit()'s incremental carry-forward,
+    # untouched by this): the worktree sync is what codemap explore actually
+    # renders, and it already re-reads every file's bytes each run.
+    force_reparse = get_meta(conn, "reparse_all") == "1"
+    if force_reparse:
+        set_meta(conn, "reparse_all", None)
+
+    # Computed either way (not just when skipping): "added" vs "modified"
+    # below still needs to know what existed before, even on a forced pass.
     prev_hashes = {
         row["path"]: row["content_hash"]
         for row in conn.execute(
@@ -589,12 +634,12 @@ def _index_worktree(
             if blob is None:
                 continue
             fid = _file_id(conn, entry.path, entry.lang, entry.tier)
-            if prev_hashes.get(entry.path) == _sha1(blob):
+            if not force_reparse and prev_hashes.get(entry.path) == _sha1(blob):
                 stats.files_skipped += 1
                 continue
             pf = parse_source(entry.path, blob, spec_for_path(entry.path))
             status = "added" if entry.path not in prev_hashes else "modified"
-            _write_parsed(conn, sha, fid, pf, blob, status, internal_roots, froots)
+            _write_parsed(conn, sha, fid, pf, blob, status, internal_roots, froots, bp_prefixes)
             stats.files_parsed += 1
             if not pf.ok:
                 stats.errors.append((entry.path, pf.error or "parse error"))

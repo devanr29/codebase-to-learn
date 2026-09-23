@@ -116,6 +116,24 @@ def test_folder_token_beats_a_stem_token_and_a_vendor_import():
     assert [c["id"] for c in arch["components"]] == ["views:pkg/site"]   # one box, not split
 
 
+def test_tooling_config_files_land_in_shared():
+    # a config file has no folder-token evidence of its own (it usually sits
+    # at the repo root) and no imports worth scoring — only its filename says
+    # what it is. Also covers a bare dotfile (".eslintrc", one dot, no further
+    # suffix) that a naive stem = name.rsplit(".", 1)[0] used to reduce to "".
+    files = [
+        mk_file(0, "tsconfig.json"),
+        mk_file(1, ".eslintrc.js"),
+        mk_file(2, ".eslintrc"),
+        mk_file(3, "next.config.js"),
+        mk_file(4, "pyproject.toml"),
+    ]
+    arch = run(files)
+    _FILES_BY_ARCH[id(arch)] = files
+    for f in files:
+        assert layer_of(arch, f["path"]) == "shared", f["path"]
+
+
 def test_vendor_import_decides_only_when_nothing_else_does():
     files = [mk_file(0, "pkg/thing.py", deps=["sqlalchemy"]), mk_file(1, "pkg/other.py")]
     arch = run(files)
@@ -217,11 +235,26 @@ def test_actors_come_from_entry_point_kinds():
     assert arch["actors"][0]["components"] == ["entry:app/routes"]
 
 
-def test_a_script_main_guard_outside_the_entry_layer_is_not_an_actor():
+def test_a_script_main_guard_in_the_shared_layer_is_still_a_terminal_actor():
+    """A one-off script's __main__ guard is Terminal-worthy wherever the file
+    landed — most scripts have no other code importing them, so they land in
+    the shared/cross-cutting side panel rather than "entry", and used to be
+    silently dropped as an actor entirely because of that."""
     files = [mk_file(0, "scripts/release.py")]
     eps = [{"kind": "main", "detail": "__main__ @ scripts/release.py", "node": 0}]
     arch = run(files, entry_points=eps)
     assert comp(arch, "shared:scripts")["layer"] == "shared"
+    terminal = next(a for a in arch["actors"] if a["id"] == "terminal")
+    assert terminal["components"] == ["shared:scripts"]
+
+
+def test_a_scheduler_job_in_a_test_fixture_is_not_an_actor():
+    """The one case that still must not produce an actor: a test file that
+    merely calls the scheduler as part of its own setup, not the app's."""
+    files = [mk_file(0, "tests/test_jobs.py")]
+    eps = [{"kind": "task", "detail": "@shared_task", "node": 0}]
+    arch = run(files, entry_points=eps)
+    assert comp(arch, "tests:tests")["layer"] == "tests"
     assert arch["actors"] == []
 
 

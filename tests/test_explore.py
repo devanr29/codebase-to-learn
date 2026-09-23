@@ -30,6 +30,12 @@ def test_render_is_one_self_contained_file(fixture_impact_repo, tmp_path):
     assert "</" not in payload
     data = json.loads(payload.replace("\\u003c", "<"))
     assert data["stats"]["symbols"] == len(data["nodes"])
+    # the tab title is the repo's own folder name, not a generic label
+    # identical across every repo (data["root"] is the fixture's tmp_path,
+    # so its folder name — whatever the OS handed pytest — must show up
+    # verbatim rather than "Codegraph worktree" every time).
+    title = html.split("<title>", 1)[1].split("</title>", 1)[0]
+    assert title == f"{fixture_impact_repo.path.name} · codemap"
 
 
 def test_explore_command_writes_html(fixture_impact_repo, tmp_path, capsys):

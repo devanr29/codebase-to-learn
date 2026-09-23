@@ -49,7 +49,7 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
       "title": "Running `codemap explore`",
       "trigger": { "surface": "terminal", "text": "codemap explore" },
       "root": "codemap/cli.py::cmd_explore",
-      "group": "Scripts & tools",
+      "group": "Maintenance scripts",
       "order": 50,
       "summary": "what the command does between you pressing enter and the file landing",
       "steps": [
@@ -132,6 +132,11 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
 - `group` — the Simulate-rail section header / learning phase, e.g. `"Startup"`,
   `"A request comes in"`, `"Talking to the database"`, `"Background jobs"`,
   `"When it breaks"`. Entries with no `group` collect under one default section.
+  `"Startup"` means what actually runs when the app **boots** — server/app
+  initialization code, not a one-off command a developer runs by hand (a CLI
+  entry point, a migration, a maintenance task). Put those in a last group,
+  `"Maintenance scripts"`, so they read as separate from the running app
+  rather than blurring into how it actually starts.
 - `order` — integer position in the app's real workflow; the rail sorts ascending. Use
   the `suggested_order` from the brief as a starting point and adjust.
 - `summary` — one plain line, the "what you'll learn watching this" shown under the
@@ -167,6 +172,12 @@ stage than the rest of the scenario), `cond` (`{kind: "if"|"for"|"while"|"try", 
   `scenarios.json` for the narration a recorded run can't provide on its own, not as a
   substitute for actually running the code.
 - No HTML in any string. `user`/`code`/`emit.text` are one or two plain sentences.
+- Grep-verify every exclusivity claim before it ships — `"only X does Y"`, `"the only
+  place that…"`, `"nothing else touches this"` in a `summary`, `user`, or `code` string
+  is a factual claim about the repo, not narration, and reads as fact once it's on
+  screen. Check it against the actual call graph / a real grep, the same way Phase 1
+  stopped `impact.call_graph` from asserting a false "419 callers" link — an unverified
+  absolute is worse than a softer, accurate "usually" or "mainly".
 
 ## Where this fits
 

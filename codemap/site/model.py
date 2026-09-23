@@ -17,7 +17,7 @@ from .. import __version__, gitio, intent, report, resolve, semdiff
 from .. import progress as _progress
 from ..config import Config
 from ..db import get_meta
-from ..impact import call_graph
+from ..impact import AMBIGUOUS, call_graph
 from ..impact import entry_points as _entry_points
 from ..indexer import WORKTREE_SHA
 
@@ -189,11 +189,33 @@ def build(
         ep_map = _entry_points(conn, sha)  # {key: [(kind, detail), ...]}
         _p_graph.set_summary(f"{len(file_rows)} files, {len(sym_rows)} symbols")
 
+    # AMBIGUOUS edges (no import evidence, or a bare call matched repo-wide
+    # by name alone) are kept in the graph as metadata — Simulate and the
+    # legend still want to say "this might be it" — but they must not drive
+    # what looks *important*: they're exactly the edges a `.get()`-style
+    # false positive shows up as, and letting them inflate fan-in is how a
+    # dict method call used to make an unrelated class's method look like
+    # the busiest symbol in the whole repo. So fan_in/fan_out (and the
+    # symbol budget ranking below, which reads them) count confident edges
+    # only; fan_in_guess/fan_out_guess carry the rest for the UI to show
+    # separately, not blended in.
+    def _degree(k: str, pred: bool, guess: bool) -> int:
+        if k not in g:
+            return 0
+        it = g.in_edges(k, data=True) if pred else g.out_edges(k, data=True)
+        return sum(1 for *_ed, ed in it if (ed.get("confidence") == AMBIGUOUS) == guess)
+
     def fan_in(k: str) -> int:
-        return g.in_degree(k) if k in g else 0
+        return _degree(k, True, False)
+
+    def fan_in_guess(k: str) -> int:
+        return _degree(k, True, True)
 
     def fan_out(k: str) -> int:
-        return g.out_degree(k) if k in g else 0
+        return _degree(k, False, False)
+
+    def fan_out_guess(k: str) -> int:
+        return _degree(k, False, True)
 
     # rank for the symbol budget: entry points, then churn + connectivity
     ranked = sorted(
@@ -259,6 +281,8 @@ def build(
                     "doc": (r["docstring"] or None),
                     "fan_in": fan_in(k),
                     "fan_out": fan_out(k),
+                    "fan_in_guess": fan_in_guess(k),
+                    "fan_out_guess": fan_out_guess(k),
                     "churn": change_counts.get(k, 0),
                     "history": history_of(k),
                     "entry": [f"{kind}:{detail}" for kind, detail in ep_map.get(k, [])],
@@ -420,7 +444,15 @@ def build(
         )
 
     # -- stats -------------------------------------------------------
-    n_cycles = sum(1 for c in nx.strongly_connected_components(g) if len(c) > 1)
+    # File-import cycles, not symbol-call cycles: the Map tab's Layers view
+    # (explore.js) only ever draws the former (a loop of files that import
+    # each other) — this used to count strongly-connected symbols in the
+    # call graph `g` instead, a different, usually larger number that made
+    # the top bar and the Map tab disagree about how many cycles exist.
+    file_g = nx.DiGraph()
+    file_g.add_nodes_from(f["fi"] for f in files)
+    file_g.add_edges_from((e["s"], e["t"]) for e in file_edges)
+    n_cycles = sum(1 for c in nx.strongly_connected_components(file_g) if len(c) > 1)
     entry_keys = set(ep_map)
     unreachable = sum(
         1
@@ -542,6 +574,7 @@ def build(
         "head": head,
         "head_short": _short(head),
         "behind": behind,
+        "impact_depth": cfg.impact_depth,
         "stats": {
             "files": len(files),
             "symbols": len(nodes),
@@ -657,6 +690,16 @@ def _timeline(
                     if c.symbol_key and c.symbol_key in key_to_i
                 }
             )
+            if src == "commit_message":
+                # the "intent" IS the commit message here (intent.resolve()'s
+                # own fallback) — showing its first line again under
+                # `subject` would just repeat it verbatim. Show the body
+                # instead (empty when there's none beyond the subject line,
+                # which the explorer then renders no intent line for at all).
+                body_only = "\n".join((text or "").strip().splitlines()[1:]).strip()
+                intent_text = body_only.splitlines()[0] if body_only else ""
+            else:
+                intent_text = (text or "").strip().splitlines()[0] if text else ""
             out.append(
                 {
                     "sha": sha,
@@ -665,7 +708,7 @@ def _timeline(
                     "ts": r["ts"] or 0,
                     "author": r["author"] or "",
                     "subject": (r["message"] or "").strip().splitlines()[0] if r["message"] else "",
-                    "intent": {"source": src, "text": (text or "").strip().splitlines()[0] if text else ""},
+                    "intent": {"source": src, "text": intent_text},
                     "counts": counts,
                     "headline": hl_text,
                     "headline_node": key_to_i.get(headline.symbol_key) if headline else None,
