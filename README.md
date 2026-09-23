@@ -48,6 +48,14 @@ Full walkthrough of the rendered page: [`docs/explore-guide.md`](docs/explore-gu
 More install options (uv, from source, Windows notes, the plugin):
 [`docs/install.md`](docs/install.md).
 
+Two more commands, for the prose the skill writes and for the call graph
+behind it:
+
+```
+codemap check                    # are the authored explanations, scenarios and links still true of the code?
+codemap calls build_report --in  # what really calls this, with file:line and how sure codemap is
+```
+
 ## The seven tabs
 
 | Tab | Answers | |
@@ -64,6 +72,37 @@ Icons are vendored into the page itself (base64, no CDN) — they render the
 same offline or on a network that blocks arbitrary CDNs. The body font
 degrades gracefully if Google Fonts is unreachable. The generated page never
 calls an LLM.
+
+## Works better with codebase-memory-mcp (optional)
+
+[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) is a fast,
+local code-graph engine built for AI agents: many languages, type-aware call
+resolution. codemap does not try to be that; it is the layer that explains a
+codebase to a person. If you have indexed your repo with it, `codemap explore`
+reads that index (read-only, never written to) and adds what codemap's own
+analysis missed:
+
+- **Call links** it resolved that codemap could not, and `AMBIGUOUS` name-only
+  guesses it settles. Each one is tagged `cbm` in the Graph inspector.
+- **Web requests.** A screen calling `/api/x` and the handler serving it have no
+  call edge between them, so nothing joined them. With the index, Simulate walks
+  from the client call into the handler ("`main` sends `GET /api/report`"), and
+  the Architecture tab draws a labelled dashed connector between the two parts.
+
+```
+codebase-memory-mcp cli index_repository --repo-path .
+codemap status     # engine: codemap + codebase-memory (project ..., N call links indexed ...)
+codemap explore --open
+```
+
+Nothing here is required: without it everything works exactly as before, and
+codemap never installs, runs or configures the other tool. Links from an index
+that is out of date for a file (the file changed since it was indexed) are
+skipped, and an index in a format codemap doesn't know is ignored, with the
+reason shown by `codemap status`. Set `codebase_memory = "off"` under `[engine]`
+in `.codemap/config.toml` to never look. The course skill also uses the tool's
+MCP tools, when your agent has them, to double-check what it writes; see
+[`docs/spec.md`](docs/spec.md) §20.
 
 ## Known blind spots
 

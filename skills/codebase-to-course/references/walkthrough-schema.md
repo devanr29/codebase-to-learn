@@ -95,7 +95,7 @@ file only ever *fills in* the prose; it never changes what folders exist.
 | `purpose` | **required** — the one thing every folder entry must have |
 | `read_first` | optional — one path, the first file worth opening here |
 | `note` | optional — a caveat, correction, or context the reader needs |
-| `categories` | optional — which `categories[].title` values this folder participates in |
+| `categories` | optional — which top-level `categories` this folder participates in, by `title` (or `id`); `codemap check` flags a name that matches none |
 | `see` | optional — same `see` shape as `groups[].see` |
 
 **`glossary`** — optional, a flat `term: "definition"` map. A shorthand for
@@ -143,7 +143,10 @@ actually writes, so treat this field as a convenience, not a second workflow.
   the whole taxonomy for this project. A folder's own `categories` field only
   ever points back into that same list by title — never invent a second,
   slightly-different category name on a folder page. If a folder needs a
-  category that doesn't exist yet, add it to `categories[]` first.
+  category that doesn't exist yet, add it to `categories[]` first. A folder
+  page shows its own `see` when it has one and only falls back to the category
+  groups when it has none, so give a folder one or the other, not both
+  (`codemap check` warns when `categories` would be ignored).
 - `purpose` answers "what would I lose if this folder were deleted," never
   "what files live in here" — see `references/content-philosophy.md`.
 - No HTML in any string.

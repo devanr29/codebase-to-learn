@@ -37,13 +37,16 @@ def _path_of(key: str) -> str:
     return key.split("::", 1)[0]
 
 
-def _file_text(cfg: Config, sha: str, path: str) -> str | None:
+def _file_bytes(cfg: Config, sha: str, path: str) -> bytes | None:
     if sha == WORKTREE_SHA:
         from ..discovery import read_worktree_bytes
 
-        blob = read_worktree_bytes(cfg.root, path)
-    else:
-        blob = gitio.show_bytes(cfg.root, sha, path)
+        return read_worktree_bytes(cfg.root, path)
+    return gitio.show_bytes(cfg.root, sha, path)
+
+
+def _file_text(cfg: Config, sha: str, path: str) -> str | None:
+    blob = _file_bytes(cfg, sha, path)
     if blob is None:
         return None
     return blob.decode("utf-8", "replace")
@@ -145,6 +148,13 @@ def build(
         ts_aliases = resolve.load_ts_aliases(cfg.root, sha)
         g = call_graph(conn, sha, aliases=ts_aliases)
 
+        # optional second opinion: codebase-memory-mcp's resolved calls, merged
+        # into `g` before anything below counts fan-in/out. Absent, off or
+        # unreadable, this changes nothing and the payload has no `engine` key.
+        from ..enrich import engine as _engine
+
+        cbm_info = _engine.apply(cfg, g, sym_rows, lambda p: _file_bytes(cfg, sha, p))
+
         # call-site line numbers: `call_graph()` matches refs by (from_symbol_id,
         # target_name) but only keeps the edge, not where it happened — Simulate
         # needs a frame's calls in the order they appear in the source, which the
@@ -233,6 +243,7 @@ def build(
     # node list, ordered by file then line so the tree reads naturally
     ordered = sorted(kept, key=lambda r: (r["file"], r["start_line"], r["key"]))
     key_to_i = {r["key"]: i for i, r in enumerate(ordered)}
+    routes = _routes_payload(cbm_info, key_to_i)
 
     src_cache: dict[str, list[str] | None] = {}
 
@@ -326,16 +337,21 @@ def build(
             continue
         same_file = _path_of(src) == _path_of(dst)
         line = line_by_ref.get((id_by_key.get(src), name_by_key.get(dst)))
-        edges.append(
-            {
-                "s": si,
-                "t": ti,
-                "tier": 2 if same_file else 1,
-                "namebased": not same_file,
-                "confidence": edata.get("confidence", "AMBIGUOUS"),
-                "line": line,
-            }
-        )
+        if line is None:
+            line = edata.get("line")
+        edge = {
+            "s": si,
+            "t": ti,
+            "tier": 2 if same_file else 1,
+            "namebased": not same_file,
+            "confidence": edata.get("confidence", "AMBIGUOUS"),
+            "line": line,
+        }
+        if edata.get("via"):  # a link only the other engine found; the inspector says so
+            edge["via"] = edata["via"]
+            edge["engine_score"] = edata.get("cbm_score")
+            edge["engine_strategy"] = edata.get("cbm_strategy")
+        edges.append(edge)
 
     with progress.phase("imports") as _p_imports:
         # -- imports -> file edges ---------------------------------------
@@ -519,6 +535,7 @@ def build(
         manifest_paths=manifest_paths,
         read_bytes=_read_manifest,
         overrides=_architecture.load(cfg),
+        routes=routes,
     )
 
     # -- authored walkthrough content (optional) — Learn's actual content:
@@ -607,6 +624,30 @@ def build(
         "glossary": gloss,
         "sim": sim,
     }
+    if cbm_info["used"]:
+        out["engine"] = {
+            "name": "codemap + codebase-memory",
+            "project": cbm_info["project"],
+            "added": cbm_info["added"],
+            "upgraded": cbm_info["upgraded"],
+            "dropped": cbm_info["dropped"],
+            "stale_files": cbm_info["stale_files"],
+        }
+    if routes:
+        out["routes"] = routes
+    return out
+
+
+def _routes_payload(cbm_info: dict, key_to_i: dict[str, int]) -> list[dict]:
+    """The other engine's HTTP route links as node indexes: which symbols call a
+    route and which serve it. A route with neither end among the kept nodes is
+    dropped."""
+    out: list[dict] = []
+    for rl in cbm_info.get("routes", ()):
+        callers = [key_to_i[k] for k in rl.callers if k in key_to_i]
+        handlers = [key_to_i[k] for k in rl.handlers if k in key_to_i]
+        if callers or handlers:
+            out.append({"url": rl.url, "method": rl.method, "callers": callers, "handlers": handlers})
     return out
 
 

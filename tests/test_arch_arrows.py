@@ -87,9 +87,9 @@ SINGLE_BAND = _repo(
 )
 
 
-def _arch_page(fixture_impact_repo, tmp_path, files, edges):
+def _arch_page(fixture_impact_repo, tmp_path, files, edges, **kw):
     """A real page whose architecture payload is derived from the synthetic repo."""
-    arch = run(files, edges, [{"kind": "route", "detail": "GET /users", "node": 0}])
+    arch = run(files, edges, [{"kind": "route", "detail": "GET /users", "node": 0}], **kw)
     cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
     data = model.build(conn, cfg)
     data["architecture"] = arch
@@ -98,9 +98,9 @@ def _arch_page(fixture_impact_repo, tmp_path, files, edges):
     return arch, page
 
 
-def _dump_dom(page: Path) -> str:
+def _dump_dom(page: Path, route: str = "#/arch") -> str:
     cmd = [_browser(), "--headless=new", "--disable-gpu", "--window-size=1400,900",
-           "--virtual-time-budget=8000", "--dump-dom", page.resolve().as_uri() + "#/arch"]
+           "--virtual-time-budget=8000", "--dump-dom", page.resolve().as_uri() + route]
     if hasattr(os, "geteuid") and os.geteuid() == 0:            # containers run as root
         cmd.insert(1, "--no-sandbox")
     done = subprocess.run(cmd, capture_output=True, timeout=120, encoding="utf-8", errors="replace")

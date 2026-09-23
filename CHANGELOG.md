@@ -4,6 +4,48 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] — 2026-09-23
+
+Aimed at the person reading the explorer, not at the graph engine. The prose the
+`codebase-to-course` skill writes was never checked against the code (a wrong key
+or a dropped scenario simply vanished), and the call graph was the ceiling for
+anything the skill could claim. This release checks the prose, gives the skill a
+way to ground it, and lets a codebase-memory-mcp index, when you have one, raise
+that ceiling. Nothing new is required.
+
+### Added
+- **`codemap check`** — compares the skill-authored `.codemap/*.json` with the
+  real graph and reports everything the renderer used to drop silently: a symbol
+  key that matches nothing (with a "did you mean"), a scenario left with fewer
+  than two resolvable steps, an unparseable file, a library name with no Packages
+  page, an architecture component that isn't a folder codemap groups by.
+  `--json` and `--strict` for scripts; `codemap explore` prints a one-line note
+  when it finds errors. The skill now finishes with it.
+- **`codemap calls <symbol>`** — what a symbol calls or what calls it, with
+  file:line and confidence, from the same call graph the Graph tab draws
+  (`--in/--out/--both`, `--depth`, `--no-guesses`, `--json`). The skill uses it
+  to check scenario steps and "only X does Y" claims.
+- **Optional codebase-memory-mcp engine** — when an index of the repo exists,
+  its resolved call links are merged into the graph (tagged `cbm`), its
+  `AMBIGUOUS`-settling resolutions replace codemap's name-only guesses, and its
+  HTTP route links become **web requests**: Simulate's derived scenarios cross
+  from a client call into the handler, the Architecture tab draws a labelled
+  dashed connector, and the analysis pack lists a **Route links** section.
+  Read-only, guarded against schema changes, skipped per file when stale, and
+  invisible when absent (the payload is identical). `[engine]` in
+  `.codemap/config.toml`; the topbar shows a "+ codebase-memory" badge and
+  `codemap status` an `engine:` line. See `docs/spec.md` §20.
+- Skill: a "Grounding tools" section and `references/grounding-tools.md` for
+  using the `codebase-memory` MCP tools (when present) alongside `codemap calls`,
+  and how to turn their names into codemap keys.
+
+### Changed
+- `docs/spec.md` §20 records the scope: codemap keeps its small tree-sitter
+  indexer and adds no language without a request; coverage comes from the
+  optional engine.
+- The Packages docs no longer offer a nested path such as `codemap/site` as a
+  module name (it never had a page; `codemap check` now says so).
+
 ## [0.2.5] — 2026-09-23
 
 A user test on three real builds found the Graph, Timeline and most of

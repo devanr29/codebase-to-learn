@@ -119,6 +119,14 @@ button { font-family: inherit; }
 .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; letter-spacing: -0.01em; }
 .brand i { color: var(--color-accent); font-size: 17px; }
 .brand .ver { font: 500 10px/1 var(--font-mono); color: var(--color-neutral-600); }
+.brand .engine-badge {
+  font: 500 10px/1 var(--font-mono); color: var(--color-accent);
+  border: 1px solid var(--color-accent-300); border-radius: 999px; padding: 3px 7px; cursor: help;
+}
+.rowitem .cbm-tag {
+  font: 500 9px/1 var(--font-mono); color: var(--color-accent);
+  border: 1px solid var(--color-accent-300); border-radius: 4px; padding: 2px 4px; margin-left: 6px; cursor: help;
+}
 
 .tabs { display: flex; gap: 2px; margin-left: 8px; }
 .tab {
@@ -157,7 +165,7 @@ button { font-family: inherit; }
    file, which no longer leaves quite enough room here. A 7th tab
    (Architecture) measured the counters overflowing up to ~1091px, hence 1100. */
 @media (max-width: 1100px) {
-  .topbar .stat, .brand .ver { display: none; }
+  .topbar .stat, .brand .ver, .brand .engine-badge { display: none; }
 }
 @media (max-width: 780px) {
   /* hiding the counters alone still wasn't enough room for all 6 tabs at a
@@ -935,6 +943,12 @@ button { font-family: inherit; }
 .arch-up path { fill: none; stroke: #e66767; stroke-width: 1.5; stroke-dasharray: 5 4; }
 .arch-up circle { fill: #2a1a22; stroke: #e66767; stroke-width: 1.2; }
 .arch-up text { font: 700 10px/1 var(--font-ui) !important; fill: #f3a3a3; pointer-events: none; }
+.arch-req path { fill: none; stroke: var(--color-accent); stroke-width: 1.5; stroke-dasharray: 2 4; }
+.arch-req path.head { fill: var(--color-accent); stroke: none; stroke-dasharray: none; }
+.arch-req text {
+  font: 500 9.5px/1 var(--font-mono); fill: var(--color-accent-300); pointer-events: none;
+  paint-order: stroke; stroke: var(--color-bg); stroke-width: 3px; stroke-linejoin: round;
+}
 .arch-hi path { stroke-width: 2; stroke-opacity: .9; stroke-linecap: round; pointer-events: none; }
 
 .arch-insp {

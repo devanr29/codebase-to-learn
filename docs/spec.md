@@ -46,6 +46,9 @@ Do not implement these, even partially, even if they look easy:
   HTML artifact **is** in scope (M10–M14, §12); it is rendered from the DB by
   deterministic code and never runs a process.
 - Full type inference or a compiler-grade index (see §5 on resolution tiers)
+- A many-language, type-resolving indexer of our own: broader coverage comes from optionally
+  reading a codebase-memory-mcp index (§20), and no language is added to the built-in
+  indexer without a user request
 - Vector search / embeddings / RAG
 - Multi-repo or cross-repo analysis
 - Automatic code review, linting, or quality scoring — this tool explains, it does not judge
@@ -902,6 +905,98 @@ APScheduler/`schedule` detection (`add_job(...)`, `BackgroundScheduler()`,
 for every `__main__` guard so a standalone script gets a Terminal actor
 wherever its file landed (`entry` or `shared`), not only inside the entry
 layer — see §18.
+
+---
+
+## 20. Authoring checks, call grounding and an optional engine (M22)
+
+The Learn/Packages/Simulate/Architecture prose is written by the
+`codebase-to-course` skill and baked in by deterministic code. Two gaps made
+that prose hard to trust, and one made the call graph itself the limit. This
+milestone closes them without adding a required dependency.
+
+**`codemap check`** (`site/validate.py`) re-reads the raw `.codemap/*.json` and
+compares every reference with the model `explore` builds. The loaders under
+`site/` fail soft by design (a bad entry is dropped and the page shows less);
+that is right for the page and wrong for the author, who never learned a
+scenario or a `see` key went nowhere. An **error** is an entry that is dropped,
+never attaches or points at nothing (a symbol key matching no node, with a
+"did you mean"; a scenario left with fewer than two resolvable steps; an
+unparseable file; an architecture component that is not a folder `architecture.py`
+groups on; an unknown layer). A **warning** still renders but is probably not
+what was meant (a key cut by the `max_symbols` budget; a walkthrough `see` to a
+file the index doesn't hold, which the page shows as plain text; a library name
+with no Packages page; a glossary term nothing uses). `--json` gives
+`{ok, errors, warnings, issues[], authored[]}`; `--strict` exits 1 on errors;
+`explore` prints a one-line stderr note when it finds errors. The skill runs
+it last and must reach zero errors.
+
+**`codemap calls <symbol> [--in|--out|--both] [--depth N] [--no-guesses] [--json]`**
+(`calls.py`) prints the call edges `impact.call_graph()` resolved around a
+symbol, each with file, line and confidence, as a tree (a repeated node is `(*)`
+and not expanded, so every edge prints once and a cycle ends). It is how the
+skill checks a scenario's steps and an "only X does Y" claim against the graph
+instead of memory. A bare name matching several symbols lists the keys and
+exits 1; a bare name also matches methods (`run` finds `Job.run`).
+
+**Optional engine: codebase-memory-mcp** (`enrich/`). When a
+[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) index of
+the repo exists, `model.build()` merges its resolved calls into codemap's call
+graph right after `call_graph()`. codemap's symbols and keys stay the source of
+truth, so nothing authored against a key moves.
+
+- *Finding it.* `$CBM_CACHE_DIR`, then `~/.cache/codebase-memory-mcp` (or
+  `[engine] cache_dir`). Each `*.db` is opened **read-only** (`mode=ro`, falling
+  back to `immutable=1` as CBM's own query path does) and matched by its recorded
+  `projects.root_path`, both sides fully resolved (symlinks, `..`, Windows 8.3
+  names, case on Windows) — never by CBM's project-naming rules.
+- *Guarding.* Its schema is not promised stable (its documented interface is the
+  MCP tools), so `PRAGMA user_version` must be one codemap was written against
+  (1) and the columns it reads must exist. Otherwise enrichment is off, with the
+  reason shown by `codemap status`; nothing raises.
+- *Trusting.* An edge is used only when both files still hash (SHA-256 of the raw
+  bytes) as they did when CBM indexed them, both ends map to a codemap symbol by
+  `(file, start line)` or a unique `(file, name)`, and its score is CBM's own
+  "high" band (>= 0.70). >= 0.90 (import or same-scope resolution) is
+  `EXTRACTED`, otherwise `INFERRED`. A link codemap lacked is added (`via="cbm"`);
+  an `AMBIGUOUS` codemap edge CBM confirms is upgraded; when CBM resolves one call
+  site to a single target, codemap's `AMBIGUOUS` edges to the other same-named
+  symbols are dropped. A confident codemap edge is never touched.
+- *Routes.* `HTTP_CALLS`/`HANDLES` around a `Route` node become `data.routes`
+  (`{url, method, callers[], handlers[]}` as node indexes). The call graph has no
+  edge across an HTTP request, so Simulate's derived tree gets a `note` step
+  ("`main` sends `GET /api/report` ...") then the handler's `call`, the brief lists
+  a **Route links** section and crosses the same hop in `scenarios-derived.json`,
+  and the Architecture payload gets `requests` (kept apart from `links`: those are
+  layer-ordered imports, where a frontend calling a route handler would read as a
+  wrong-way import), drawn as a dashed labelled connector.
+- *Reporting.* `data.engine` (and the topbar badge "+ codebase-memory", and a
+  `cbm` tag with a tooltip on each engine-only caller/callee in the inspector)
+  appear **only when the engine was used**; with it absent or `off`, the payload
+  is identical to before. `codemap status` prints the engine line either way.
+- *Config.* `[engine] codebase_memory = "auto" | "off"` (default `auto`) and
+  `cache_dir`.
+
+### Engine scope / non-goals
+
+- codemap keeps its **small in-house tree-sitter indexer** for the languages in
+  §14. It is not turned into a many-language, type-resolving engine: that is a
+  different project (codebase-memory-mcp covers ~160 languages and resolves types
+  for about ten), and duplicating it would leave codemap worse at the one thing
+  only it does.
+- Broad language coverage and type-aware call links come from the **optional**
+  enrichment above. There is no new required dependency, no daemon, and codemap
+  never runs, installs or configures the other tool (its installer edits an
+  agent's settings; that is the user's call).
+- **No new language is added to the built-in indexer without a user request.**
+- The effort goes to what an engine built for agents will not: checking authored
+  content against the graph (`check`, `calls`), Simulate, the plain-English
+  Architecture tab and learning order.
+
+Two decisions worth remembering: the engine is *additive* (never authoritative,
+never a rewrite of keys), and the frontend-to-backend hop is only drawn when the
+engine found it: detecting `fetch("/api/x")` in the frontend natively would be
+building the engine again.
 
 ---
 

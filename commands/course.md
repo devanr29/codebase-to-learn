@@ -15,7 +15,10 @@ Run the full `codebase-to-course` authoring workflow against the current repo.
    `.codemap/libraries.json`, `.codemap/explanations.json`,
    `.codemap/scenarios.json`, `.codemap/glossary.json`, and (corrections
    only, when needed) `.codemap/architecture.json`.
-5. Run `codemap explore --open` to bake those files into `explore.html`
+5. Run `codemap check --json` and fix every error it reports until
+   `"errors": 0` — the renderer drops a bad entry silently, so this is the
+   only place a typo'd key or a dropped scenario shows up.
+6. Run `codemap explore --open` to bake those files into `explore.html`
    and review the result as the skill's own "Bake and review" step directs.
 
 If `$ARGUMENTS` is given, treat it as `--path <ARGUMENTS>` on every `codemap`

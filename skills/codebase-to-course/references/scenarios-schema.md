@@ -114,7 +114,14 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
   when a repo has both a frontend and a backend: root it at the screen, and
   let a later step land on the API-client call and the backend route it hits
   — that single scenario teaches more about how the app actually works than
-  either half alone.
+  either half alone. The call graph has no edge across an HTTP request itself;
+  when the brief's **Route links** section lists it (a codebase-memory index was
+  present), the derived tree already carries it as a `note` step with a `route`
+  field, then the handler's `call` (with `from` set to the sender, so the Flow
+  pane shows the request travelling) and the handler's own calls. Hand-authored
+  `steps` should do the same: a `note` step naming the route right before the
+  handler's `call`, whose text says it is a web request and not a function call.
+  That hop is the one `call` step allowed to have no edge in `codemap calls`.
 - **`emit.text` is rendered verbatim as what the user sees** — a browser page
   line, an API response body, a job's log line, a mounted UI block — not
   discarded narration. Write it as the actual output, not a description of it:
@@ -171,13 +178,25 @@ stage than the rest of the scenario), `cond` (`{kind: "if"|"for"|"while"|"try", 
   a loop count, real output), that's what `codemap trace` (Lane 3) is for — write
   `scenarios.json` for the narration a recorded run can't provide on its own, not as a
   substitute for actually running the code.
+- **Ground every hand-authored scenario in `codemap calls`.** Before narrating, run
+  `codemap calls <root key> --out --depth 4 --no-guesses` (add `--json` to read it
+  programmatically). Each output line is an edge the call graph really resolved,
+  with the file and line of the call. A `call` step that goes from `from` to `node`
+  must be one of those edges. A hop the graph can't show — dynamic dispatch, a
+  framework calling your handler, a branch — is allowed, but say so in that step's
+  `code` line ("the framework then calls…") instead of drawing it as if it were a
+  call. `--no-guesses` leaves out `AMBIGUOUS` edges (name-only matches, the usual
+  source of a false link); if a call you can see in the source is missing, re-run
+  without it and confirm the ambiguous edge by opening the file before you use it.
 - No HTML in any string. `user`/`code`/`emit.text` are one or two plain sentences.
-- Grep-verify every exclusivity claim before it ships — `"only X does Y"`, `"the only
+- Verify every exclusivity claim before it ships — `"only X does Y"`, `"the only
   place that…"`, `"nothing else touches this"` in a `summary`, `user`, or `code` string
   is a factual claim about the repo, not narration, and reads as fact once it's on
-  screen. Check it against the actual call graph / a real grep, the same way Phase 1
-  stopped `impact.call_graph` from asserting a false "419 callers" link — an unverified
-  absolute is worse than a softer, accurate "usually" or "mainly".
+  screen. Check it with `codemap calls <Y's key> --in` (the callers the graph found:
+  the claim holds only if X is the sole one, guesses included) plus a real grep for
+  callers the graph can't see (dynamic dispatch, string lookups) — the same way
+  Phase 1 stopped `impact.call_graph` from asserting a false "419 callers" link. An
+  unverified absolute is worse than a softer, accurate "usually" or "mainly".
 
 ## Where this fits
 

@@ -22,9 +22,26 @@ def _fence(lang: str) -> str:
     return {"python": "python", "typescript": "ts", "tsx": "tsx", "javascript": "js"}.get(lang, "")
 
 
+def _route_label(r: dict) -> str:
+    return r["url"] if r.get("method") in (None, "", "ANY") else f'{r["method"]} {r["url"]}'
+
+
+def _route_hops(data: dict) -> dict[int, list[tuple[str, int]]]:
+    """``{caller node: [(route label, handler node), ...]}`` for every HTTP route a
+    symbol calls that some handler in this repo serves — the hop the call graph
+    itself has no edge for (only present with a codebase-memory index merged in)."""
+    hops: dict[int, list[tuple[str, int]]] = {}
+    for r in data.get("routes", []):
+        for c in r["callers"]:
+            for h in r["handlers"][:2]:
+                hops.setdefault(c, []).append((_route_label(r), h))
+    return hops
+
+
 def _derive_scenario_steps(
     nodes: list[dict], out_calls: dict[int, list[tuple[int, int]]], root_i: int,
     budget: int = 50, depth_cap: int = 6,
+    route_hops: dict[int, list[tuple[str, int]]] | None = None,
 ) -> list[dict]:
     """A Python mirror of explore.js's client-side Lane-1 `deriveSteps` — same
     idea (DFS in call-site line order, recursion folded, depth-capped), kept
@@ -49,6 +66,13 @@ def _derive_scenario_steps(
                 if len(steps) >= budget:
                     break
                 visit(t, depth + 1)
+            for label, h in (route_hops or {}).get(i, ()):
+                if h == i or h in on_stack or len(steps) >= budget:
+                    continue
+                steps.append({"node": key, "t": "note", "route": label,
+                              "code": f"sends {label} — the request leaves this code and the server "
+                                      f"routes it to {nodes[h]['name']}"})
+                visit(h, depth + 1)
             on_stack.discard(i)
         steps.append({"node": key, "t": "return"})
 
@@ -126,6 +150,7 @@ def _emit_scenarios_derived(briefs_dir, data: dict, written: list[str]) -> list[
     for lst in out_calls.values():
         lst.sort(key=lambda p: p[1])
 
+    route_hops = _route_hops(data)
     candidates = _scenario_candidates(data)
     if not candidates:
         # no entry point detected at all — fall back to the busiest few symbols so
@@ -152,7 +177,7 @@ def _emit_scenarios_derived(briefs_dir, data: dict, written: list[str]) -> list[
         }
         grp = c["group"]
         if hero_total < _HERO_STEP_BUDGET and hero_per_group.get(grp, 0) < _HERO_PER_GROUP:
-            steps = _derive_scenario_steps(nodes, out_calls, c["i"])
+            steps = _derive_scenario_steps(nodes, out_calls, c["i"], route_hops=route_hops)
             if len(steps) >= 2:
                 entry["steps"] = steps
                 hero_total += 1
@@ -364,6 +389,21 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
         ov.append("- no entry points detected — see `scenarios-derived.json` for "
                   "the busiest-symbol fallback the Simulate tab uses on its own.")
     ov.append("")
+    routes = data.get("routes", [])
+    if routes:
+        ov.append("## Route links (web requests that cross between parts)")
+        ov.append("Found by the optional codebase-memory engine. The call graph has no edge "
+                  "across an HTTP request, so this is the only place a client call is tied to "
+                  "the code that serves it. Use it for the seam scenario: root it at a caller, "
+                  "narrate the request, then the handler. `scenarios-derived.json` trees already "
+                  "cross these hops (a `note` step with a `route` field).")
+        ov.append("")
+        for r in routes:
+            called = ", ".join(f"`{nodes[i]['qual']}`" for i in r["callers"][:4]) or "—"
+            served = ", ".join(f"`{nodes[i]['qual']}`" for i in r["handlers"][:4]) or "— (no handler found in this repo)"
+            keys = "; ".join(f"`{nodes[i]['key']}`" for i in (r["callers"][:2] + r["handlers"][:2]))
+            ov.append(f"- `{_route_label(r)}` — called by {called} → served by {served}  (keys: {keys})")
+        ov.append("")
     ov.append("## Architecture (corrections for `architecture.json`)")
     ov.append("The Architecture tab draws this repo as a layered diagram — routes & entry → "
               "views / API → logic → data, a side panel of shared code — derived from folder "

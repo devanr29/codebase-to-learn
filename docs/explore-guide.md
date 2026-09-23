@@ -240,6 +240,15 @@ reveal, the `codebase-to-course` skill (§10) writes corrections into
 `skills/codebase-to-course/references/architecture-schema.md` for the file
 format.
 
+**Web requests** (only with a codebase-memory-mcp index of the repo, see
+`docs/spec.md` §20). A screen calling `/api/x` and the handler that serves it
+have no import between them, so nothing above joins them. When the index found
+the route, a dashed, labelled connector runs from the part that sends the
+request to the part that serves it (hover it for every route between the two),
+the part's inspector gets "Sends web requests to" / "Serves web requests from",
+and the legend gains a row. It is separate from the layer arrows on purpose: a
+frontend calling a route handler is not a wrong-way import.
+
 ## 6. The Map tab (structure, not connections)
 
 The Graph tab answers "what calls what". The Map tab answers three questions
@@ -337,6 +346,12 @@ line shows that blurb inline — click it to open the full entry in Packages
 A derived (⚡) scenario's banner spells out honestly what it is — a prediction
 from the code's shape, not a recorded run — and gives you the exact
 `codemap trace` command to record the real thing instead.
+
+With a codebase-memory-mcp index of the repo, a derived scenario also follows a
+web request: after the calls a function makes, a step reads "`main` sends
+`GET /api/report` — the server's router hands it to `report_view`", and the
+trace carries on inside the handler. The call graph itself has no edge across
+that hop.
 
 To get authored scenarios: same as the Packages tab — run `--emit-brief`,
 invoke the `codebase-to-course` skill, re-render (§10). With no authoring at all,
@@ -504,6 +519,12 @@ max_source_bytes  = 4000000 # whole-file source embedded for the source viewer
                              #   the budget a file keeps only its short excerpts.
                              #   0 = embed no files.
 ```
+
+`[engine]` is the optional codebase-memory-mcp link: `codebase_memory = "auto"`
+(or `"off"`) and `cache_dir` (see [`cli.md`](cli.md)). When its index is merged
+in, the topbar shows a "+ codebase-memory" badge (hover it for what was added),
+and a caller or callee only it found carries a small `cbm` tag in the Graph
+inspector.
 
 `max_source_bytes` is the knob for page size: on this repo the whole page is
 about 2.3 MB with every file embedded. Minified files and files with a line

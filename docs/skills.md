@@ -67,7 +67,11 @@ documented JSON — write them yourself, or with any other tool:
 `codemap explore --emit-brief` is useful either way — it writes
 `.codemap/briefs/` with every symbol's `key:`, pre-extracted snippets, and (for
 scenarios) real call trees to narrate from, so you're not reconstructing
-anything by hand even if you skip the skill entirely.
+anything by hand even if you skip the skill entirely. Whoever writes the
+files, `codemap check` says what the renderer would drop without a word (a
+typo'd key, a scenario left with fewer than two resolvable steps), and
+`codemap calls <symbol>` shows the calls the graph really resolved, to check
+a scenario's steps against — see [`cli.md`](cli.md).
 
 ## Where the skill lives once installed
 
@@ -83,4 +87,5 @@ move together. See [`install.md`](install.md) for the install paths.
 - [`skills/codebase-to-course/SKILL.md`](../skills/codebase-to-course/SKILL.md) — the authoring workflow
 - [`skills/codebase-to-course/references/content-philosophy.md`](../skills/codebase-to-course/references/content-philosophy.md) — audience and tone rules
 - [`skills/codebase-to-course/references/gotchas.md`](../skills/codebase-to-course/references/gotchas.md) — common authoring mistakes
+- [`skills/codebase-to-course/references/grounding-tools.md`](../skills/codebase-to-course/references/grounding-tools.md) — checking claims against a call graph: `codemap calls`, and the optional codebase-memory MCP tools
 - [`skills/codebase-to-course/references/interactive-elements.md`](../skills/codebase-to-course/references/interactive-elements.md) — how the rendered tabs use this content

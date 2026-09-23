@@ -21,17 +21,17 @@ Check these before you call the reference done.
    `general`; don't stop at "the interesting ones".
 
 4. **Invented symbols.** A `see` key, a function name, or a file path you didn't
-   copy from a brief. The reader will open it and check. Out-of-graph `see` keys
-   are dropped silently, so a bad key quietly loses the link.
+   copy from a brief. The reader will open it and check. The renderer drops an
+   out-of-graph key without a word, so a bad key quietly loses the link — only
+   `codemap check` says so.
 
 5. **Stale keys after a re-scan.** Keys come from the model at a specific commit.
-   If you re-run `codemap scan` after drafting, re-check `see` /
-   `explanations.json` / `scenarios.json` keys against a fresh
-   `codemap explore --json`.
+   If you re-run `codemap scan` after drafting, run `codemap check --json` again;
+   it lists every key that no longer matches a symbol.
 
-6. **Invalid JSON = silent fallback.** A trailing comma doesn't error — the
-   loader returns `None` and the tab falls back to the graph-only view. If your
-   content "isn't showing up", validate the JSON first.
+6. **Invalid JSON = silent fallback.** A trailing comma doesn't error in the
+   renderer — the loader returns `None` and the tab falls back to the graph-only
+   view. `codemap check` reports an unparseable file as an error with the line.
 
 7. **Walls of text.** Over ~3 sentences in a `general` / `here` reads like a
    textbook. Cut to the one thing the reader needs.
@@ -57,3 +57,14 @@ Check these before you call the reference done.
     a fact's clothes — go look, then write what you actually found: a
     leftover nobody deleted, a barrel re-export, or a route table loaded
     dynamically instead of imported.
+
+12. **Handing over without `codemap check`.** Dropped scenarios, typo'd keys and
+    an unparseable file all look fine until someone opens the page. Run
+    `codemap check --json` last and fix every error; you are not done until it
+    reports `"errors": 0`.
+
+13. **Copying a name from another tool into a key.** A `codebase-memory` result
+    names a symbol `project.src.api.users.get_user`; codemap's key is
+    `src/api/users.py::get_user`. Build the key from the file path and name it
+    reports, then confirm it with `codemap calls <key> --depth 1` — see
+    `references/grounding-tools.md`.

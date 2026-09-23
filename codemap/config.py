@@ -80,6 +80,15 @@ max_snippet_lines = 40
 # past it the least relevant files keep only their short per-symbol excerpts.
 # 0 = embed no files.
 max_source_bytes = 4000000
+
+[engine]
+# Optional call-graph engine. "auto" uses a codebase-memory-mcp index of this
+# repo when one exists (extra, better-resolved call links; nothing to install
+# for codemap itself); "off" never looks. codemap's own graph is always the base.
+codebase_memory = "auto"
+# Where codebase-memory-mcp keeps its index. Empty = $CBM_CACHE_DIR, then
+# ~/.cache/codebase-memory-mcp.
+cache_dir = ""
 """
 
 
@@ -98,6 +107,12 @@ class ExploreConfig:
 
 
 @dataclass
+class EngineConfig:
+    codebase_memory: str = "auto"   # "auto" | "off"
+    cache_dir: str = ""
+
+
+@dataclass
 class Config:
     root: Path
     ignore: list[str] = field(default_factory=list)
@@ -106,6 +121,7 @@ class Config:
     retention: int = 50
     llm: LLMConfig = field(default_factory=LLMConfig)
     explore: ExploreConfig = field(default_factory=ExploreConfig)
+    engine: EngineConfig = field(default_factory=EngineConfig)
 
     @property
     def codemap_dir(self) -> Path:
@@ -152,6 +168,12 @@ def load(root: Path | str) -> Config:
         max_symbols=int(exp.get("max_symbols", 1500)),
         max_snippet_lines=int(exp.get("max_snippet_lines", 40)),
         max_source_bytes=int(exp.get("max_source_bytes", 4_000_000)),
+    )
+    eng = data.get("engine", {})
+    mode = str(eng.get("codebase_memory", "auto")).strip().lower()
+    cfg.engine = EngineConfig(
+        codebase_memory=mode if mode in ("auto", "off") else "auto",
+        cache_dir=str(eng.get("cache_dir", "")).strip(),
     )
     return cfg
 

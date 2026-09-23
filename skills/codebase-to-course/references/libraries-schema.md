@@ -3,7 +3,7 @@
 Authored input for the **Learn** tab, which is a **library / module reference**:
 for every external package the code imports — third-party (`react`, `networkx`,
 `flask`…) and standard library (`json`, `os`, `pathlib`…) — plus every
-top-level module of the repo itself (`codemap/site`, `codemap/languages`…), it
+top-level module (folder) of the repo itself (`codemap`, `tests`…), it
 shows two things:
 
 1. **what that thing does in general** — the one-liner you'd give someone who
@@ -29,9 +29,9 @@ file only ever *fills in* or *overrides* the prose for a given name.
       "general": "The operating-system bridge in Python's standard library — paths, environment variables, processes.",
       "here": "Only used for `os.environ` reads and path joins during discovery."
     },
-    "codemap/site": {
-      "general": "Everything that turns the indexed graph into the self-contained explore.html.",
-      "here": "model.build() assembles the JSON payload; render.render() inlines the CSS/JS; brief.emit() writes the analysis pack for this skill.",
+    "codemap": {
+      "general": "The command-line program itself: indexes a repo and turns the graph into the self-contained explore.html.",
+      "here": "site/model.py's build() assembles the JSON payload; site/render.py's render() inlines the CSS/JS; site/brief.py's emit() writes the analysis pack for this skill.",
       "see": ["codemap/site/model.py::build", "codemap/site/render.py::render"]
     }
   }
@@ -46,8 +46,10 @@ file only ever *fills in* or *overrides* the prose for a given name.
   not the pip/npm name (`tree_sitter`, not `tree-sitter`; `networkx`; `os`).
   `explore.js` also tries the `-`/`_` swap when matching, so either spelling of a
   hyphenated name resolves.
-- or a **repo module name** — a top-level entry from the module list
-  (`codemap/site`, `codemap`, `tests`).
+- or a **repo module name** — a top-level folder, exactly as the module list
+  shows it (`codemap`, `tests`, `(root)`). A nested path such as `codemap/site`
+  is not a module: the Packages tab has no page for it, so describe it inside
+  its top-level module's `here` instead. `codemap check` flags it.
 
 Each value:
 

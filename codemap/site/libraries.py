@@ -20,12 +20,12 @@ Shape (see ``references/libraries-schema.md``):
                   "reachability; model.py reads cycles and SCCs off the same graph.",
           "see": ["codemap/impact.py::call_graph", "codemap/site/model.py::build"]
         },
-        "codemap/site": { "general": "...", "here": "...", "see": [...] }
+        "codemap": { "general": "...", "here": "...", "see": [...] }
       }
     }
 
 Keys are the package token as the UI shows it (``networkx``, ``tree_sitter``,
-``os``) or a repo module name (``codemap/site``). ``see`` entries are
+``os``) or a top-level repo folder (``codemap``). ``see`` entries are
 ``data.nodes[].key`` strings — ``explore.js`` resolves them to Graph-tab links
 and silently drops any that no longer exist.
 """

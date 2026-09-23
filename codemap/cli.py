@@ -66,6 +66,9 @@ def cmd_status(args: argparse.Namespace) -> int:
         print(f"last reviewed: {last_reviewed or '(never)'}")
         graph_desc = "worktree (uncommitted changes included)" if graph_head == "worktree" else (graph_head or "(none)")
         print(f"graph:         {graph_desc}")
+        from .enrich import engine as _engine
+
+        print(f"engine:        {_engine.describe(cfg)}")
         if sum(counts.values()) == 0:
             print("index:       empty")
         else:
@@ -258,6 +261,15 @@ def cmd_explore(args: argparse.Namespace) -> int:
         if size_mb > 8:
             print(f"warning: {out.name} is {size_mb:.1f} MB", file=sys.stderr)
         if not args.quiet:
+            from .site import validate as _validate
+
+            bad = sum(1 for i in _validate.check_db(conn, cfg, data) if i.severity == _validate.ERROR)
+            if bad:
+                print(
+                    f"{bad} problem{'' if bad == 1 else 's'} in the authored .codemap/*.json "
+                    "(entries that won't show) — run `codemap check`",
+                    file=sys.stderr,
+                )
             s = data["stats"]
             print(
                 f"wrote {out}  ({s['files']} files, {s['symbols']} symbols, "
@@ -271,6 +283,144 @@ def cmd_explore(args: argparse.Namespace) -> int:
     finally:
         conn.close()
 
+
+
+# --------------------------------------------------------------------------- check
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    """Compare the skill-authored ``.codemap/*.json`` with the graph and say what
+    would be silently dropped. Exit 1 on errors only with ``--strict``."""
+    import json as _json
+
+    from .site import model as _model
+    from .site import validate as _validate
+
+    root = _find_root(Path(args.path) if args.path else None)
+    cfg = config.load(root)
+
+    def finish(issues: list, *, authored: list[str]) -> int:
+        summary = _validate.summarize(issues)
+        if args.json:
+            print(_json.dumps({**summary, "authored": authored}, indent=2))
+        elif not authored and not issues:
+            print("codemap check: no authored files under .codemap/ — nothing to check")
+        else:
+            print(_validate.format_text(issues))
+        return 1 if args.strict and not summary["ok"] else 0
+
+    if not cfg.db_path.exists():
+        return finish(
+            [_validate.Issue("", "", _validate.ERROR, "no index yet — run `codemap scan` first")],
+            authored=[],
+        )
+    authored = _validate.authored_files(cfg)
+    if not authored:
+        return finish([], authored=[])
+
+    conn = db.connect(cfg.db_path)
+    rep = _progress.from_args(args, command="check", root=root)
+    try:
+        try:
+            data = _model.build(
+                conn,
+                cfg,
+                max_symbols=cfg.explore.max_symbols,
+                max_snippet_lines=cfg.explore.max_snippet_lines,
+                max_source_bytes=0,
+                progress=rep,
+            )
+        finally:
+            rep.close()
+        if data.get("empty"):
+            return finish(
+                [_validate.Issue("", "", _validate.ERROR, "index is empty — run `codemap scan` first")],
+                authored=authored,
+            )
+        return finish(_validate.check_db(conn, cfg, data), authored=authored)
+    finally:
+        conn.close()
+
+
+# --------------------------------------------------------------------------- calls
+
+
+def cmd_calls(args: argparse.Namespace) -> int:
+    """What a symbol calls (``--out``, the default) or what calls it (``--in``),
+    read straight off the resolved call graph. Exit 1 when the symbol isn't
+    found or the name is ambiguous, so a script can tell."""
+    import json as _json
+
+    from . import calls as _calls
+
+    root = _find_root(Path(args.path) if args.path else None)
+    cfg = config.load(root)
+
+    def fail(error: str, message: str, candidates: list | None = None) -> int:
+        if args.json:
+            print(_json.dumps({"error": error, "message": message,
+                               "candidates": [{"key": s.key, "file": s.file, "line": s.start}
+                                              for s in candidates or []]}, indent=2))
+        else:
+            print(message)
+            for s in (candidates or [])[:15]:
+                print(f"  {s.key}   {s.where()}")
+            if candidates and len(candidates) > 15:
+                print(f"  ... and {len(candidates) - 15} more; use a `path::Name` key (`--json` lists them all)")
+        return 1
+
+    if not cfg.db_path.exists():
+        return fail("no_index", "no index yet — run `codemap scan` first")
+    conn = db.connect(cfg.db_path)
+    try:
+        sha = _calls.graph_sha(conn)
+        if not sha:
+            return fail("no_index", "index is empty — run `codemap scan` first")
+        symbols = _calls.load_symbols(conn, sha)
+        hits = _calls.find(symbols, args.target)
+        if not hits:
+            return fail("not_found", f"no symbol matches {args.target!r} — try a `path::Name` key "
+                                     "(`codemap explore --json` lists them)")
+        if len(hits) > 1:
+            return fail("ambiguous", f"{args.target!r} matches {len(hits)} symbols — use one of these keys:", hits)
+        target = hits[0]
+
+        g = _calls.build_graph(conn, cfg, sha)
+        raw_lines = _calls.call_lines(conn, sha)
+    finally:
+        conn.close()
+
+    depth = max(1, args.depth)
+    directions = ("out", "in") if args.direction == "both" else (args.direction,)
+    results = {}
+    for d in directions:
+        edges, truncated = _calls.walk(g, target.key, direction=d, depth=depth, guesses=not args.no_guesses)
+        results[d] = (edges, truncated, _calls.edge_lines(edges, symbols, raw_lines))
+
+    if args.json:
+        payload = {
+            "target": {"key": target.key, "kind": target.kind, "file": target.file, "line": [target.start, target.end]},
+            "depth": depth,
+        }
+        for d, (edges, truncated, lines) in results.items():
+            payload[d] = _calls.as_dict(symbols, target, edges, truncated, direction=d, lines=lines)
+        print(_json.dumps(payload, indent=2))
+        return 0
+
+    titles = {"out": "calls (what it calls)", "in": "callers (what calls it)"}
+    for i, (d, (edges, truncated, lines)) in enumerate(results.items()):
+        if i:
+            print()
+        if len(results) > 1:
+            print(f"# {titles[d]}")
+        if not edges:
+            print(f"{target.key}   {target.where()}")
+            print("  (no resolved " + ("calls out of it)" if d == "out" else "callers)"))
+            continue
+        print("\n".join(_calls.render_tree(symbols, target, edges, direction=d, lines=lines)))
+        if truncated:
+            print(f"  ... more beyond depth {depth} (raise --depth)")
+    return 0
 
 
 # --------------------------------------------------------------------------- trace
@@ -398,6 +548,21 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--quiet", action="store_true", help="suppress the summary line and progress output")
     sp.add_argument("--if-enabled", action="store_true",
                     help="no-op unless [explore] rebuild_on_commit is true (used by the hook)")
+
+    sp = add("check", cmd_check, "check the skill-authored .codemap/*.json against the graph")
+    sp.add_argument("--json", action="store_true", help="machine-readable result: ok, errors, warnings, issues")
+    sp.add_argument("--strict", action="store_true", help="exit 1 when there are errors")
+
+    sp = add("calls", cmd_calls, "show what a symbol calls, or what calls it, from the call graph")
+    sp.add_argument("target", help="a symbol key (path::Name), a qualified name (Class.method) or a bare name")
+    way = sp.add_mutually_exclusive_group()
+    way.add_argument("--out", dest="direction", action="store_const", const="out", help="what it calls (default)")
+    way.add_argument("--in", dest="direction", action="store_const", const="in", help="what calls it")
+    way.add_argument("--both", dest="direction", action="store_const", const="both", help="both directions")
+    sp.set_defaults(direction="out")
+    sp.add_argument("--depth", type=int, default=3, help="hops to follow (default: 3)")
+    sp.add_argument("--no-guesses", action="store_true", help="leave out AMBIGUOUS edges (name-only matches)")
+    sp.add_argument("--json", action="store_true", help="machine-readable nodes and edges")
 
     sp = add("trace", cmd_trace, "record a real run for the Simulate tab (Lane 3)")
     sp.add_argument("--name", help="scenario title (default: the command itself)")

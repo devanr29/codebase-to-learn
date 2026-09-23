@@ -129,9 +129,12 @@
   // blast radius, the entry path and "Trace back to entry" all walk these.
   var outAdjSure = N.map(function () { return []; });
   var inAdjSure = N.map(function () { return []; });
+  // links only the optional codebase-memory engine found (`via: "cbm"`), by "s:t"
+  var viaEdge = {};
   E.forEach(function (e) {
     outAdj[e.s].push(e.t); inAdj[e.t].push(e.s);
     if (e.confidence !== "AMBIGUOUS") { outAdjSure[e.s].push(e.t); inAdjSure[e.t].push(e.s); }
+    if (e.via) viaEdge[e.s + ":" + e.t] = e;
   });
   // per-caller calls, in call-site order — the Graph/Map views only need "is
   // there an edge", but Simulate (Lane 1) needs "in what order does this
@@ -830,12 +833,28 @@
       el("div", { class: "brand" }, [
         el("i", { class: "ph ph-graph" }), el("span", { text: "codemap" }),
         el("span", { class: "ver", text: (DATA.generator || "").replace("codemap ", "v") }),
+        engineBadge(),
       ]),
       el("nav", { class: "tabs", "aria-label": "Sections" }, tabs),
       el("div", { class: "spacer" }),
       stat("files", s.files), stat("symbols", s.symbols),
       stat("edges", s.edges), stat("cycles", s.cycles),
     ]);
+  }
+  // shown only when a codebase-memory-mcp index of this repo was merged into
+  // the call graph (model.py adds `engine` then, and only then)
+  function engineBadge() {
+    var en = DATA.engine;
+    if (!en) return null;
+    var bits = [];
+    if (en.added) bits.push(en.added + " call link" + (en.added === 1 ? "" : "s") + " added");
+    if (en.upgraded) bits.push(en.upgraded + " guess" + (en.upgraded === 1 ? "" : "es") + " confirmed");
+    if (en.dropped) bits.push(en.dropped + " wrong guess" + (en.dropped === 1 ? "" : "es") + " removed");
+    return el("span", { class: "engine-badge", text: "+ codebase-memory", title:
+      "Call links here were checked against a codebase-memory-mcp index of this repo" +
+      (bits.length ? ": " + bits.join(", ") + "." : ".") +
+      (en.stale_files ? " " + en.stale_files + " file" + (en.stale_files === 1 ? "" : "s") +
+        " changed since it was indexed and were skipped." : "") });
   }
   function stat(label, v) {
     return el("div", { class: "stat" }, [label, el("b", { text: v == null ? "0" : String(v) })]);
@@ -2401,10 +2420,15 @@
       var take = open ? uniq : uniq.slice(0, 14);
       take.forEach(function (i) {
         var n = N[i];
+        var via = viaEdge[isCallers ? i + ":" + state.focus : state.focus + ":" + i];
         sec.appendChild(el("div", { class: "rowitem is-link",
           on: { click: function () { go("graph", n.key); } } }, [
           el("span", { class: "rk", text: kindLabel(n.kind) }),
           el("span", { class: "rn", text: n.qual }),
+          via ? el("span", { class: "cbm-tag", text: "cbm", title:
+            "Found by codebase-memory-mcp (" + (via.engine_strategy || "resolved call") +
+            (via.engine_score != null ? ", score " + via.engine_score : "") +
+            "); codemap's own analysis had no link here." }) : null,
           el("span", { class: "rc", text: n.file.split("/").pop() }),
         ]));
       });
@@ -3514,6 +3538,9 @@
   var A_SERVICES = ARCH.services || [];
   var A_ACTORS = ARCH.actors || [];
   var A_LINKS = ARCH.links || [];
+  // web requests between parts (only when a codebase-memory index was merged in):
+  // kept apart from A_LINKS, which are layer-ordered imports
+  var A_REQS = ARCH.requests || [];
   var A_COMP = {}, A_LAYER = {};
   A_COMPS.forEach(function (c) { A_COMP[c.id] = c; });
   (ARCH.layers || []).forEach(function (l) { A_LAYER[l.id] = l; });
@@ -3529,7 +3556,7 @@
   // a short title just leaves a little breathing room under it instead.
   var A_BOX_W = 140, A_BOX_H = 60, A_GAP = 12, A_BAND_PAD = 14, A_BAND_HEAD = 32,
       A_ROW_GAP = 52, A_MAIN_W = 700, A_SIDE_W = 184, A_SIDE_GAP = 54, A_PAD = 20,
-      A_CLOUD_W = 150, A_CLOUD_H = 64, A_CYL_W = 118, A_CYL_H = 66, A_UP_MAX = 12,
+      A_CLOUD_W = 150, A_CLOUD_H = 64, A_CYL_W = 118, A_CYL_H = 66, A_UP_MAX = 12, A_REQ_MAX = 6,
       A_SEAM = 18, A_SEAM_WIDE = 46;
   var EP_BY_NODE = {};
   (DATA.entry_points || []).forEach(function (ep) {
@@ -3988,6 +4015,34 @@
       ]));
     });
 
+    // ── web requests: a screen calling a route another part serves ──
+    // No import joins the two, so nothing above draws it. A dashed connector from
+    // the calling part to the one serving the route, labelled with the route.
+    A_REQS.filter(function (q) { return visible(q.s) && visible(q.t) && pos[q.s] && pos[q.t]; })
+      .slice(0, A_REQ_MAX).forEach(function (q) {
+        var a = pos[q.s], b = pos[q.t], d, hx, hy, head, lx, ly;
+        if (b.y > a.y + a.h - 1 || b.y + b.h < a.y + 1) {          // one row above the other
+          var down = b.y > a.y, y1 = down ? a.y + a.h : a.y, y2 = down ? b.y : b.y + b.h, dy = (y2 - y1) * 0.45;
+          d = "M " + a.cx + " " + y1 + " C " + a.cx + " " + (y1 + dy) + " " + b.cx + " " + (y2 - dy) + " " + b.cx + " " + y2;
+          hx = b.cx; hy = y2; head = down ? "l -4 -7 h 8 z" : "l -4 7 h 8 z";
+          lx = (a.cx + b.cx) / 2; ly = (y1 + y2) / 2 - 4;
+        } else {                                   // side by side in one row: arc over the box tops
+          var rise = 22;                           // (the gap between them is far too narrow to draw in)
+          d = "M " + a.cx + " " + a.y + " C " + a.cx + " " + (a.y - rise) + " " + b.cx + " " + (b.y - rise) + " " + b.cx + " " + b.y;
+          hx = b.cx; hy = b.y; head = "l -4 -7 h 8 z";
+          lx = (a.cx + b.cx) / 2; ly = Math.min(a.y, b.y) - rise * 0.75 - 3;
+        }
+        var tip = q.n + " web request" + (q.n === 1 ? "" : "s") + " from " + A_COMP[q.s].title + " to " +
+          A_COMP[q.t].title + ":\n" + q.routes.join("\n");
+        gArrows.appendChild(el("g", { class: "arch-req" }, [
+          el("title", { text: tip }),
+          el("path", { d: d }),
+          el("path", { class: "head", d: "M " + hx + " " + hy + " " + head }),
+          el("text", { x: lx, y: ly, "text-anchor": "middle",
+            text: fitText(q.routes[0], 170, 5.9) + (q.n > 1 ? "  +" + (q.n - 1) : "") }),
+        ]));
+      });
+
     // ── items ──
     var itemEls = {}, itemBase = {};
     function wire(key, g, base) {
@@ -4194,7 +4249,7 @@
         archLegendRow("arrows", "one layer calls into another and gets results back"),
         archLegendRow("up", "a lower layer importing a higher one"),
         archLegendRow("dash", "shared code used by that layer"),
-      ]));
+      ].concat(A_REQS.length ? [archLegendRow("req", "a web request: one part calls a route another part serves")] : [])));
       body.push(note(["Hover a box to light up what it talks to; click it for why it's in that layer."]));
       if (!ARCH.authored)
         body.push(note(["Every placement here is derived from folder names, entry points and imports. The ",
@@ -4221,6 +4276,16 @@
         body.push(sec("TALKS TO", outs.map(function (l) { return compRow(l.t, l.n, l.dir === "up"); })));
       if (ins.length)
         body.push(sec("USED BY", ins.map(function (l) { return compRow(l.s, l.n, l.dir === "up"); })));
+      // requests over the web: no import joins these, so they aren't in TALKS TO / USED BY
+      function reqRow(q, otherId) {
+        var o = A_COMP[otherId];
+        return o ? row("web", o.title, q.routes[0] + (q.n > 1 ? " +" + (q.n - 1) : ""),
+          function () { go("arch", otherId); }, q.routes.join("\n")) : null;
+      }
+      var reqOut = A_REQS.filter(function (q) { return q.s === c.id; });
+      var reqIn = A_REQS.filter(function (q) { return q.t === c.id; });
+      if (reqOut.length) body.push(sec("SENDS WEB REQUESTS TO", reqOut.map(function (q) { return reqRow(q, q.t); })));
+      if (reqIn.length) body.push(sec("SERVES WEB REQUESTS FROM", reqIn.map(function (q) { return reqRow(q, q.s); })));
       var reach = (c.stores || []).map(function (s) {
         var st = archFindById(A_STORES, s);
         return st ? row("store", st.label, st.kind, function () { go("arch", "store:" + s); }) : null;
@@ -4308,6 +4373,9 @@
       s.appendChild(el("g", { class: "arch-up" }, [el("path", { d: "M 4 17 C 4 6 26 14 26 3" })]));
     } else if (kind === "dash") {
       s.appendChild(el("path", { class: "arch-side-line", d: "M 2 10 L 28 10" }));
+    } else if (kind === "req") {
+      s.appendChild(el("g", { class: "arch-req" }, [el("path", { d: "M 2 10 L 22 10" }),
+        el("path", { class: "head", d: "M 28 10 l -7 -4 v 8 z" })]));
     }
     return el("div", { class: "rowitem flat" }, [s, el("span", { class: "rn", text: text })]);
   }
@@ -4365,16 +4433,31 @@
     return null;
   }
 
+  // HTTP routes (only when a codebase-memory index was merged in; model.py adds
+  // `routes` then): routeOut[i] = the routes symbol i calls that some handler
+  // in this repo serves. The call graph has no edge across that hop — the
+  // request leaves this code and comes back in as a different entry point —
+  // so a derived tree would otherwise stop at the API client call.
+  var routeOut = N.map(function () { return []; });
+  (DATA.routes || []).forEach(function (r) {
+    if (!(r.handlers || []).length) return;
+    (r.callers || []).forEach(function (c) { if (routeOut[c]) routeOut[c].push(r); });
+  });
+  function routeLabel(r) { return r.method && r.method !== "ANY" ? r.method + " " + r.url : r.url; }
+
   var SIM_BUDGET = 90, SIM_DEPTH_CAP = 7;
   function deriveSteps(rootI) {
     var steps = [], onStack = {};
-    function visit(i, fromI, line, conf, depth) {
+    function visit(i, fromI, line, conf, depth, route) {
       if (steps.length >= SIM_BUDGET) { steps.truncated = true; return; }
       var n = N[i];
       var recursive = !!onStack[i];
-      var cond = fromI != null ? condFor(N[fromI], line) : null;
+      var cond = fromI != null && !route ? condFor(N[fromI], line) : null;
       var user, code;
-      if (fromI == null) {
+      if (route) {
+        user = "The server receives the request — this is where the backend code runs.";
+        code = routeLabel(route) + " arrives at " + n.name + ".";
+      } else if (fromI == null) {
         user = "You run this — nothing is on screen yet.";
         code = n.qual + " starts.";
       } else {
@@ -4383,8 +4466,10 @@
           ? "Still waiting — several calls deep now, inside " + n.name + "."
           : "Still nothing on screen — execution just moved into " + n.name + ".";
       }
-      steps.push({ t: "call", node: i, from: fromI, line: line || null, cond: cond, conf: conf || null,
-        user: user, code: code });
+      var step = { t: "call", node: i, from: fromI, line: line || null, cond: cond, conf: conf || null,
+        user: user, code: code };
+      if (route) step.route = routeLabel(route);
+      steps.push(step);
       if (recursive) {
         steps.push({ t: "note", node: i, user: "", code: n.name + " calls itself — folded here to keep the trace readable." });
       } else if (depth >= SIM_DEPTH_CAP) {
@@ -4404,6 +4489,15 @@
         }
         onStack[i] = true;
         calls.forEach(function (c) { visit(c.t, i, c.line, c.conf, depth + 1); });
+        (routeOut[i] || []).forEach(function (r) {
+          r.handlers.slice(0, 2).forEach(function (h) {
+            if (h === i || onStack[h]) return;
+            steps.push({ t: "note", node: i, route: routeLabel(r),
+              user: "The request leaves this code and travels over the network to the server.",
+              code: n.name + " sends " + routeLabel(r) + " — the server's router hands it to " + N[h].name + "." });
+            visit(h, i, null, null, depth + 1, r);
+          });
+        });
         onStack[i] = false;
       }
       steps.push({ t: "return", node: i, user: "", code: n.name + " finishes and returns to its caller." });
@@ -6145,8 +6239,11 @@
     var out = [];
     var cats = WT.categories || [];
     (wtFolder.categories || []).forEach(function (catId) {
-      var cat = null;
-      for (var i = 0; i < cats.length; i++) if (cats[i].id === catId) { cat = cats[i]; break; }
+      var cat = null, want = String(catId).trim().toLowerCase();
+      // by id, or by title: walkthrough-schema.md has always told authors to write the
+      // title, and the id is a slug of it nobody sees, so an id-only match dropped them
+      for (var i = 0; i < cats.length; i++)
+        if (cats[i].id === catId || String(cats[i].title).trim().toLowerCase() === want) { cat = cats[i]; break; }
       if (!cat) return;
       (cat.groups || []).forEach(function (g) {
         var matched = [];

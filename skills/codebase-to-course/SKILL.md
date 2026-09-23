@@ -52,6 +52,21 @@ of the library, folder, or term you're describing — a bundled or authored
 glossary tooltip carries the definition now, so spend your sentences on what
 the thing is *for*.
 
+## Grounding tools
+
+Scenario steps, "only X does Y" claims and architecture corrections are factual
+claims about the code, so check them against a real call graph, not memory:
+
+- **Always:** `codemap calls <key> --out|--in` shows the calls the graph really
+  resolved, and `codemap check` (step 8) verifies every key you wrote.
+- **If your tools include a `codebase-memory` MCP server** (`trace_path`,
+  `get_architecture`, `search_graph`): use it as a second, independent engine —
+  index the repo if `list_projects` lacks it, cross-check scenarios with
+  `trace_path`, exclusivity claims with `search_graph`, and the Architecture
+  corrections with `get_architecture`. It is optional; never install it for the
+  user. Read `references/grounding-tools.md` before using it: it has the exact
+  calls and how to turn its names into codemap keys.
+
 ## Workflow
 
 1. **Index and emit the analysis pack.**
@@ -72,8 +87,9 @@ the thing is *for*.
    `architecture-derived.json`.
 
 2. **Read `00-overview.md`**, then the per-module briefs, plus
-   `references/content-philosophy.md` and `references/gotchas.md` (always) and
-   the schema files for whatever you're about to write: `references/walkthrough-schema.md`,
+   `references/content-philosophy.md` and `references/gotchas.md` (always),
+   `references/grounding-tools.md` (when you'll trace scenarios or make
+   "only X does Y" claims), and the schema files for whatever you're about to write: `references/walkthrough-schema.md`,
    `references/glossary-schema.md`, `references/libraries-schema.md`,
    `references/explanations-schema.md`, `references/scenarios-schema.md`,
    `references/architecture-schema.md`.
@@ -134,9 +150,12 @@ the thing is *for*.
 
    **Hero steps only.** Hand-author `steps` for just the 3–6 most important
    scenarios — narrate and trim the real tree in `scenarios-derived.json`, never
-   reconstruct a call tree by hand. For real branch/loop/output fidelity record
-   an actual run: `codemap trace --name "<title>" -- <command>` (never edit its
-   output by hand).
+   reconstruct a call tree by hand. Confirm each one with
+   `codemap calls <root key> --out --depth 4 --no-guesses`: every `call` step
+   must be an edge in that output, and a hop the graph can't show (a framework
+   calling your handler, a branch) says so in its `code` line. For real
+   branch/loop/output fidelity record an actual run:
+   `codemap trace --name "<title>" -- <command>` (never edit its output by hand).
 
    **Frontend screens are scenarios too.** If the Scenario index has `screen`/
    `layout` entries (codemap detects expo-router, Next.js app/pages router,
@@ -150,7 +169,12 @@ the thing is *for*.
    root already includes that hop when the code is written to import the API
    client directly). That one scenario is worth more than either half alone —
    it is the only place in the whole surface that shows how the two sides of
-   the app actually connect.
+   the app actually connect. When the overview has a **Route links** section
+   (only present with a codebase-memory index, see `references/grounding-tools.md`),
+   it names each web request, the code that sends it and the code that serves
+   it; the derived trees already cross those hops with a `note` step carrying a
+   `route` field, so narrate that step instead of inventing the connection (it
+   is the one hop `codemap calls` won't show).
 
    **Point at a safe first edit.** codemap never edits code — it only reads
    and explains it — but a `screen`/`layout` scenario's `summary` can still
@@ -174,16 +198,30 @@ the thing is *for*.
      a client for it (an ORM URL, a plain HTTP call).
    Skip the file entirely when nothing needs correcting.
 
-8. **Bake and review.**
+8. **Check what you wrote against the graph.** The renderer drops a bad entry
+   without a word, so this is the only place you learn about it.
+   ```
+   codemap check --json
+   ```
+   Fix every `error` (an entry that was dropped, or a key that matches no symbol;
+   each names the file, the path inside it, and often the key you probably meant)
+   and re-run until `"errors": 0`. Read each `warning` and either fix it or
+   decide it is deliberate: a key cut by the `max_symbols` budget, a walkthrough
+   `see` that points at a file codemap doesn't index, a glossary term nothing
+   uses. Never hand the work over with errors outstanding.
+
+9. **Bake and review.**
    ```
    codemap explore --open
    ```
-   First, grep-verify every exclusivity claim you wrote across all five files —
+   First, verify every exclusivity claim you wrote across all the files —
    `"only X does Y"`, `"the only place that…"`, `"nothing else touches this"` — before
-   baking. That phrasing reads as fact once it's on screen; an unverified one is worse
-   than no claim at all (see `references/scenarios-schema.md`'s Rules for the exact
-   check, and don't repeat the mistake this whole skill exists to fix: written prose
-   the underlying data doesn't back up).
+   baking: `codemap calls <Y's key> --in` lists the callers the graph found, and a
+   real grep covers what it can't see. That phrasing reads as fact once it's on
+   screen; an unverified one is worse than no claim at all (see
+   `references/scenarios-schema.md`'s Rules for the exact check, and don't repeat the
+   mistake this whole skill exists to fix: written prose the underlying data doesn't
+   back up).
    Learn tab: `intro` renders top to bottom (the `what` line, each side's
    `body`, the `seam` note if there is one); the category map's groups read as
    things a vibe coder would recognize, not tech labels; every folder the
@@ -222,6 +260,7 @@ the thing is *for*.
 - Cover the whole Dependency reference and the whole Scenario index — not a
   hand-picked few. `walkthrough.json`'s `folders` is different: write an entry
   only for the folders that earn one.
+- `codemap check` reports zero errors before you say you're done (step 8).
 
 See `references/` for the full rules; read each file only when you reach the
 step that needs it.

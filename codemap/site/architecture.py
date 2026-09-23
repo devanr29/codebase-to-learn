@@ -462,8 +462,10 @@ def build(
     manifest_paths: list[str] | None = None,
     read_bytes=None,
     overrides: dict | None = None,
+    routes: list[dict] | None = None,
 ) -> dict:
-    """See the module docstring and ``references/architecture-schema.md``."""
+    """See the module docstring and ``references/architecture-schema.md``.
+    ``routes`` (optional) is ``model.build``'s HTTP route links; see ``requests``."""
     overrides = overrides or {}
     cat = _catalog()
     by_path = {f["path"]: f for f in files}
@@ -816,6 +818,27 @@ def build(
             direction = "same"
         links.append({"s": s, "t": t, "n": n, "dir": direction})
 
+    # -- HTTP requests between components --------------------------------------
+    # A screen calling `/api/x` and the handler that serves it live in different
+    # components with no import between them, so the links above never show that
+    # seam. Kept apart from `links` on purpose: those are layer-ordered imports
+    # (a frontend calling a route handler would read as a wrong-way import there),
+    # these are requests that cross a boundary at runtime.
+    req_labels: dict[tuple[str, str], list[str]] = {}
+    for r in routes or []:
+        label = r["url"] if r.get("method") in (None, "", "ANY") else f'{r["method"]} {r["url"]}'
+        for ci in r.get("callers") or []:
+            for hi in r.get("handlers") or []:
+                s, t = comp_of.get(fi_of_node.get(ci)), comp_of.get(fi_of_node.get(hi))
+                if s is None or t is None or s == t:
+                    continue
+                if label not in req_labels.setdefault((s, t), []):
+                    req_labels[(s, t)].append(label)
+    requests = [
+        {"s": s, "t": t, "routes": sorted(labels), "n": len(labels)}
+        for (s, t), labels in sorted(req_labels.items(), key=lambda kv: (-len(kv[1]), kv[0]))
+    ]
+
     # -- actors ----------------------------------------------------------------
     actors: dict[str, dict] = {}
     for fi, kinds in entry_by_fi.items():
@@ -909,6 +932,7 @@ def build(
         "stores": sorted(stores.values(), key=lambda s: (-len(s["components"]), s["label"])),
         "services": sorted(services.values(), key=lambda s: (-len(s["components"]), s["label"])),
         "links": links,
+        "requests": requests,
         "declared_only": declared_only,
         "authored": bool(overrides),
     }

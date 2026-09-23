@@ -28,8 +28,11 @@ plain-line form.
 ## `codemap status`
 
 Prints the index state — commit/file/symbol/ref/change counts, and which
-`graph:` head `explore`/`snapshot` are currently reading. On first run in a
-repo, creates `.codemap/` and a default `config.toml`.
+`graph:` head `explore`/`snapshot` are currently reading, and the `engine:`
+line: `codemap only` with the reason (no codebase-memory-mcp index of this repo,
+an index format codemap doesn't know, or `engine.codebase_memory = "off"`), or
+`codemap + codebase-memory` when its index will be merged in by `explore`. On
+first run in a repo, creates `.codemap/` and a default `config.toml`.
 
 ```
 codemap status
@@ -109,6 +112,54 @@ codemap explore --open
 | `--if-enabled` | no-op unless `[explore] rebuild_on_commit` is true — this is what the post-commit hook calls, so it never fights a repo that's turned auto-rebuild off |
 | `--no-progress` | plain output only — see "Progress output" above |
 
+## `codemap check`
+
+Compares the skill-authored `.codemap/*.json` (`explanations`, `scenarios`,
+`walkthrough`, `libraries`, `architecture`, `glossary`) with the real graph and
+reports everything the renderer would drop without a word: a symbol key that
+matches nothing (with a "did you mean"), a scenario left with fewer than two
+resolvable steps, a library name with no Packages page, an architecture
+component that isn't a folder codemap groups by, an unparseable file. An
+**error** means the entry is lost or points at nothing; a **warning** means it
+still renders but probably isn't what was meant.
+
+```
+codemap check
+codemap check --json      # {"ok", "errors", "warnings", "issues": [{file, path, severity, message}], "authored"}
+codemap check --strict    # exit 1 when there are errors (default exit is 0)
+```
+
+`codemap explore` prints a one-line stderr note ("3 problems in the authored
+.codemap/*.json … run `codemap check`") whenever it finds errors, unless
+`--quiet`.
+
+## `codemap calls <symbol>`
+
+What a symbol calls, or what calls it, read off the same resolved call graph the
+Graph tab draws — every line is an edge codemap actually found, with the file
+and line of the call and its confidence (`EXTRACTED` for a same-file or
+class-owned call, `INFERRED` through an import, `AMBIGUOUS` for a name-only
+match that may be a false link). `<symbol>` is a `path::Name` key, a qualified
+name (`Class.method`) or a bare name; a bare name that matches several symbols
+lists the candidate keys and exits 1.
+
+```
+codemap calls cmd_explore                 # what it calls, 3 hops deep
+codemap calls build_report --in           # what calls it
+codemap calls svc/cli.py::main --both --depth 4 --no-guesses
+codemap calls build_report --json         # nodes + edges, for scripts and the course skill
+```
+
+| Flag | Does |
+|---|---|
+| `--out` / `--in` / `--both` | direction: callees (default), callers, or both |
+| `--depth N` | hops to follow (default 3); a `... more beyond depth N` line says when the cap hid more |
+| `--no-guesses` | leave out `AMBIGUOUS` edges, and whatever only they reach |
+| `--json` | `{"target", "depth", "out": {"nodes", "edges", "truncated"}, "in": …}` |
+
+A node already shown higher in the tree is marked `(*)` and not expanded again,
+so every edge appears exactly once and a cycle ends.
+
 ## `codemap trace -- <command>`
 
 Records a **real run** of your program as a call/return trace for the
@@ -160,3 +211,19 @@ Turn the explore-rebuild half off per-repo without uninstalling the hook:
 [explore]
 rebuild_on_commit = false
 ```
+
+## Optional engine (`[engine]`)
+
+If a [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) index
+of the repo exists, `explore` merges its call links into the graph (see
+`docs/spec.md` §20). Nothing to enable; to control it:
+
+```toml
+# .codemap/config.toml
+[engine]
+codebase_memory = "auto"   # "off" never looks
+cache_dir = ""             # empty = $CBM_CACHE_DIR, then ~/.cache/codebase-memory-mcp
+```
+
+Index the repo with `codebase-memory-mcp cli index_repository --repo-path .`, then
+`codemap status` shows whether it was found.
