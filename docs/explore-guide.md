@@ -564,8 +564,8 @@ Run `codemap scan` first.
 
 **A function you expected shows no callers**
 Check the tier badge in the inspector. "No callers at tier 1" means
-name-based resolution couldn't see them (aliased imports, dynamic dispatch),
-not that none exist.
+name-based resolution couldn't see them (a call through an `__init__.py`
+re-export, dynamic dispatch), not that none exist.
 
 **The Architecture tab puts a part in the wrong layer, or misses a database**
 Click the box and read "Why it's here": every reason it was placed there is

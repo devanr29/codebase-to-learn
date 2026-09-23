@@ -61,6 +61,18 @@ class ResolvedImport:
     external: bool            # a genuine third-party dependency
     kind: str = "internal"   # "internal" | "stdlib" | "third_party"
     module: str = ""          # the classified module string (e.g. "os.path", "./loader")
+    # Python only: every repo file the statement names (``target`` first) --
+    # ``from . import a, b`` reaches a.py *and* b.py, not just the first name.
+    targets: tuple[str, ...] = ()
+    # Python only: ``(local name, repo file)`` for each submodule the statement
+    # binds, e.g. ``from .site import model as _model`` -> ``("_model", "pkg/site/model.py")``.
+    bindings: tuple[tuple[str, str], ...] = ()
+
+    @property
+    def all_targets(self) -> tuple[str, ...]:
+        if self.targets:
+            return self.targets
+        return (self.target,) if self.target else ()
 
 
 def _entries(paths: set[str]) -> list[discovery.FileEntry]:
@@ -85,6 +97,84 @@ def _pkg_bases(paths: set[str]) -> dict[str, set[str]]:
         for i in range(len(segs) - 1):   # exclude the filename itself
             bases.setdefault(segs[i], set()).add("/".join(segs[:i]))
     return bases
+
+
+def _ordered_bases(
+    first: str, importer_pkg: PurePosixPath, pkg_bases: dict[str, set[str]] | None
+) -> list[str]:
+    importer_str = str(importer_pkg)
+    return sorted(
+        (pkg_bases or {}).get(first, ()),
+        key=lambda b: (0 if importer_str == b or importer_str.startswith(b + "/") else 1, b),
+    )
+
+
+_PY_FROM_RE = re.compile(r"^from\s+(?P<mod>\.*[\w.]*)\s+import\s+(?P<names>.+)$", re.DOTALL)
+_PY_IMPORT_RE = re.compile(r"^import\s+(?P<names>.+)$", re.DOTALL)
+
+
+def _py_names(body: str) -> list[tuple[str, str]]:
+    """``"a, b as c"`` (parentheses allowed) -> ``[("a", "a"), ("b", "c")]``."""
+    body = body.replace("(", " ").replace(")", " ")
+    out: list[tuple[str, str]] = []
+    for part in body.split(","):
+        bits = part.split()
+        if not bits or bits[0] == "*":
+            continue
+        out.append((bits[0], bits[2] if len(bits) >= 3 and bits[1] == "as" else bits[0]))
+    return out
+
+
+def _py_module_file(
+    mod: str, name: str, importer: str, paths: set[str], pkg_bases: dict[str, set[str]] | None
+) -> str | None:
+    """The repo file for module ``<mod>.<name>`` (``mod`` may be relative or
+    empty), or ``None`` when ``name`` isn't a module -- e.g. a function or class
+    that the package's ``__init__`` re-exports."""
+    importer_pkg = PurePosixPath(importer).parent
+    ups = len(mod) - len(mod.lstrip("."))
+    parts = [p for p in mod[ups:].split(".") if p]
+    if ups:
+        base = importer_pkg
+        for _ in range(ups - 1):
+            base = base.parent
+        roots = [[s for s in str(base).split("/") if s not in ("", ".")]]
+    else:
+        roots = [[]] + [b.split("/") for b in _ordered_bases((parts or [name])[0], importer_pkg, pkg_bases) if b]
+    for root in roots:
+        stem = "/".join([*root, *parts, name])
+        for cand in (f"{stem}.py", f"{stem}.pyi", f"{stem}/__init__.py"):
+            if cand in paths and cand != importer:
+                return cand
+    return None
+
+
+def _py_bindings(
+    raw: str, importer: str, paths: set[str], pkg_bases: dict[str, set[str]] | None
+) -> list[tuple[str, str]]:
+    """``(local name, repo file)`` for every module a Python import statement
+    binds: ``from X import a, b as c`` (when a/b are modules) and
+    ``import X as m`` / ``import m``. ``import a.b`` without an alias binds only
+    ``a``, so it is not a binding of the file ``a/b.py``."""
+    text = raw.strip()
+    out: list[tuple[str, str]] = []
+    m = _PY_FROM_RE.match(text)
+    if m:
+        for name, local in _py_names(m.group("names")):
+            f = _py_module_file(m.group("mod"), name, importer, paths, pkg_bases)
+            if f:
+                out.append((local, f))
+        return out
+    m = _PY_IMPORT_RE.match(text)
+    if m:
+        for dotted, local in _py_names(m.group("names")):
+            if local == dotted and "." in dotted:
+                continue
+            head, _, last = dotted.rpartition(".")
+            f = _py_module_file(head, last, importer, paths, pkg_bases)
+            if f:
+                out.append((local, f))
+    return out
 
 
 def _py_candidates(
@@ -115,12 +205,7 @@ def _py_candidates(
         # base first, since that's the far more likely intended package when
         # more than one directory happens to hold the same top-level name.
         if pkg_bases and parts:
-            importer_str = str(importer_pkg)
-            bases = sorted(
-                pkg_bases.get(parts[0], ()),
-                key=lambda b: (0 if importer_str == b or importer_str.startswith(b + "/") else 1, b),
-            )
-            for base_dir in bases:
+            for base_dir in _ordered_bases(parts[0], importer_pkg, pkg_bases):
                 stems.append("/".join([base_dir, *parts]))
                 if len(parts) > 1:
                     stems.append("/".join([base_dir, *parts[:-1]]))
@@ -198,7 +283,15 @@ def resolve_imports(
             else _ts_candidates(mod, importer)
         )
         target = next((c for c in cands if c in paths and c != importer), None)
-        out.append(ResolvedImport(importer, raw, target, False, kind, mod))
+        targets: list[str] = [target] if target else []
+        bindings: list[tuple[str, str]] = []
+        if lang == "python":
+            bindings = _py_bindings(raw, importer, paths, pkg_bases)
+            targets.extend(f for _, f in bindings if f not in targets)
+            target = target or (targets[0] if targets else None)
+        out.append(
+            ResolvedImport(importer, raw, target, False, kind, mod, tuple(targets), tuple(bindings))
+        )
     return out
 
 

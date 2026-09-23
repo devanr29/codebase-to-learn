@@ -23,8 +23,10 @@ also a common backend folder name.
 
 from __future__ import annotations
 
+import io
 import json
 import re
+import tokenize
 import tomllib
 from dataclasses import dataclass
 from pathlib import PurePosixPath
@@ -187,8 +189,40 @@ def scheduler_symbol_ranges(source: bytes) -> list[tuple[int, int]]:
     The decorator form (``@shared_task``/``@scheduled_job``) is already
     covered by ``from_decorators`` — this is only the plain-call cousin.
     Matched against the raw bytes (not a decoded string) so offsets line up
-    exactly with ``Symbol.start_byte``/``end_byte``."""
-    return [(m.start(), m.end()) for m in _PY_SCHEDULER_CALL.finditer(source)]
+    exactly with ``Symbol.start_byte``/``end_byte``. A mention inside a string
+    literal or comment (a docstring describing ``add_job(``, a test's sample
+    source) is not a registration and is skipped."""
+    hits = [(m.start(), m.end()) for m in _PY_SCHEDULER_CALL.finditer(source)]
+    if not hits:
+        return hits
+    literals = _literal_byte_spans(source)
+    if literals is None:
+        return hits
+    return [h for h in hits if not any(a <= h[0] < b for a, b in literals)]
+
+
+def _literal_byte_spans(source: bytes) -> list[tuple[int, int]] | None:
+    """Byte spans of every string literal and comment in Python ``source``, or
+    ``None`` if it doesn't tokenize (broken file -- the caller keeps every hit)."""
+    text = source.decode("utf-8", "replace")
+    lines = text.splitlines(keepends=True)
+    starts = [0]
+    for line in lines:
+        starts.append(starts[-1] + len(line.encode("utf-8")))
+
+    def offset(pos: tuple[int, int]) -> int:
+        row, col = pos
+        return starts[row - 1] + len(lines[row - 1][:col].encode("utf-8"))
+
+    skip = {tokenize.STRING, tokenize.COMMENT, getattr(tokenize, "FSTRING_MIDDLE", tokenize.STRING)}
+    try:
+        return [
+            (offset(t.start), offset(t.end))
+            for t in tokenize.generate_tokens(io.StringIO(text).readline)
+            if t.type in skip
+        ]
+    except (tokenize.TokenError, SyntaxError, IndexError):
+        return None
 
 
 # --------------------------------------------------------------- frontend roots

@@ -894,6 +894,24 @@ call into production or other test code freely).
 `Z(...)` back to the symbol actually named `Y`, so an alias no longer reads
 as unresolvable dynamic dispatch on the Simulate tab.
 
+**Module bindings (0.3.1).** A Python import that names *modules* now binds
+each local name to its file. `resolve.resolve_imports` gives every
+`ResolvedImport` a `targets` tuple (one per resolvable name, so
+`from . import a, b, c` reaches all three files, not just `a`) and a
+`bindings` tuple of `(local name, repo file)` (`from .site import model as _model`
+binds `_model` → `site/model.py`; `import x.y as m` binds `m` → `x/y.py`; a name
+that is a function, not a module, binds nothing). `impact.call_graph` uses the
+bindings for a `v:<name>` receiver: `_model.build()` resolves into exactly that
+file's top-level `build` (`INFERRED`, or `AMBIGUOUS` if the module defines
+several), and it does so *ahead of* `_STOP_METHOD_NAMES` — a module alias is
+proof of the receiver's type, so `config.get()` links while `body.get()` still
+does not. A same-named function in another module is never reached. Still
+unresolved: a capitalized module alias (an `N:` receiver) and a call through an
+`__init__.py` re-export. A method called on a local variable can still match a
+same-named repo function by import evidence, drawn `AMBIGUOUS`.
+`site/model.py` builds its file-to-file edges and dependency lists from the same
+`all_targets`.
+
 **Confidence now decides whether an edge exists**, not just how it's drawn —
 the opposite of M17's guarantee (§15). The explorer still shows which tier
 won (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`) so a guess stays visibly a guess:
@@ -901,7 +919,11 @@ Graph draws an `AMBIGUOUS` edge dashed; fan-in/fan-out, blast radius, the
 entry path and Simulate's derived scenarios all count confident edges only,
 with a "+N guessed" note where that matters. `entrypoints.py` also gained
 APScheduler/`schedule` detection (`add_job(...)`, `BackgroundScheduler()`,
-`schedule.every(...)`) for the Scheduler actor, and records a `main` entry
+`schedule.every(...)`) for the Scheduler actor (a mention inside a string
+literal, a docstring or a comment is skipped, using the stdlib `tokenize`, so a
+test's sample source never registers a job; a file that doesn't tokenize falls
+back to the raw match, and already-indexed unchanged files need
+`codemap scan --rebuild` to pick the fix up), and records a `main` entry
 for every `__main__` guard so a standalone script gets a Terminal actor
 wherever its file landed (`entry` or `shared`), not only inside the entry
 layer — see §18.
@@ -1029,7 +1051,7 @@ Put this in the generated `README.md` verbatim:
 - Dynamic imports, `getattr`/dictionary dispatch, string-based routing, dependency injection,
   metaclass-generated methods, and wrapping decorators are invisible or distorted in the graph
 - At T1, caller lists are name-based: expect false positives, and false negatives across
-  aliased imports
+  re-exports and capitalized module aliases
 - Impact analysis is structural only. It cannot tell you whether a change is *correct*
 - Intent marked `inferred` is a guess, not a record
 

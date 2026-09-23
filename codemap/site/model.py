@@ -372,20 +372,22 @@ def build(
             fi = path_to_fi.get(ri.importer)
             if fi is None:
                 continue
-            token = _pkg_token(ri.module) if ri.kind != "internal" else _internal_token(ri)
-            if token and token != "__future__":  # `from __future__ import …` is pure boilerplate
-                deps_by_file.setdefault(fi, {}).setdefault(token, ri.kind)
-                if ri.kind in ("third_party", "stdlib"):
-                    dep_importers.setdefault((token, ri.kind), set()).add(ri.importer)
+            tokens = [_pkg_token(ri.module)] if ri.kind != "internal" else _internal_tokens(ri)
+            for token in tokens:
+                if token and token != "__future__":  # `from __future__ import …` is pure boilerplate
+                    deps_by_file.setdefault(fi, {}).setdefault(token, ri.kind)
+                    if ri.kind in ("third_party", "stdlib"):
+                        dep_importers.setdefault((token, ri.kind), set()).add(ri.importer)
             if ri.external:
                 name = _dep_token(ri.raw, ri.importer)
                 if name:
                     external_by_file.setdefault(fi, set()).add(name)
                     all_external.add(name)
-            elif ri.target is not None:
-                tj = path_to_fi.get(ri.target)
-                if tj is not None and tj != fi:
-                    file_edges_set.add((fi, tj))
+            else:
+                for target in ri.all_targets:
+                    tj = path_to_fi.get(target)
+                    if tj is not None and tj != fi:
+                        file_edges_set.add((fi, tj))
 
         _KIND_RANK = {"third_party": 0, "stdlib": 1, "internal": 2}
 
@@ -669,15 +671,13 @@ def _pkg_token(module: str) -> str:
     return m.split("/")[0].split(".")[0]
 
 
-def _internal_token(ri) -> str:
-    """In-repo import -> a readable module name. Prefer the dotted module; fall
-    back to the resolved file path for bare ``from . import x`` forms."""
+def _internal_tokens(ri) -> list[str]:
+    """In-repo import -> readable module names. Prefer the dotted module; fall
+    back to the resolved file paths for bare ``from . import x, y`` forms."""
     m = (ri.module or "").lstrip(".").strip()
     if m:
-        return m
-    if ri.target:
-        return ri.target.rsplit(".", 1)[0].replace("/", ".")
-    return ""
+        return [m]
+    return [t.rsplit(".", 1)[0].replace("/", ".") for t in ri.all_targets]
 
 
 def _timeline(

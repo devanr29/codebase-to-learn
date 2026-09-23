@@ -55,7 +55,7 @@ def load(cfg: Config) -> dict[str, dict]:
         if not isinstance(definition, str) or not definition.strip():
             continue
         display = entry.get("display")
-        display = display.strip() if isinstance(display, str) and display.strip() else key.strip().title()
+        display = display.strip() if isinstance(display, str) and display.strip() else key.strip()
         items[key.strip()] = {"display": display, "definition": definition.strip()}
     return items
 

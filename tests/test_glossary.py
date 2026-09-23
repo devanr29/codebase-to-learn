@@ -48,6 +48,29 @@ def test_project_glossary_load_absent_invalid_then_valid(fixture_impact_repo, tm
         gf.unlink(missing_ok=True)
 
 
+def test_project_glossary_display_defaults_to_the_key_verbatim(fixture_impact_repo):
+    # The explorer matches tooltips case-sensitively against the display name, so a
+    # missing display must be the key as written -- not a title-cased version of it.
+    cfg = config.load(fixture_impact_repo.path)
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    gf = cfg.codemap_dir / "glossary.json"
+    try:
+        gf.write_text(json.dumps({"items": {
+            "cosmetic": {"definition": "Only changes how it looks."},
+            "SHA-256": {"definition": "A fingerprint."},
+        }}), encoding="utf-8")
+
+        loaded = glossary.load(cfg)
+        assert loaded["cosmetic"]["display"] == "cosmetic"
+        assert loaded["SHA-256"]["display"] == "SHA-256"
+
+        result = glossary.build(cfg, ["A cosmetic change, hashed with SHA-256."])
+        assert result is not None
+        assert set(result["terms"]) >= {"cosmetic", "SHA-256"}
+    finally:
+        gf.unlink(missing_ok=True)
+
+
 def test_build_filters_to_prose(fixture_impact_repo):
     cfg = config.load(fixture_impact_repo.path)
     cfg.codemap_dir.mkdir(exist_ok=True)

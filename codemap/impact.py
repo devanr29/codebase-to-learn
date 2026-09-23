@@ -128,10 +128,13 @@ def _path_of(key: str) -> str:
 
 def _imports_by_file(
     conn: sqlite3.Connection, sha: str, aliases: list[resolve.TsAlias] | None = None
-) -> dict[str, set[str]]:
-    """``file path -> resolved file paths it imports``, at ``sha`` — the
+) -> tuple[dict[str, set[str]], dict[str, dict[str, set[str]]]]:
+    """``(file path -> resolved file paths it imports, file path -> {local
+    module name: the repo files it is bound to})``, at ``sha``. The first is the
     evidence a call needs to earn ``INFERRED`` rather than falling all the way
-    to a global, over-broad name match (spec M15 resolution uplift)."""
+    to a global, over-broad name match (spec M15 resolution uplift); the second
+    lets ``_model.build(...)`` (``from .site import model as _model``) resolve
+    into ``model.py`` and nowhere else."""
     paths = {
         r["path"]
         for r in conn.execute(
@@ -149,10 +152,13 @@ def _imports_by_file(
         )
     ]
     out: dict[str, set[str]] = {}
+    modules: dict[str, dict[str, set[str]]] = {}
     for ri in resolve.resolve_imports(pairs, paths, aliases=aliases):
-        if ri.target:
-            out.setdefault(ri.importer, set()).add(ri.target)
-    return out
+        for target in ri.all_targets:
+            out.setdefault(ri.importer, set()).add(target)
+        for local, target in ri.bindings:
+            modules.setdefault(ri.importer, {}).setdefault(local, set()).add(target)
+    return out, modules
 
 
 def _is_test_path(path: str) -> bool:
@@ -242,7 +248,7 @@ def call_graph(
         name_to_keys.setdefault(r["name"], []).append(r["key"])
         g.add_node(r["key"])
 
-    imports_by_file = _imports_by_file(conn, sha, aliases=aliases)
+    imports_by_file, module_bindings = _imports_by_file(conn, sha, aliases=aliases)
     py_aliases = _py_import_aliases(conn, sha)
 
     _fam_cache: dict[str, str | None] = {}
@@ -299,6 +305,18 @@ def call_graph(
             if len(via_import) == 1:
                 g.add_edge(src, via_import[0], confidence=INFERRED)
             continue
+
+        if receiver.startswith("v:"):
+            bound = module_bindings.get(src_path, {}).get(receiver[2:])
+            if bound:
+                # `mod.name(...)` on an imported module: only that module's own
+                # top-level name can be meant -- proven by the import, so it
+                # also outranks the stop-list and never falls through to a guess.
+                in_module = [k for k in candidates if _path_of(k) in bound and _owner_of(k) is None]
+                confidence = INFERRED if len(in_module) == 1 else AMBIGUOUS
+                for dst in in_module:
+                    g.add_edge(src, dst, confidence=confidence)
+                continue
 
         if receiver == "self":
             owner = _owner_of(src)

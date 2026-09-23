@@ -4,6 +4,26 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-09-24
+
+Three defects found by running `codebase-to-course` on codemap's own source.
+
+### Fixed
+- **Calls through an imported module now resolve.** `from . import a, b, c` only
+  ever looked at `a`, and `from .site import model as _model` resolved to the
+  package instead of `model.py`, so `_model.build(...)` had no caller in the Graph
+  and `config.load(...)` was linked to an unrelated `intent.load`. A call on a
+  module name (`config.load()`, `_model.build()`) now lands in exactly that module,
+  `INFERRED`, even for a name on the method stop-list (`config.get()`). File-to-file
+  import edges and the Graph's dependency lists now include every module named in
+  a multi-name import. Nothing to rebuild; the call graph is computed on read.
+- **A glossary term with no `display` keeps the case it was written in** (it was
+  title-cased, so `"cosmetic"` never matched lowercase prose and its tooltip never
+  appeared). This is what `glossary-schema.md` already documented.
+- **Docstrings and string literals are no longer "background jobs".** A mention of
+  `add_job(` in a docstring or a test's sample source counted as a scheduler
+  registration. Run `codemap scan --rebuild` to clear ones already indexed.
+
 ## [0.3.0] — 2026-09-23
 
 Aimed at the person reading the explorer, not at the graph engine. The prose the

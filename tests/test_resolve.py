@@ -225,3 +225,55 @@ def test_load_ts_aliases_from_worktree(tmp_path):
     assert aliases == [
         resolve.TsAlias(config_dir="mobile", pattern="@/*", targets=("mobile/src/*",))
     ]
+
+
+_PKG = {
+    "pkg/__init__.py", "pkg/cli.py", "pkg/config.py", "pkg/db.py", "pkg/intent.py",
+    "pkg/site/__init__.py", "pkg/site/model.py",
+}
+
+
+def _resolved(*raws):
+    return {r.raw: r for r in resolve.resolve_imports([("pkg/cli.py", raw) for raw in raws], _PKG)}
+
+
+def test_from_import_of_several_names_reaches_every_submodule():
+    # `__version__` is a variable in pkg/__init__.py, not a module, so it binds nothing --
+    # but it used to be the only name looked at, hiding config.py and db.py entirely.
+    r = _resolved("from . import __version__, config, db")["from . import __version__, config, db"]
+    assert r.all_targets == ("pkg/config.py", "pkg/db.py")
+    assert r.bindings == (("config", "pkg/config.py"), ("db", "pkg/db.py"))
+    assert r.target == "pkg/config.py"
+
+
+def test_aliased_submodule_import_binds_the_module_file_not_the_package():
+    r = _resolved("from .site import model as _model")["from .site import model as _model"]
+    assert r.bindings == (("_model", "pkg/site/model.py"),)
+    assert set(r.all_targets) == {"pkg/site/__init__.py", "pkg/site/model.py"}
+
+
+def test_parenthesised_multiline_import_is_read():
+    raw = "from . import ( config, db as _db, )"
+    r = _resolved(raw)[raw]
+    assert r.bindings == (("config", "pkg/config.py"), ("_db", "pkg/db.py"))
+
+
+def test_import_module_binds_only_with_an_alias_or_a_single_segment():
+    out = _resolved("import pkg.db as d", "import pkg.config", "import pkg")
+    assert out["import pkg.db as d"].bindings == (("d", "pkg/db.py"),)
+    assert out["import pkg.config"].bindings == ()          # binds `pkg`, not pkg/config.py
+    assert out["import pkg.config"].target == "pkg/config.py"  # the file edge is unchanged
+    assert out["import pkg"].bindings == (("pkg", "pkg/__init__.py"),)
+
+
+def test_from_import_of_a_function_binds_no_module():
+    # `from pkg.config import load` names a symbol, not a submodule
+    r = _resolved("from pkg.config import load")["from pkg.config import load"]
+    assert r.bindings == ()
+    assert r.all_targets == ("pkg/config.py",)
+
+
+def test_star_and_unresolvable_names_are_ignored():
+    out = _resolved("from . import *", "from . import nothing_here")
+    assert out["from . import *"].bindings == ()
+    assert out["from . import nothing_here"].bindings == ()

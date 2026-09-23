@@ -291,6 +291,34 @@ def test_scheduler_symbol_ranges_finds_plain_registration_calls():
     assert entrypoints.scheduler_symbol_ranges(b"def f():\n    return 1\n") == []
 
 
+def test_scheduler_mentions_in_strings_and_comments_are_not_registrations():
+    src = (
+        b'def describe():\n'
+        b'    """Tells you how sched.add_job(fn) or BackgroundScheduler() is used."""\n'
+        b'    # schedule.every(5).minutes is what you would write\n'
+        b'    sample = b"sched.add_job(sync)"\n'
+        b'    return sample\n'
+    )
+    assert entrypoints.scheduler_symbol_ranges(src) == []
+
+
+def test_scheduler_call_still_found_next_to_a_docstring_mention_and_non_ascii():
+    src = (
+        'def register(sched):\n'
+        '    """Adds sched.add_job(x) -- é."""\n'
+        '    sched.add_job(sync, "interval", minutes=5)\n'
+    ).encode("utf-8")
+    spans = entrypoints.scheduler_symbol_ranges(src)
+    assert len(spans) == 1
+    assert src[spans[0][0]:spans[0][1]] == b".add_job("
+    assert src[:spans[0][0]].endswith(b"    sched")  # the real call, not the docstring one
+
+
+def test_scheduler_ranges_fall_back_to_raw_matches_when_the_file_does_not_tokenize():
+    src = b'def broken(:\n    sched.add_job(sync)\n"""unterminated\n'
+    assert len(entrypoints.scheduler_symbol_ranges(src)) == 1
+
+
 def test_render_root_unwraps_strict_mode_to_find_the_real_app():
     src = """
 ReactDOM.createRoot(document.getElementById('root')).render(
