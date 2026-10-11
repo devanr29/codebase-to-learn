@@ -6,6 +6,8 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-10-11
+
 ### Added
 - **JS/TS web requests are tied to the route that serves them, with no other
   engine.** New `codemap/enrich/jsfacts.py` reads `fetch` / `axios`-style calls
@@ -332,6 +334,9 @@ This release fixes all of it, by phase.
   `/explore` and `/review` slash commands.
 - Post-commit hook for diff explanations.
 
+[0.4.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.3.1...v0.4.0
+[0.3.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.4...v0.3.0
 [0.2.4]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.2...v0.2.3
 [0.2.2]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.1...v0.2.2
