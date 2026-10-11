@@ -440,9 +440,13 @@ _RENDER_ROOT_RE = re.compile(
 )
 _JSX_TAG_RE = re.compile(r"<\s*(?P<name>[A-Z][\w$]*)")
 # `<React.StrictMode><App/></React.StrictMode>` is the standard CRA/Vite
-# scaffold around a render root — common enough to special-case: unwrap it to
+# scaffold around a render root, and app-wide providers/routers (Redux
+# `<Provider>`, `<BrowserRouter>`, `<Suspense>`) wrap it the same way — unwrap them to
 # find the real root component instead of reporting the wrapper.
-_KNOWN_WRAPPERS = frozenset({"StrictMode"})
+_KNOWN_WRAPPERS = frozenset({
+    "StrictMode", "Provider", "BrowserRouter", "HashRouter", "MemoryRouter", "Router",
+    "Suspense", "ErrorBoundary", "ThemeProvider", "QueryClientProvider", "ApolloProvider",
+})
 _UNWRAP_WINDOW = 400
 
 
@@ -457,14 +461,55 @@ def _unwrap_known_wrapper(source_text: str, after: int, comp: str | None) -> str
     return comp
 
 
+# local name -> (module specifier, imported name | "default"), for a routed
+# component that lives in another file (indexer._resolve_routed_screens).
+_ES_IMPORT_RE = re.compile(
+    r"""\bimport\s+(?:(?P<default>[A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{(?P<named>[^}]*)\}\s*)?"""
+    r"""from\s*(?P<q>['"])(?P<src>[^'"]+)(?P=q)"""
+)
+_REQUIRE_RE = re.compile(
+    r"""\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*require\(\s*(?P<q>['"])(?P<src>[^'"]+)(?P=q)\s*\)"""
+)
+# React.lazy / loadable / next/dynamic: `const Home = lazy(() => import('./Home'))`
+_LAZY_RE = re.compile(
+    r"""\b(?:const|let|var)\s+(?P<name>[A-Za-z_$][\w$]*)\s*=\s*(?:React\.)?(?:lazy|loadable|dynamic)\(\s*"""
+    r"""(?:async\s*)?\(\s*\)\s*=>\s*import\(\s*(?P<q>['"])(?P<src>[^'"]+)(?P=q)"""
+)
+
+
+def import_bindings(source_text: str) -> dict[str, tuple[str, str]]:
+    """Best-effort ``{local name: (specifier, imported name)}`` for a JS/TS
+    file — ES imports, ``require`` and lazy ``import()`` components. Regex over
+    the source, like the rest of this section."""
+    out: dict[str, tuple[str, str]] = {}
+    for m in _ES_IMPORT_RE.finditer(source_text):
+        src = m.group("src")
+        if m.group("default"):
+            out[m.group("default")] = (src, "default")
+        for part in (m.group("named") or "").split(","):
+            bits = part.strip().split()
+            if not bits or bits[0] == "type":
+                continue
+            if len(bits) == 3 and bits[1] == "as":
+                out[bits[2]] = (src, "default" if bits[0] == "default" else bits[0])
+            elif len(bits) == 1:
+                out[bits[0]] = (src, bits[0])
+    for m in _REQUIRE_RE.finditer(source_text):
+        out[m.group("name")] = (m.group("src"), "default")
+    for m in _LAZY_RE.finditer(source_text):
+        out[m.group("name")] = (m.group("src"), "default")
+    return out
+
+
 def from_source(source_text: str, lang: str) -> list[SourceHit]:
     """Registration-based frontend entry points: content regexes, best-effort
     — the file-based detectors above carry the reliable path; this catches
     what they structurally can't (a screen registered by name rather than by
-    file location, an app's render root). The biggest real gap: a routed
-    component almost always comes from an ``import``, and resolution here is
-    scoped to *this file's own* symbols — the same limitation the file-based
-    detectors don't have, and the reason those are the reliable half."""
+    file location, an app's render root). A routed component almost always
+    comes from an ``import``: the indexer resolves a hit against this file's own
+    symbols first, then follows a relative import (``import_bindings``) through
+    ``route_registrations`` once the whole snapshot is indexed. Path aliases
+    (``@/screens/...``) and barrel re-exports are not followed."""
     if lang not in ("javascript", "typescript", "tsx"):
         return []
     out: list[SourceHit] = []
@@ -479,7 +524,8 @@ def from_source(source_text: str, lang: str) -> list[SourceHit]:
     for m in _RR_ROUTE_RE.finditer(source_text):
         attrs = m.group("attrs")
         path_m = _ATTR_PATH_RE.search(attrs)
-        el_m = _ATTR_ELEMENT_RE.search(attrs)
+        # v6+ `element={<X />}`, or v4/v5 `component={X}`
+        el_m = _ATTR_ELEMENT_RE.search(attrs) or _ATTR_COMPONENT_RE.search(attrs)
         if not path_m and not el_m:
             continue
         detail = path_m.group("val") if path_m else "/"

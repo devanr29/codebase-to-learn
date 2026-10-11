@@ -21,6 +21,7 @@ _PRUNE_STATEMENTS = (
     "DELETE FROM imports WHERE commit_sha=?",
     "DELETE FROM file_versions WHERE commit_sha=?",
     "DELETE FROM entry_points WHERE commit_sha=?",
+    "DELETE FROM route_registrations WHERE commit_sha=?",
 )
 
 

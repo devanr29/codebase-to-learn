@@ -89,6 +89,20 @@ CREATE TABLE IF NOT EXISTS entry_points (
     detail     TEXT
 );
 
+-- A screen registered in one file but defined in another
+-- (`<Route path="/x" component={X} />` with X imported). Stored per router
+-- file; indexer._resolve_routed_screens turns them into entry_points.
+CREATE TABLE IF NOT EXISTS route_registrations (
+    id         INTEGER PRIMARY KEY,
+    commit_sha TEXT,
+    file_id    INTEGER,
+    kind       TEXT,
+    detail     TEXT,
+    local_name TEXT,
+    imported   TEXT,
+    source     TEXT
+);
+
 CREATE TABLE IF NOT EXISTS changes (
     id           INTEGER PRIMARY KEY,
     commit_sha   TEXT,

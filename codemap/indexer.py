@@ -244,6 +244,7 @@ def _clear_file_rows(conn: sqlite3.Connection, file_id: int, sha: str) -> None:
         "(SELECT id FROM symbols WHERE file_id=?)",
         (sha, file_id),
     )
+    conn.execute("DELETE FROM route_registrations WHERE commit_sha=? AND file_id=?", (sha, file_id))
 
 
 def _route_component_key(pf: ParsedFile, name_to_key: dict[str, str]) -> str | None:
@@ -380,9 +381,24 @@ def _write_parsed(
                     "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
                     (sha, key_to_id[comp_key], kind, detail),
                 )
-        for hit in entrypoints.from_source(source.decode("utf-8", "replace"), pf.lang):
+        text = source.decode("utf-8", "replace")
+        bindings: dict[str, tuple[str, str]] | None = None
+        for hit in entrypoints.from_source(text, pf.lang):
             key = name_to_key.get(hit.component) if hit.component else None
             if key is None:
+                # the routed component is imported from another file, which may
+                # not be indexed yet: record it; _resolve_routed_screens ties it
+                # to a symbol once the whole snapshot is in
+                if hit.component:
+                    if bindings is None:
+                        bindings = entrypoints.import_bindings(text)
+                    bound = bindings.get(hit.component)
+                    if bound and bound[0].startswith("."):
+                        conn.execute(
+                            "INSERT INTO route_registrations(commit_sha, file_id, kind, detail, "
+                            "local_name, imported, source) VALUES(?,?,?,?,?,?,?)",
+                            (sha, file_id, hit.kind, hit.detail, hit.component, bound[1], bound[0]),
+                        )
                 continue
             conn.execute(
                 "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
@@ -425,6 +441,95 @@ def _carry_forward(conn: sqlite3.Connection, file_id: int, src_sha: str, dst_sha
         "WHERE commit_sha=? AND symbol_id IN (SELECT id FROM symbols WHERE file_id=?)",
         (dst_sha, src_sha, file_id),
     )
+    conn.execute(
+        "INSERT INTO route_registrations(commit_sha, file_id, kind, detail, local_name, imported, source) "
+        "SELECT ?, file_id, kind, detail, local_name, imported, source FROM route_registrations "
+        "WHERE commit_sha=? AND file_id=?",
+        (dst_sha, src_sha, file_id),
+    )
+
+
+# entry_points rows made by _resolve_routed_screens carry this in `detail`, so
+# the pass can drop and rebuild exactly its own rows every time
+_ROUTED_IN = "  ·  registered in "
+_ROUTE_EXTS = (".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx")
+
+
+def _resolve_routed_screens(conn: sqlite3.Connection, sha: str) -> None:
+    """Tie each ``route_registrations`` row (a ``<Route component={X}>`` whose X
+    is imported) to X's symbol in the file it's imported from. Recomputed from
+    scratch for the whole snapshot on every index, because either side can
+    change without the other: the router file, or the screen it points at."""
+    conn.execute(
+        "DELETE FROM entry_points WHERE commit_sha=? AND detail LIKE ?",
+        (sha, f"%{_ROUTED_IN}%"),
+    )
+    regs = conn.execute(
+        "SELECT rr.kind, rr.detail, rr.local_name, rr.imported, rr.source, f.path "
+        "FROM route_registrations rr JOIN files f ON f.id = rr.file_id WHERE rr.commit_sha=?",
+        (sha,),
+    ).fetchall()
+    if not regs:
+        return
+    present = {
+        r["path"]: r["id"]
+        for r in conn.execute(
+            "SELECT f.id, f.path FROM file_versions fv JOIN files f ON f.id = fv.file_id "
+            "WHERE fv.commit_sha=? AND fv.status != 'deleted'",
+            (sha,),
+        )
+    }
+    seen: set[tuple[int, str]] = set()
+    for reg in regs:
+        target = _relative_module(reg["source"], reg["path"], present)
+        if target is None:
+            continue
+        syms = conn.execute(
+            "SELECT s.id, s.name, s.kind, s.qualified_name FROM symbols s "
+            "JOIN symbol_versions sv ON sv.symbol_id = s.id AND sv.commit_sha=? "
+            "WHERE s.file_id=? ORDER BY sv.start_line",
+            (sha, present[target]),
+        ).fetchall()
+        top = [s for s in syms if s["qualified_name"] == s["name"]]
+        want = reg["local_name"] if reg["imported"] == "default" else reg["imported"]
+        pick = next((s for s in top if s["name"] == want), None)
+        if pick is None and reg["imported"] == "default":
+            # `export default` of a differently named component: the React
+            # convention _route_component_key also falls back on
+            pick = next((s for s in top if s["kind"] in ("function", "class") and s["name"][:1].isupper()), None)
+        if pick is None:
+            continue
+        detail = f"{reg['detail']}{_ROUTED_IN}{reg['path']}"
+        if (pick["id"], detail) in seen:
+            continue
+        seen.add((pick["id"], detail))
+        conn.execute(
+            "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+            (sha, pick["id"], reg["kind"], detail),
+        )
+
+
+def _relative_module(spec: str, importer: str, present: dict[str, int]) -> str | None:
+    parts = importer.split("/")[:-1]
+    for seg in spec.split("/"):
+        if seg in ("", "."):
+            continue
+        if seg == "..":
+            if not parts:
+                return None
+            parts.pop()
+        else:
+            parts.append(seg)
+    stem = "/".join(parts)
+    if stem in present:
+        return stem
+    for ext in _ROUTE_EXTS:
+        if f"{stem}{ext}" in present:
+            return f"{stem}{ext}"
+    for ext in _ROUTE_EXTS:
+        if f"{stem}/index{ext}" in present:
+            return f"{stem}/index{ext}"
+    return None
 
 
 def _mark_deleted(conn: sqlite3.Connection, file_id: int, sha: str) -> None:
@@ -534,6 +639,7 @@ def index_commit(
                 _mark_deleted(conn, row["id"], sha)
 
     _index_repo_entry_points(conn, root, sha)
+    _resolve_routed_screens(conn, sha)
 
     set_meta(conn, "last_indexed_commit", sha)
     conn.commit()
@@ -657,6 +763,7 @@ def _index_worktree(
             row = conn.execute("SELECT id FROM files WHERE path=?", (path,)).fetchone()
             if row:
                 _mark_deleted(conn, row["id"], sha)
+    _resolve_routed_screens(conn, sha)
     conn.commit()
 
 

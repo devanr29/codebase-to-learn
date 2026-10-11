@@ -26,19 +26,20 @@
 ;; a function handed straight to a wrapper is still a named function:
 ;; `const getX = asyncHandler(async (req, res) => ...)`, `memo(() => ...)`,
 ;; `forwardRef(function (props, ref) {...})`. Timers and value hooks run a
-;; callback but don't *define* one, so they're excluded.
+;; callback but don't *define* one, and lazy()/loadable()/dynamic() wrap an
+;; import() of another file's component, so they're excluded.
 (variable_declarator
   name: (identifier) @name
   value: (call_expression
     function: (_) @_wrapper
     arguments: (arguments . (arrow_function parameters: (formal_parameters) @params)))
-  (#not-match? @_wrapper "^(setTimeout|setInterval|setImmediate|requestAnimationFrame|useMemo|useState|useRef|useReducer|useEffect|useLayoutEffect|queueMicrotask)$")) @definition.function
+  (#not-match? @_wrapper "^(setTimeout|setInterval|setImmediate|requestAnimationFrame|useMemo|useState|useRef|useReducer|useEffect|useLayoutEffect|queueMicrotask|lazy|React.lazy|loadable|dynamic)$")) @definition.function
 (variable_declarator
   name: (identifier) @name
   value: (call_expression
     function: (_) @_wrapper
     arguments: (arguments . (function_expression parameters: (formal_parameters) @params)))
-  (#not-match? @_wrapper "^(setTimeout|setInterval|setImmediate|requestAnimationFrame|useMemo|useState|useRef|useReducer|useEffect|useLayoutEffect|queueMicrotask)$")) @definition.function
+  (#not-match? @_wrapper "^(setTimeout|setInterval|setImmediate|requestAnimationFrame|useMemo|useState|useRef|useReducer|useEffect|useLayoutEffect|queueMicrotask|lazy|React.lazy|loadable|dynamic)$")) @definition.function
 
 (method_definition
   name: (property_identifier) @name

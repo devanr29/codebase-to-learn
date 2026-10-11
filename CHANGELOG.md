@@ -31,6 +31,15 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   were invisible, so a whole Express controllers folder could have zero symbols.
   Timers and value hooks (`setTimeout`, `useMemo`, ...) are still not symbols.
   Schema v4: the next `codemap scan` reparses every worktree file once.
+- **React Router screens defined in another file are entry points.** `<Route
+  component={X} />` (v4/v5) is now read, and a routed component imported from
+  another file (`import X from './screens/X'`, a named import, or
+  `lazy(() => import(...))`) resolves to that file's symbol instead of being
+  dropped — a typical `App.js` route table used to yield no screens at all. A
+  render root wrapped in `<Provider>`, `<BrowserRouter>`, `<Suspense>` and similar
+  is unwrapped to the real root component. New `route_registrations` table
+  (schema v4); the entry points are rebuilt for the whole snapshot on every
+  index, so editing only the screen or only the router stays correct.
 
 ## [0.3.1] — 2026-09-24
 

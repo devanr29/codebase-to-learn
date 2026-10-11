@@ -77,7 +77,14 @@ def migrate(conn: sqlite3.Connection) -> int:
         # ...)`, `memo(() => ...)`), so Express handlers get symbols that
         # enrich/jsfacts.py can tie a web request to. Unchanged files keep their
         # old symbols until reparsed, so ask for one full worktree reparse —
-        # the same mechanism as v3.
+        # the same mechanism as v3. Also new: route_registrations, a screen
+        # registered in one file (React Router `<Route component={X}>`) whose
+        # component lives in another — filled only by a reparse, too.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS route_registrations (id INTEGER PRIMARY KEY, "
+            "commit_sha TEXT, file_id INTEGER, kind TEXT, detail TEXT, local_name TEXT, "
+            "imported TEXT, source TEXT)"
+        )
         set_meta(conn, "reparse_all", "1")
         version = 4
 
