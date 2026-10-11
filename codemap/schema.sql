@@ -103,6 +103,17 @@ CREATE TABLE IF NOT EXISTS route_registrations (
     source     TEXT
 );
 
+-- A JS/TS file's server routes, mounts and imports (enrich/jsfacts.py), as
+-- JSON, plus its default export; indexer._resolve_server_routes joins them
+-- across files into entry_points once the whole snapshot is in.
+CREATE TABLE IF NOT EXISTS server_route_facts (
+    id             INTEGER PRIMARY KEY,
+    commit_sha     TEXT,
+    file_id        INTEGER,
+    facts          TEXT,
+    default_export TEXT
+);
+
 CREATE TABLE IF NOT EXISTS changes (
     id           INTEGER PRIMARY KEY,
     commit_sha   TEXT,

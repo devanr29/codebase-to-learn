@@ -306,7 +306,11 @@ For each changed symbol, at the N-1 graph:
 
 Entry point detection by decorator/annotation heuristics, per language, in the language pack:
 `main` guards, HTTP route decorators, CLI decorators, task queues, `[project.scripts]`,
-Dockerfile `CMD`/`ENTRYPOINT`.
+Dockerfile `CMD`/`ENTRYPOINT`. Express-style routes (`router.get(path, handler)`)
+are not decorators: each JS/TS file's routes, mounts and imports are stored in
+`server_route_facts` and `indexer._resolve_server_routes` joins them across files
+after every snapshot (`enrich/jsfacts.served_routes`), giving the handler a
+`route` entry point at its full mounted path.
 
 At T1, caller lookup is name-based and will include false positives. That is acceptable here —
 a slightly over-broad list of affected callers is useful, where it would not be in an

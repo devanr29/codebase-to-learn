@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import discovery, entrypoints, gitio
+from .enrich import jsfacts
 from . import progress as _progress
 from .config import Config
 from .db import get_meta, set_meta
@@ -245,6 +246,7 @@ def _clear_file_rows(conn: sqlite3.Connection, file_id: int, sha: str) -> None:
         (sha, file_id),
     )
     conn.execute("DELETE FROM route_registrations WHERE commit_sha=? AND file_id=?", (sha, file_id))
+    conn.execute("DELETE FROM server_route_facts WHERE commit_sha=? AND file_id=?", (sha, file_id))
 
 
 def _route_component_key(pf: ParsedFile, name_to_key: dict[str, str]) -> str | None:
@@ -369,6 +371,18 @@ def _write_parsed(
                     (sha, key_to_id[owner.key], "task", "scheduler job registration"),
                 )
 
+    # --- server routes (Express & co.): stored per file, tied to their handler
+    #     symbols by _resolve_server_routes once the whole snapshot is in
+    if pf.lang in jsfacts.JS_LANGS:
+        facts = None
+        if jsfacts.might_serve(source):
+            facts = jsfacts.route_facts_json(jsfacts.extract(pf.path, source, pf.lang))
+        if facts or pf.default_export:
+            conn.execute(
+                "INSERT INTO server_route_facts(commit_sha, file_id, facts, default_export) VALUES(?,?,?,?)",
+                (sha, file_id, facts, pf.default_export),
+            )
+
     # --- frontend entry points: file-based routing (reliable) + registration
     #     regexes (best-effort) — see entrypoints.py's module docstring
     if frontend_roots:
@@ -447,6 +461,12 @@ def _carry_forward(conn: sqlite3.Connection, file_id: int, src_sha: str, dst_sha
         "WHERE commit_sha=? AND file_id=?",
         (dst_sha, src_sha, file_id),
     )
+    conn.execute(
+        "INSERT INTO server_route_facts(commit_sha, file_id, facts, default_export) "
+        "SELECT ?, file_id, facts, default_export FROM server_route_facts "
+        "WHERE commit_sha=? AND file_id=?",
+        (dst_sha, src_sha, file_id),
+    )
 
 
 # entry_points rows made by _resolve_routed_screens carry this in `detail`, so
@@ -506,6 +526,59 @@ def _resolve_routed_screens(conn: sqlite3.Connection, sha: str) -> None:
         conn.execute(
             "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
             (sha, pick["id"], reg["kind"], detail),
+        )
+
+
+# entry_points rows made by _resolve_server_routes carry this in `detail`
+_DECLARED_IN = "  ·  declared in "
+
+
+def _resolve_server_routes(conn: sqlite3.Connection, sha: str) -> None:
+    """Turn the snapshot's ``server_route_facts`` into ``route`` entry points on
+    each route's handler, full path included (``app.use('/api/orders', r)`` +
+    ``r.get('/:id', getOrder)`` -> ``GET /api/orders/:id`` on ``getOrder``).
+    Rebuilt from scratch for the whole snapshot, like _resolve_routed_screens:
+    the route file, the mounting file and the handler's file change apart."""
+    conn.execute(
+        "DELETE FROM entry_points WHERE commit_sha=? AND detail LIKE ?",
+        (sha, f"%{_DECLARED_IN}%"),
+    )
+    rows = conn.execute(
+        "SELECT f.path, srf.facts, srf.default_export FROM server_route_facts srf "
+        "JOIN files f ON f.id = srf.file_id "
+        "JOIN file_versions fv ON fv.file_id = srf.file_id AND fv.commit_sha = srf.commit_sha "
+        "WHERE srf.commit_sha=? AND fv.status != 'deleted'",
+        (sha,),
+    ).fetchall()
+    if not any(r["facts"] for r in rows):
+        return
+    facts = [jsfacts.route_facts_from_json(r["path"], r["facts"], r["default_export"]) for r in rows]
+    # a handler's file need not hold any route facts, but _resolve needs to see
+    # it exists: add every other JS/TS path in the snapshot as an empty entry
+    have = {f.path for f in facts}
+    key_to_id: dict[str, int] = {}
+    for r in conn.execute(
+        "SELECT s.id, s.key, f.path, f.lang FROM symbols s JOIN files f ON f.id = s.file_id "
+        "JOIN symbol_versions sv ON sv.symbol_id = s.id AND sv.commit_sha=?",
+        (sha,),
+    ):
+        if r["lang"] in jsfacts.JS_LANGS:
+            key_to_id[r["key"]] = r["id"]
+            if r["path"] not in have:
+                have.add(r["path"])
+                facts.append(jsfacts.FileFacts(r["path"]))
+    seen: set[tuple[int, str]] = set()
+    for s in jsfacts.served_routes(facts, set(key_to_id)):
+        if s.handler is None:
+            continue
+        detail = f"{s.method} {s.path}{_DECLARED_IN}{s.file}"
+        sid = key_to_id[s.handler]
+        if (sid, detail) in seen:
+            continue
+        seen.add((sid, detail))
+        conn.execute(
+            "INSERT INTO entry_points(commit_sha, symbol_id, kind, detail) VALUES(?,?,?,?)",
+            (sha, sid, "route", detail),
         )
 
 
@@ -640,6 +713,7 @@ def index_commit(
 
     _index_repo_entry_points(conn, root, sha)
     _resolve_routed_screens(conn, sha)
+    _resolve_server_routes(conn, sha)
 
     set_meta(conn, "last_indexed_commit", sha)
     conn.commit()
@@ -764,6 +838,7 @@ def _index_worktree(
             if row:
                 _mark_deleted(conn, row["id"], sha)
     _resolve_routed_screens(conn, sha)
+    _resolve_server_routes(conn, sha)
     conn.commit()
 
 

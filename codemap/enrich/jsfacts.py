@@ -677,37 +677,44 @@ def _owner(spans: list[SymSpan], line: int) -> str | None:
     return best.key if best else None
 
 
-def link(facts: list[FileFacts], symbols: list[SymSpan]) -> Linked:
-    """Join every file's facts into route links, config reads and storage uses,
-    each tied to the codemap symbol that owns it."""
+def _target_of(ff: FileFacts, local: str, paths: set[str], by_path: dict[str, FileFacts]) -> tuple[str, str] | None:
+    """(file, name in that file) a local name points at — following one import."""
+    if local in ff.imports:
+        spec, imported = ff.imports[local]
+        dest = _resolve(spec, ff.path, paths)
+        if dest is None:
+            return None
+        if imported == "default":
+            other = by_path.get(dest)
+            name = other.default_export if other else None
+            return (dest, name) if name else None
+        if imported == "*":
+            return None
+        return dest, imported
+    return ff.path, local
+
+
+@dataclass
+class Served:
+    """A server route at its full address, with the symbol that handles it."""
+    method: str
+    path: str            # mounts applied, e.g. /api/orders/:id
+    handler: str | None  # symbol key, when the handler is a named function in this repo
+    file: str            # where the route is declared
+    line: int
+
+
+def served_routes(facts: list[FileFacts], keys: set[str]) -> list[Served]:
+    """Every server route in ``facts``, its path prefixed through ``app.use`` /
+    ``router.use`` mounts and its handler resolved to a key in ``keys``."""
     paths = {f.path for f in facts}
     by_path = {f.path: f for f in facts}
-    keys = {s.key for s in symbols}
-    spans_by_file: dict[str, list[SymSpan]] = {}
-    for s in symbols:
-        spans_by_file.setdefault(s.file, []).append(s)
-
-    def target_of(ff: FileFacts, local: str) -> tuple[str, str] | None:
-        """(file, name in that file) a local name points at — following one import."""
-        if local in ff.imports:
-            spec, imported = ff.imports[local]
-            dest = _resolve(spec, ff.path, paths)
-            if dest is None:
-                return None
-            if imported == "default":
-                other = by_path.get(dest)
-                name = other.default_export if other else None
-                return (dest, name) if name else None
-            if imported == "*":
-                return None
-            return dest, imported
-        return ff.path, local
 
     # -- every router's full prefix, through app.use / router.use mounts ------
     mounted: dict[tuple[str, str], list[tuple[str, str, str]]] = {}   # (file, router) -> [(mount file, mount receiver, prefix)]
     for ff in facts:
         for m in ff.mounts:
-            tgt = target_of(ff, m.target)
+            tgt = _target_of(ff, m.target, paths, by_path)
             if tgt is not None:
                 mounted.setdefault(tgt, []).append((ff.path, m.receiver, m.prefix))
 
@@ -733,19 +740,34 @@ def link(facts: list[FileFacts], symbols: list[SymSpan]) -> Linked:
                 key = f"{dest}::{tail}" if dest else None
                 return key if key in keys else None
             return None
-        tgt = target_of(ff, name)
+        tgt = _target_of(ff, name, paths, by_path)
         if tgt is None:
             return None
         key = f"{tgt[0]}::{tgt[1]}"
         return key if key in keys else None
 
-    served: list[tuple[str, list[str], str | None, str]] = []   # (method, segments, handler key, full path)
+    served: list[Served] = []
     for ff in facts:
         for r in ff.routes:
-            pre = prefixes(ff.path, r.receiver) or [None]
-            for p in pre:
-                full = join_path(p, r.path) if p is not None else join_path("", r.path)
-                served.append((r.method, _route_segments(full), handler_key(ff, r.handler), full))
+            for p in prefixes(ff.path, r.receiver) or [""]:
+                served.append(Served(r.method, join_path(p, r.path), handler_key(ff, r.handler), ff.path, r.line))
+    return served
+
+
+def link(facts: list[FileFacts], symbols: list[SymSpan]) -> Linked:
+    """Join every file's facts into route links, config reads and storage uses,
+    each tied to the codemap symbol that owns it."""
+    paths = {f.path for f in facts}
+    by_path = {f.path: f for f in facts}
+    keys = {s.key for s in symbols}
+    spans_by_file: dict[str, list[SymSpan]] = {}
+    for s in symbols:
+        spans_by_file.setdefault(s.file, []).append(s)
+
+    def target_of(ff: FileFacts, local: str) -> tuple[str, str] | None:
+        return _target_of(ff, local, paths, by_path)
+
+    served = [(s.method, _route_segments(s.path), s.handler, s.path) for s in served_routes(facts, keys)]
 
     def base_of(ff: FileFacts, name: str | None) -> str:
         if not name:
@@ -807,3 +829,52 @@ def link(facts: list[FileFacts], symbols: list[SymSpan]) -> Linked:
             links[(method, full)] = RouteLink(url=full, method=method, handlers=[hkey])
     out.routes = sorted(links.values(), key=lambda r: (r.url, r.method))
     return out
+
+
+# --------------------------------------------------------------------------- index-time storage
+
+# Words a file must contain to declare or mount a server route at all (see
+# _declarator: express() / Router() / fastify / Koa). A cheap byte test so the
+# indexer only re-parses the few files that can matter.
+_SERVER_HINTS = (b"express", b"Router", b"fastify", b"Koa")
+
+
+def might_serve(source: bytes) -> bool:
+    return any(h in source for h in _SERVER_HINTS)
+
+
+def route_facts_json(ff: FileFacts) -> str | None:
+    """The part of a file's facts :func:`served_routes` reads, as JSON for the
+    indexer's ``server_route_facts`` table; None when the file holds no server
+    route, mount or app."""
+    import json
+
+    if not (ff.routes or ff.mounts or ff.servers):
+        return None
+    return json.dumps({
+        "routes": [[r.method, r.path, r.receiver, r.handler, r.middleware, r.line] for r in ff.routes],
+        "mounts": [[m.receiver, m.prefix, m.target, m.line] for m in ff.mounts],
+        "imports": {k: list(v) for k, v in ff.imports.items()},
+        "default_export": ff.default_export,
+        "servers": sorted(ff.servers),
+        "routers": sorted(ff.routers),
+    }, sort_keys=True)
+
+
+def route_facts_from_json(path: str, text: str | None, default_export: str | None = None) -> FileFacts:
+    """Inverse of :func:`route_facts_json`. A file stored without route facts
+    still contributes its ``default_export`` (a default-imported handler)."""
+    import json
+
+    ff = FileFacts(path, default_export=default_export)
+    if not text:
+        return ff
+    d = json.loads(text)
+    ff.routes = [Route(m, p, recv, h, list(mw), ln) for m, p, recv, h, mw, ln in d["routes"]]
+    ff.mounts = [Mount(recv, pre, tgt, ln) for recv, pre, tgt, ln in d["mounts"]]
+    ff.imports = {k: (v[0], v[1]) for k, v in d["imports"].items()}
+    ff.default_export = d.get("default_export") or default_export
+    ff.servers = set(d["servers"])
+    ff.routers = set(d["routers"])
+    return ff
+

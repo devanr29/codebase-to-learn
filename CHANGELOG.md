@@ -40,6 +40,16 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   is unwrapped to the real root component. New `route_registrations` table
   (schema v4); the entry points are rebuilt for the whole snapshot on every
   index, so editing only the screen or only the router stays correct.
+- **Express routes are entry points.** A backend route used to reach the
+  Simulate scenario index only if some screen in the repo called it. Now every
+  route with a named handler is a `route` entry point on that handler, at its
+  full mounted path (`app.use('/api/orders', r)` + `r.get('/:id', getOrderById)`
+  -> `GET /api/orders/:id`), so it shows up in Simulate, on the Architecture tab
+  and in the brief's scenario candidates. New `server_route_facts` table (schema
+  v5, one more worktree reparse); like the screens above, the entry points are
+  rebuilt for the whole snapshot on every index. On the MERN sample app: 21
+  routes, none before. Routes whose handler is an inline arrow function are
+  still skipped, since there is no symbol to land on.
 
 ## [0.3.1] — 2026-09-24
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -87,6 +87,17 @@ def migrate(conn: sqlite3.Connection) -> int:
         )
         set_meta(conn, "reparse_all", "1")
         version = 4
+
+    if version < 5:
+        # server_route_facts: Express/Router routes stored per file at index
+        # time, so a backend handler is an entry point (a Simulate scenario)
+        # even when no screen in the repo calls it. Filled only by a reparse.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS server_route_facts (id INTEGER PRIMARY KEY, "
+            "commit_sha TEXT, file_id INTEGER, facts TEXT, default_export TEXT)"
+        )
+        set_meta(conn, "reparse_all", "1")
+        version = 5
 
     conn.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "
