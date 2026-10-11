@@ -73,6 +73,26 @@ same offline or on a network that blocks arbitrary CDNs. The body font
 degrades gracefully if Google Fonts is unreachable. The generated page never
 calls an LLM.
 
+## Web requests, settings and browser storage (JS/TS)
+
+The call graph has no edge across a web request, so a screen calling `/api/x`
+and the handler serving it would never meet. For JavaScript and TypeScript,
+codemap reads them out of the code itself:
+
+- **Request → handler links.** `fetch` / `axios` / `ky`-style calls (a URL built
+  with `${id}` becomes `/api/orders/:param`) are paired with the Express routes
+  that serve them, prefixes from `app.use('/api/orders', router)` included.
+  Simulate walks from the client call into the handler, the Architecture tab
+  draws a labelled dashed connector, and the brief lists each link.
+- **Settings.** Every `process.env` / `import.meta.env` / `process.argv` read,
+  with its `||` / `??` default, listed in the brief.
+- **Browser storage.** `localStorage` / `sessionStorage` / IndexedDB / Cache
+  Storage keys, shown as a store on the Architecture tab.
+
+The detection rules are ported from [REA](https://github.com/morluto/rea) (MIT),
+re-expressed over tree-sitter; codemap adds the URL patterns, mounts and
+pairing. Set `native = "off"` under `[engine]` to skip them.
+
 ## Works better with codebase-memory-mcp (optional)
 
 [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) is a fast,
@@ -84,10 +104,9 @@ analysis missed:
 
 - **Call links** it resolved that codemap could not, and `AMBIGUOUS` name-only
   guesses it settles. Each one is tagged `cbm` in the Graph inspector.
-- **Web requests.** A screen calling `/api/x` and the handler serving it have no
-  call edge between them, so nothing joined them. With the index, Simulate walks
-  from the client call into the handler ("`main` sends `GET /api/report`"), and
-  the Architecture tab draws a labelled dashed connector between the two parts.
+- **Web requests in other languages.** codemap pairs JS/TS requests itself
+  (above); the index adds the ones it resolves elsewhere, merged into the same
+  links.
 
 ```
 codebase-memory-mcp cli index_repository --repo-path .

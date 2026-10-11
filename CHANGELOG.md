@@ -4,6 +4,34 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project aims
 to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **JS/TS web requests are tied to the route that serves them, with no other
+  engine.** New `codemap/enrich/jsfacts.py` reads `fetch` / `axios`-style calls
+  and Express routes (`router.get`, `router.route().get().put()`, `app.use`
+  mounts followed across imports, `axios.create({ baseURL })`), turns `${id}` in a
+  URL into a parameter, and pairs each request with its handler. The links feed
+  the existing route pipeline: Simulate's request hop, the Architecture tab's
+  request connectors and the brief's **Route links**, merged with any
+  codebase-memory links. On a MERN sample app: 23 of 23 requests paired, 20
+  reaching a named handler (the other two are inline arrow functions).
+- **Settings and browser storage.** Every `process.env` / `import.meta.env` /
+  `process.argv` read (with its `||` / `??` default) and every `localStorage` /
+  `sessionStorage` / IndexedDB / Cache Storage key, with the symbol that touches
+  it. Storage shows as a store on the Architecture tab; both are listed in a new
+  brief section. `codemap status` reports the feature; `[engine] native = "off"`
+  turns it off.
+- The request, storage and config detection rules are ported from REA
+  (https://github.com/morluto/rea, MIT, Copyright (c) 2026 morluto).
+
+### Fixed
+- **A function handed straight to a wrapper is a symbol.** `const getX =
+  asyncHandler(async (req, res) => ...)`, `memo(() => ...)`, `forwardRef(...)`
+  were invisible, so a whole Express controllers folder could have zero symbols.
+  Timers and value hooks (`setTimeout`, `useMemo`, ...) are still not symbols.
+  Schema v4: the next `codemap scan` reparses every worktree file once.
+
 ## [0.3.1] — 2026-09-24
 
 Three defects found by running `codebase-to-course` on codemap's own source.

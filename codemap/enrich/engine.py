@@ -71,6 +71,44 @@ def apply(
         found.close()
 
 
+def native(
+    cfg: Config,
+    file_rows: Iterable,
+    sym_rows: Iterable,
+    file_bytes: Callable[[str], bytes | None],
+) -> dict:
+    """codemap's own JS/TS facts (``jsfacts.py``): web requests paired with the
+    routes that serve them, config reads, browser storage. ``file_rows`` need
+    ``path`` and ``lang``; ``sym_rows`` need ``key``, ``name``, ``file``,
+    ``start_line`` and ``end_line``. Returns ``{"used": False, "reason"}`` or
+    ``{"used": True, "routes", "config", "storage", "requests", "paired"}``."""
+    if cfg.engine.native == "off":
+        return {"used": False, "reason": 'off (engine.native = "off")'}
+    from . import jsfacts
+
+    facts = []
+    for r in file_rows:
+        if r["lang"] not in jsfacts.JS_LANGS:
+            continue
+        blob = file_bytes(r["path"])
+        if blob:
+            facts.append(jsfacts.extract(r["path"], blob, r["lang"]))
+    if not facts:
+        return {"used": False, "reason": "no JavaScript/TypeScript files"}
+    spans = [jsfacts.SymSpan(s["key"], s["name"], s["file"], s["start_line"], s["end_line"] or s["start_line"])
+             for s in sym_rows]
+    linked = jsfacts.link(facts, spans)
+    return {
+        "used": True,
+        "routes": linked.routes,
+        "config": linked.config,
+        "storage": linked.storage,
+        "requests": linked.requests,
+        "paired": linked.paired,
+        "server_routes": linked.server_routes,
+    }
+
+
 def describe(cfg: Config) -> str:
     """One line for ``codemap status``."""
     found, why = open_index(cfg)

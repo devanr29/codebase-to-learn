@@ -115,8 +115,8 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
   let a later step land on the API-client call and the backend route it hits
   — that single scenario teaches more about how the app actually works than
   either half alone. The call graph has no edge across an HTTP request itself;
-  when the brief's **Route links** section lists it (a codebase-memory index was
-  present), the derived tree already carries it as a `note` step with a `route`
+  when the brief's **Route links** section lists it (codemap's own JS/TS
+  request matching, or a codebase-memory index), the derived tree already carries it as a `note` step with a `route`
   field, then the handler's `call` (with `from` set to the sender, so the Flow
   pane shows the request travelling) and the handler's own calls. Hand-authored
   `steps` should do the same: a `note` step naming the route right before the

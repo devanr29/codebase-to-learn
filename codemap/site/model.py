@@ -154,6 +154,10 @@ def build(
         from ..enrich import engine as _engine
 
         cbm_info = _engine.apply(cfg, g, sym_rows, lambda p: _file_bytes(cfg, sha, p))
+        # codemap's own JS/TS facts (enrich/jsfacts.py): request -> route links,
+        # config reads, browser storage. Adds nothing to `g` — a web request is
+        # not a call edge — only route links and facts for the payload.
+        native_info = _engine.native(cfg, file_rows, sym_rows, lambda p: _file_bytes(cfg, sha, p))
 
         # call-site line numbers: `call_graph()` matches refs by (from_symbol_id,
         # target_name) but only keeps the edge, not where it happened — Simulate
@@ -243,7 +247,7 @@ def build(
     # node list, ordered by file then line so the tree reads naturally
     ordered = sorted(kept, key=lambda r: (r["file"], r["start_line"], r["key"]))
     key_to_i = {r["key"]: i for i, r in enumerate(ordered)}
-    routes = _routes_payload(cbm_info, key_to_i)
+    routes = _routes_payload((cbm_info, native_info), key_to_i)
 
     src_cache: dict[str, list[str] | None] = {}
 
@@ -538,6 +542,7 @@ def build(
         read_bytes=_read_manifest,
         overrides=_architecture.load(cfg),
         routes=routes,
+        storage=native_info.get("storage"),
     )
 
     # -- authored walkthrough content (optional) — Learn's actual content:
@@ -637,20 +642,32 @@ def build(
         }
     if routes:
         out["routes"] = routes
+    if native_info["used"]:
+        out["facts"] = {
+            "requests": native_info["requests"],
+            "paired": native_info["paired"],
+            "server_routes": native_info["server_routes"],
+            "config": [dict(c, node=key_to_i.get(c["symbol"])) for c in native_info["config"]],
+            "storage": [dict(u, node=key_to_i.get(u["symbol"])) for u in native_info["storage"]],
+        }
     return out
 
 
-def _routes_payload(cbm_info: dict, key_to_i: dict[str, int]) -> list[dict]:
-    """The other engine's HTTP route links as node indexes: which symbols call a
-    route and which serve it. A route with neither end among the kept nodes is
+def _routes_payload(infos, key_to_i: dict[str, int]) -> list[dict]:
+    """Every engine's HTTP route links (codebase-memory's, codemap's own
+    jsfacts) as node indexes: which symbols call a route and which serve it,
+    merged by method + URL. A route with neither end among the kept nodes is
     dropped."""
-    out: list[dict] = []
-    for rl in cbm_info.get("routes", ()):
-        callers = [key_to_i[k] for k in rl.callers if k in key_to_i]
-        handlers = [key_to_i[k] for k in rl.handlers if k in key_to_i]
-        if callers or handlers:
-            out.append({"url": rl.url, "method": rl.method, "callers": callers, "handlers": handlers})
-    return out
+    merged: dict[tuple[str, str], dict] = {}
+    for info in infos:
+        for rl in info.get("routes", ()):
+            r = merged.setdefault((rl.method, rl.url),
+                                  {"url": rl.url, "method": rl.method, "callers": [], "handlers": []})
+            for field, keys in (("callers", rl.callers), ("handlers", rl.handlers)):
+                for k in keys:
+                    if k in key_to_i and key_to_i[k] not in r[field]:
+                        r[field].append(key_to_i[k])
+    return [r for r in merged.values() if r["callers"] or r["handlers"]]
 
 
 def _dep_token(raw: str, importer: str) -> str | None:

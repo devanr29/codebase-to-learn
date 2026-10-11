@@ -392,7 +392,8 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     routes = data.get("routes", [])
     if routes:
         ov.append("## Route links (web requests that cross between parts)")
-        ov.append("Found by the optional codebase-memory engine. The call graph has no edge "
+        ov.append("Found by codemap's own request/route matching (JS/TS) and, when present, the "
+                  "optional codebase-memory engine. The call graph has no edge "
                   "across an HTTP request, so this is the only place a client call is tied to "
                   "the code that serves it. Use it for the seam scenario: root it at a caller, "
                   "narrate the request, then the handler. `scenarios-derived.json` trees already "
@@ -403,6 +404,41 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
             served = ", ".join(f"`{nodes[i]['qual']}`" for i in r["handlers"][:4]) or "— (no handler found in this repo)"
             keys = "; ".join(f"`{nodes[i]['key']}`" for i in (r["callers"][:2] + r["handlers"][:2]))
             ov.append(f"- `{_route_label(r)}` — called by {called} → served by {served}  (keys: {keys})")
+        ov.append("")
+    facts = data.get("facts") or {}
+    if facts.get("config") or facts.get("storage"):
+        ov.append("## Settings and browser storage (facts for `architecture.json` and the walkthrough)")
+        ov.append("Read straight from the code, not guessed: every environment variable / command-line "
+                  "argument the code reads (with its `||` / `??` default when it has one), and every "
+                  "browser-storage key and what touches it. Settings explain how to run the app and "
+                  "which outside services it needs; storage is often the only place a frontend keeps "
+                  "state between visits. Storage already shows on the Architecture tab as a store.")
+        ov.append("")
+        by_key: dict[tuple[str, str | None], dict] = {}
+        for c in facts.get("config", []):
+            e = by_key.setdefault((c["kind"], c["key"]), {"default": None, "where": []})
+            e["default"] = e["default"] or c.get("default")
+            where = nodes[c["node"]]["qual"] if c.get("node") is not None else c["file"]
+            if where not in e["where"]:
+                e["where"].append(where)
+        if by_key:
+            ov.append("- **Settings read**")
+            for (kind, key), e in sorted(by_key.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+                name = f"argv[{key}]" if kind == "argv" else (key or "(dynamic key)")
+                dflt = f", default `{e['default']}`" if e["default"] else ""
+                ov.append(f"  - `{name}` ({kind}{dflt}) — read in " + ", ".join(f"`{w}`" for w in e["where"][:4]))
+        by_store: dict[tuple[str, str | None], dict[str, list[str]]] = {}
+        for u in facts.get("storage", []):
+            ops = by_store.setdefault((u["kind"], u["key"]), {})
+            where = nodes[u["node"]]["qual"] if u.get("node") is not None else u["file"]
+            ops.setdefault(u["op"], [])
+            if where not in ops[u["op"]]:
+                ops[u["op"]].append(where)
+        if by_store:
+            ov.append("- **Browser storage**")
+            for (kind, key), ops in sorted(by_store.items(), key=lambda kv: (kv[0][0], str(kv[0][1]))):
+                parts = "; ".join(f"{op} in " + ", ".join(f"`{w}`" for w in ws[:3]) for op, ws in sorted(ops.items()))
+                ov.append(f"  - `{key or '(dynamic key)'}` ({kind}) — {parts}")
         ov.append("")
     ov.append("## Architecture (corrections for `architecture.json`)")
     ov.append("The Architecture tab draws this repo as a layered diagram — routes & entry → "

@@ -4433,8 +4433,8 @@
     return null;
   }
 
-  // HTTP routes (only when a codebase-memory index was merged in; model.py adds
-  // `routes` then): routeOut[i] = the routes symbol i calls that some handler
+  // HTTP routes (model.py adds `routes` from codemap's own JS/TS request/route
+  // matching and/or a codebase-memory index): routeOut[i] = the routes symbol i calls that some handler
   // in this repo serves. The call graph has no edge across that hop — the
   // request leaves this code and comes back in as a different entry point —
   // so a derived tree would otherwise stop at the API client call.

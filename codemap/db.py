@@ -9,7 +9,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 _SCHEMA_PATH = Path(__file__).with_name("schema.sql")
 
@@ -70,6 +70,16 @@ def migrate(conn: sqlite3.Connection) -> int:
             conn.execute("ALTER TABLE refs ADD COLUMN receiver TEXT")
         set_meta(conn, "reparse_all", "1")
         version = 3
+
+    if version < 4:
+        # No table change: the JS/TS tags queries now define a function handed
+        # straight to a wrapper (`const getX = asyncHandler(async (req, res) =>
+        # ...)`, `memo(() => ...)`), so Express handlers get symbols that
+        # enrich/jsfacts.py can tie a web request to. Unchanged files keep their
+        # old symbols until reparsed, so ask for one full worktree reparse —
+        # the same mechanism as v3.
+        set_meta(conn, "reparse_all", "1")
+        version = 4
 
     conn.execute(
         "INSERT INTO meta(key, value) VALUES('schema_version', ?) "

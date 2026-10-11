@@ -135,6 +135,15 @@ _PERVASIVE = 0.2       # a package imported by more than this share of non-test 
 _SPLIT_MAX = 16        # a mixed-role folder's layer group is drawn file-by-file up to this size
 _EVIDENCE_MAX = 5
 _TECH_MAX = 6
+
+# jsfacts storage kind -> (store id, label, kind, API shown as "via")
+_STORAGE_STORES = {
+    "local-storage": ("browser-storage", "Browser storage", "storage", "localStorage"),
+    "session-storage": ("browser-storage", "Browser storage", "storage", "sessionStorage"),
+    "cache-storage": ("browser-storage", "Browser storage", "storage", "Cache Storage"),
+    "indexed-db": ("indexeddb", "IndexedDB", "database", "indexedDB"),
+    "sqlite": ("sqlite", "SQLite", "database", "Database()"),
+}
 _STACK_VENDORS_MAX = 6
 
 # manifests
@@ -463,9 +472,12 @@ def build(
     read_bytes=None,
     overrides: dict | None = None,
     routes: list[dict] | None = None,
+    storage: list[dict] | None = None,
 ) -> dict:
     """See the module docstring and ``references/architecture-schema.md``.
-    ``routes`` (optional) is ``model.build``'s HTTP route links; see ``requests``."""
+    ``routes`` (optional) is ``model.build``'s HTTP route links; see ``requests``.
+    ``storage`` (optional) is ``enrich/jsfacts.py``'s storage uses, each with a
+    ``kind``, ``key`` and ``file``."""
     overrides = overrides or {}
     cat = _catalog()
     by_path = {f["path"]: f for f in files}
@@ -763,6 +775,34 @@ def build(
                 label = entry.get("label") or key
                 if all(d["label"] != label for d in declared_only):
                     declared_only.append({"label": label, "package": key, "source": src})
+
+    # -- storage reached through a browser/runtime API, not a package import ---
+    #    (enrich/jsfacts.py: localStorage, IndexedDB, …). Before the authored
+    #    pass, so architecture.json can rename "browser-storage" like any store.
+    fi_of_path = {f["path"]: i for i, f in enumerate(files)}
+    for use in storage or []:
+        hit = _STORAGE_STORES.get(use.get("kind"))
+        cid = comp_of.get(fi_of_path.get(use.get("file")))
+        if hit is None or cid is None:
+            continue
+        sid, label, kind, api = hit
+        base = cat["stores"].get(sid) or {}
+        cur = stores.setdefault(sid, {
+            "id": sid, "label": base.get("label") or label, "kind": base.get("kind") or kind,
+            "via": [], "source": "code", "declared_in": [], "components": [], "keys": [],
+        })
+        cur.setdefault("keys", [])
+        if api not in cur["via"]:
+            cur["via"].append(api)
+        if use.get("key") and use["key"] not in cur["keys"]:
+            cur["keys"].append(use["key"])
+        if cid not in cur["components"]:
+            cur["components"].append(cid)
+        if sid not in comp_by_id[cid]["stores"]:
+            comp_by_id[cid]["stores"].append(sid)
+    for cur in stores.values():
+        if cur.get("keys") and not cur.get("body"):
+            cur["body"] = "Keys the code uses: " + ", ".join(cur["keys"][:12]) + "."
 
     # -- authored stores / services -------------------------------------------
     def resolve_via(via: list[str]) -> list[str]:

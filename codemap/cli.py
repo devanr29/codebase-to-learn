@@ -69,6 +69,8 @@ def cmd_status(args: argparse.Namespace) -> int:
         from .enrich import engine as _engine
 
         print(f"engine:        {_engine.describe(cfg)}")
+        print("js facts:      " + ("off (engine.native = \"off\")" if cfg.engine.native == "off" else
+                                   "on — web requests tied to routes, config reads, browser storage (JS/TS)"))
         if sum(counts.values()) == 0:
             print("index:       empty")
         else:

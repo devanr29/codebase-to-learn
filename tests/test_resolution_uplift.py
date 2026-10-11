@@ -263,7 +263,7 @@ def test_schema_v3_migration_flags_a_forced_reparse(tmp_path):
 
     version = db.migrate(conn)
 
-    assert version == 3
+    assert version == db.SCHEMA_VERSION
     cols = {r["name"] for r in conn.execute("PRAGMA table_info(refs)")}
     assert "receiver" in cols
     assert db.get_meta(conn, "reparse_all") == "1"

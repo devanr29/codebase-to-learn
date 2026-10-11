@@ -984,7 +984,10 @@ truth, so nothing authored against a key moves.
   an `AMBIGUOUS` codemap edge CBM confirms is upgraded; when CBM resolves one call
   site to a single target, codemap's `AMBIGUOUS` edges to the other same-named
   symbols are dropped. A confident codemap edge is never touched.
-- *Routes.* `HTTP_CALLS`/`HANDLES` around a `Route` node become `data.routes`
+- *Routes.* (codemap's own `enrich/jsfacts.py` produces the same links for JS/TS
+  without CBM — see the README's "Web requests, settings and browser storage";
+  `model._routes_payload` merges both by method + URL.)
+  `HTTP_CALLS`/`HANDLES` around a `Route` node become `data.routes`
   (`{url, method, callers[], handlers[]}` as node indexes). The call graph has no
   edge across an HTTP request, so Simulate's derived tree gets a `note` step
   ("`main` sends `GET /api/report` ...") then the handler's `call`, the brief lists

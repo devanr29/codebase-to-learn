@@ -89,6 +89,9 @@ codebase_memory = "auto"
 # Where codebase-memory-mcp keeps its index. Empty = $CBM_CACHE_DIR, then
 # ~/.cache/codebase-memory-mcp.
 cache_dir = ""
+# codemap's own JS/TS facts: web requests tied to the route that serves them,
+# config (process.env) reads, browser storage. "off" skips them.
+native = "auto"
 """
 
 
@@ -110,6 +113,7 @@ class ExploreConfig:
 class EngineConfig:
     codebase_memory: str = "auto"   # "auto" | "off"
     cache_dir: str = ""
+    native: str = "auto"            # "auto" | "off" — enrich/jsfacts.py
 
 
 @dataclass
@@ -174,6 +178,7 @@ def load(root: Path | str) -> Config:
     cfg.engine = EngineConfig(
         codebase_memory=mode if mode in ("auto", "off") else "auto",
         cache_dir=str(eng.get("cache_dir", "")).strip(),
+        native="off" if str(eng.get("native", "auto")).strip().lower() == "off" else "auto",
     )
     return cfg
 
