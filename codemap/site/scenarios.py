@@ -21,6 +21,8 @@ Shape (see ``references/scenarios-schema.md``):
           "group": "A request comes in",           # Simulate-rail section header
           "order": 20,                              # position in the app's workflow
           "summary": "what you'll learn watching this",
+          "start": true,                            # OPTIONAL — the one hero
+                                                    # pinned above the rail
           "steps": [                               # OPTIONAL — omit to let
             {"node": "codemap/cli.py::cmd_explore", "t": "call",   # explore.js
              "user": "Nothing on screen yet.", "code": "cmd_explore starts."}  # derive
@@ -113,6 +115,9 @@ def load(cfg: Config) -> list[dict]:
         summary = sc.get("summary")
         if isinstance(summary, str) and summary.strip():
             entry["summary"] = summary.strip()
+        # the one scenario pinned above the rail as "If you follow only one"
+        if sc.get("start") is True:
+            entry["start"] = True
         out.append(entry)
     return out
 

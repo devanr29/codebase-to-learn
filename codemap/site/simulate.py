@@ -71,7 +71,7 @@ def _resolve_scenario(sc: dict, key_to_i: dict[str, int]) -> dict | None:
     }
     if root_i is not None:
         out["root"] = root_i
-    for k in ("group", "order", "summary"):
+    for k in ("group", "order", "summary", "start"):
         if k in sc:
             out[k] = sc[k]
     if sc.get("truncated"):

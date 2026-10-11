@@ -52,6 +52,7 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
       "group": "Maintenance scripts",
       "order": 50,
       "summary": "what the command does between you pressing enter and the file landing",
+      "start": true,
       "steps": [
         {
           "node": "codemap/cli.py::cmd_explore",
@@ -148,6 +149,11 @@ into `.codemap/briefs/scenarios-derived.json` — start from those.
   the `suggested_order` from the brief as a starting point and adjust.
 - `summary` — one plain line, the "what you'll learn watching this" shown under the
   title in the rail.
+- `start` — optional, `true` on **exactly one** scenario: the hero pinned above the rail
+  as "If you follow only one, follow this one". Pick the richest end-to-end thread
+  (ideally the one that crosses the frontend/backend seam), never the startup scenario
+  just because it sorts first — that one is usually a two-step tree. Without a mark the
+  page falls back to the first scenario with `steps` of its own.
 
 **Step** — `node` (a symbol key — **required**, must equal a `data.nodes[].key` verbatim,
 same rule as `explanations.json`), `t` (`call` | `return` | `emit` | `note` | `branch`,

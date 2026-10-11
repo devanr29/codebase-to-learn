@@ -776,10 +776,10 @@
       } else {
         if (scId) badLink = badLink || "scenario “" + scId + "”";
         if (!state.simScenario || !simById[state.simScenario]) {
-          // simStartScenario() picks the authored curriculum's lowest-`order`
-          // hero scenario (see its own comment); a bare SIM_SCENARIOS[0] is
-          // just insertion order and, with an authored curriculum, usually
-          // isn't the same scenario at all.
+          // simStartScenario() picks the curriculum's pinned hero scenario
+          // (see its own comment); a bare SIM_SCENARIOS[0] is just insertion
+          // order and, with an authored curriculum, usually isn't the same
+          // scenario at all.
           var startSc = simStartScenario() || SIM_SCENARIOS[0];
           state.simScenario = startSc ? startSc.id : null;
         }
@@ -5279,12 +5279,17 @@
   }
   // "One thread followed end to end beats a week of reading files at random"
   // (teacher's principle 5). A curriculum of 40+ scenarios invites browsing
-  // over depth, so whichever scenario sorts first (lowest `order`, the
-  // convention the skill gives its single hero scenario — see SKILL.md) gets
-  // pinned above the rail as the one thing worth actually finishing.
+  // over depth, so one scenario is pinned above the rail as the thing worth
+  // actually finishing: the one the skill marks `start: true` (SKILL.md).
+  // Without a mark, the first with real steps of its own (hand-authored or a
+  // recorded run) — not simply the lowest `order`, which is the app's
+  // startup and usually a two-step tree with nothing to follow.
   function simStartScenario() {
     var sorted = simSorted();
-    return sorted.length > 1 ? sorted[0] : null;
+    if (sorted.length < 2) return null;
+    return sorted.find(function (sc) { return sc.start === true; }) ||
+      sorted.find(function (sc) { return sc._raw && sc.source !== "derived"; }) ||
+      sorted[0];
   }
   function simStartCallout() {
     var sc = simStartScenario();

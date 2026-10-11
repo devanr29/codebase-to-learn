@@ -150,7 +150,9 @@ claims about the code, so check them against a real call graph, not memory:
 
    **Hero steps only.** Hand-author `steps` for just the 3–6 most important
    scenarios — narrate and trim the real tree in `scenarios-derived.json`, never
-   reconstruct a call tree by hand. Confirm each one with
+   reconstruct a call tree by hand. Mark the single best hero `"start": true`:
+   it is pinned above the rail as "If you follow only one", so pick the richest
+   end-to-end thread, not startup just because it has the lowest `order`. Confirm each one with
    `codemap calls <root key> --out --depth 4 --no-guesses`: every `call` step
    must be an edge in that output, and a hop the graph can't show (a framework
    calling your handler, a branch) says so in its `code` line. For real

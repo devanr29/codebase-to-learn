@@ -382,3 +382,14 @@ def test_folder_categories_are_ignored_when_the_folder_has_its_own_see(env):
     }
     warns = only(run(env, {"walkthrough.json": doc}), validate.WARNING)
     assert [i.path for i in warns] == ['folders["svc"].categories'] and "ignored" in warns[0].message
+
+
+def test_start_flag_more_than_once_or_not_a_bool_warns(env):
+    doc = {"scenarios": [
+        {"id": "a", "title": "A", "root": MAIN, "start": True},
+        {"id": "b", "title": "B", "root": VIEW, "start": True},
+        {"id": "c", "title": "C", "root": FETCH, "start": "yes"},
+    ]}
+    warns = only(run(env, {"scenarios.json": doc}), validate.WARNING)
+    assert {i.path for i in warns} == {'scenarios["b"].start', 'scenarios["c"].start'}
+    assert 'only the first (scenarios["a"]) is pinned' in messages(warns)

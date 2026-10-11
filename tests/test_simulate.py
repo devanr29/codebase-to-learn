@@ -358,3 +358,24 @@ def test_tracer_load_all_ignores_junk_files(fixture_impact_repo, tmp_path):
         assert tracer.load_all(cfg) == []
     finally:
         junk.unlink()
+
+
+def test_start_flag_reaches_the_page_only_when_true(fixture_impact_repo, tmp_path):
+    """`start: true` marks the hero pinned above the Simulate rail; anything
+    else (a string, false, absent) leaves the key off."""
+    cfg, conn = _idx(fixture_impact_repo, tmp_path, "i3-sig-partial")
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    data = model.build(conn, cfg)
+    conn.close()
+    key = data["nodes"][0]["key"]
+    sf = cfg.codemap_dir / "scenarios.json"
+    sf.write_text(json.dumps({"scenarios": [
+        {"id": "hero", "title": "Hero", "root": key, "start": True},
+        {"id": "str", "title": "Str", "root": key, "start": "yes"},
+        {"id": "plain", "title": "Plain", "root": key},
+    ]}), encoding="utf-8")
+    try:
+        out = simulate.build(cfg, {n["key"]: n["i"] for n in data["nodes"]})
+    finally:
+        sf.unlink(missing_ok=True)
+    assert {s["id"]: s.get("start") for s in out["scenarios"]} == {"hero": True, "str": None, "plain": None}

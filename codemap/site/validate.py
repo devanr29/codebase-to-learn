@@ -196,6 +196,7 @@ def _check_scenarios(cfg: Config, ctx: _Ctx) -> None:
         ctx.add(f, "scenarios", ERROR, 'expected an array under "scenarios"; the whole file is ignored')
         return
     seen: dict[str, int] = {}
+    starts: list[str] = []
     for i, sc in enumerate(raw):
         where = f"scenarios[{i}]"
         if not isinstance(sc, dict):
@@ -210,6 +211,10 @@ def _check_scenarios(cfg: Config, ctx: _Ctx) -> None:
         if sid in seen:
             ctx.add(f, where, WARNING, f"duplicate id (first used by scenarios[{seen[sid]}])")
         seen.setdefault(sid, i)
+        if "start" in sc and not isinstance(sc["start"], bool):
+            ctx.add(f, f"{where}.start", WARNING, "`start` must be true or false; ignored")
+        elif sc.get("start") is True:
+            starts.append(where)
 
         step_list = _list(sc.get("steps"))
         root = _s(sc.get("root"))
@@ -251,6 +256,9 @@ def _check_scenarios(cfg: Config, ctx: _Ctx) -> None:
                 f"only {good} of {len(step_list)} steps resolve and a scenario needs 2, so the whole "
                 "scenario is dropped" + (" (remove `steps` to keep it as a root-only entry)" if root_ok else ""),
             )
+    for where in starts[1:]:
+        ctx.add(f, f"{where}.start", WARNING,
+                f"more than one scenario has `start: true`; only the first ({starts[0]}) is pinned")
 
 
 def _check_walkthrough(cfg: Config, ctx: _Ctx) -> None:

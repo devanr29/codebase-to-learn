@@ -50,6 +50,13 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   rebuilt for the whole snapshot on every index. On the MERN sample app: 21
   routes, none before. Routes whose handler is an inline arrow function are
   still skipped, since there is no symbol to land on.
+- **"If you follow only one" pins the hero, not the startup scenario.** The
+  Simulate card above the rail took the lowest `order`, which the skill reserves
+  for startup, usually a two-step tree. A scenario can now say `"start": true`
+  in `scenarios.json` (the skill marks its best hero); without one, the card
+  takes the first scenario with steps of its own (hand-authored or recorded),
+  and only then the lowest `order`. `codemap check` warns when more than one
+  scenario is marked, or when `start` isn't true/false.
 
 ## [0.3.1] — 2026-09-24
 
