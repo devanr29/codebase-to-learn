@@ -42,7 +42,7 @@ Check these before you call the reference done.
 
 9. **Category titles that are technology labels.** "CSS" or "React state"
    names the tech, not the outcome. The whole point of `walkthrough.json`'s
-   `categories` is that a vibe coder reads the title and understands *why*
+   `categories` is that a newcomer reads the title and understands *why*
    that code exists — "Website design" or "Keeping things in sync," not the
    tool that happens to implement it.
 

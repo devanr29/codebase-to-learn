@@ -1,25 +1,28 @@
 ---
-description: Author the Learn/Packages/Graph/Simulate/Architecture content for this repo's explore.html, end to end.
+description: Investigate this repo through codemap's MCP server, settle what static analysis couldn't, and author the explore.html content end to end.
 ---
 
-Run the full `codebase-to-course` authoring workflow against the current repo.
+Run the full `codebase-to-course` workflow against the current repo.
 
 1. Check the CLI is installed: run `codemap --version`. If that fails, tell the
-   user to install it first — `pipx install git+https://github.com/devanr29/codebase-to-learn`
-   (or `uv tool install git+https://github.com/devanr29/codebase-to-learn`) — and stop.
-2. If there is no `.codemap/index.db` yet, run `codemap scan`.
-3. Run `codemap explore --emit-brief` to write the analysis pack under
-   `.codemap/briefs/`.
-4. Invoke the `codebase-to-course` skill and follow its workflow exactly —
-   it reads the briefs and writes `.codemap/walkthrough.json`,
-   `.codemap/libraries.json`, `.codemap/explanations.json`,
-   `.codemap/scenarios.json`, `.codemap/glossary.json`, and (corrections
-   only, when needed) `.codemap/architecture.json`.
-5. Run `codemap check --json` and fix every error it reports until
-   `"errors": 0` — the renderer drops a bad entry silently, so this is the
-   only place a typo'd key or a dropped scenario shows up.
-6. Run `codemap explore --open` to bake those files into `explore.html`
-   and review the result as the skill's own "Bake and review" step directs.
+   user to install it first and stop. The install is
+   `pipx install git+https://github.com/devanr29/codebase-to-learn` followed by
+   `pipx inject codemap mcp` (the MCP SDK), or the `uv tool install` equivalent.
+2. If there is no `.codemap/index.db` yet, or `overview` reports the index is
+   stale, run `codemap scan`.
+3. Invoke the `codebase-to-course` skill and follow its workflow exactly:
+   1. `overview`;
+   2. work through `open_questions`, answering each with `answer_question` and
+      file:line evidence;
+   3. `submit` the walkthrough, package, glossary, architecture and hero
+      scenario prose;
+   4. `check` until there are zero errors.
+   If the `codemap` MCP tools aren't available in this session, the skill's
+   `references/file-mode.md` is the fallback (briefs + hand-written JSON +
+   `codemap check --json`).
+4. Run `codemap explore --open` to bake everything into `explore.html`, then
+   review it as the skill's "Bake and review" step directs. Report what was
+   settled, what is still unknown, and how many open questions remain.
 
 If `$ARGUMENTS` is given, treat it as `--path <ARGUMENTS>` on every `codemap`
 command (run against that repo instead of the current directory).

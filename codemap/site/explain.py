@@ -1,4 +1,4 @@
-"""Load and validate ``.codemap/explanations.json`` — per-symbol plain-English
+"""Load and validate ``.codemap/explanations.json`` — per-symbol
 blurbs shown in the Graph tab's inspector.
 
 Written by the ``codebase-to-course`` skill (see
@@ -13,7 +13,7 @@ Shape (see ``references/explanations-schema.md``):
       "symbols": {
         "codemap/report.py::render_commit": {
           "what": "One sentence: what this function does, in plain English.",
-          "why":  "Optional: why it matters / when a vibe coder would touch it.",
+          "why":  "Optional: side effects, callers that depend on it, gotchas.",
           "terms": {"blast radius": "how many callers an edit could break"}
         },
         ...

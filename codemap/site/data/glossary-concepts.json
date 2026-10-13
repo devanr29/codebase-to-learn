@@ -1,6 +1,6 @@
 {
   "title": "Core programming concepts",
-  "description": "Everyday software vocabulary that isn't the name of a specific package — the words vibe coders trip on that the package/library dictionary never covers.",
+  "description": "Everyday software vocabulary that isn't the name of a specific package — the words newcomers to a codebase trip on that the package/library dictionary never covers.",
   "version": "1.0",
   "items": {
     "component": { "display": "component", "definition": "A reusable, self-contained chunk of UI — usually one file — that you compose together to build a screen." },

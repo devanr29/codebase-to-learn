@@ -1,36 +1,41 @@
-# codemap — change explainer for AI-assisted codebases
+# codemap — understand a codebase you didn't write
 
 [![CI](https://github.com/devanr29/codebase-to-learn/actions/workflows/ci.yml/badge.svg)](https://github.com/devanr29/codebase-to-learn/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 `codemap` keeps a symbol-level graph rooted in **the worktree** — the code as
 it is on disk right now, uncommitted changes included — and renders it as one
-self-contained, double-click-to-open HTML page. After every commit, it also
-answers the question this tool was built around:
+self-contained, double-click-to-open HTML page. It is built for whoever has to
+get productive in an unfamiliar repo: a new hire, a reviewer, or the person who
+generated it with AI and now has to own it. After every commit, it also answers:
 
 > What changed, why, what does it affect, and which forty lines should I read myself?
 
 ![The Graph tab: a neural-style code graph, source tree on the left, dependency table on the right](docs/images/graph.png)
 
-## Two pieces
+## Three pieces
 
-|  | **The tool** | **The skills** |
-|---|---|---|
-| What | the `codemap` CLI | a Claude Code plugin |
-| Install | `pipx install git+https://github.com/devanr29/codebase-to-learn` | `/plugin install codemap@codemap` |
-| Needs | Python 3.11+ | the tool, installed first |
-| Does | indexes your repo, explains diffs, renders `explore.html` | authors the prose `explore.html` can't derive on its own |
-| Optional? | — | yes — every tab has a deterministic fallback with zero authored content |
+|  | **The tool** | **The MCP server** | **The skills** |
+|---|---|---|---|
+| What | the `codemap` CLI | `codemap mcp` | a Claude Code plugin |
+| Install | `pipx install git+https://github.com/devanr29/codebase-to-learn` | `pipx inject codemap mcp` | `/plugin install codemap@codemap` |
+| Does | indexes your repo, explains diffs, renders `explore.html` | lets an AI assistant query the graph and settle what static analysis can't, with `file:line` evidence | drives that investigation, then authors the prose `explore.html` can't derive |
+| Optional? | — | yes | yes — every tab has a deterministic fallback with zero authored content |
 
 ```
-codemap scan  →  .codemap/index.db  →  codemap explore  →  explore.html
-                                              ▲
-  .codemap/{walkthrough,libraries,explanations,scenarios,glossary,architecture}.json
-              (optional — authored by the codebase-to-course skill)
+codemap scan → index.db → codemap mcp ⇄ AI assistant (open questions → evidence → verified answers)
+                    │                         │
+                    │      .codemap/{findings,walkthrough,libraries,explanations,scenarios,glossary,architecture}.json
+                    ▼                         ▼
+              codemap explore  ───────────►  explore.html   (reviewed facts are marked as such)
 ```
 
-See [`docs/skills.md`](docs/skills.md) for exactly how the two halves fit
-together, and why the split is deliberate.
+Static analysis can't tell which of two same-named functions a call reaches, or
+which route serves a request built from a variable. The assistant can, by
+reading the code, and `codemap mcp` only accepts an answer whose evidence
+exists in the index. See [`docs/mcp.md`](docs/mcp.md) for the tools and the
+questions, and [`docs/skills.md`](docs/skills.md) for how the pieces fit
+together.
 
 ## Quickstart
 

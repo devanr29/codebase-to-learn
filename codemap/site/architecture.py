@@ -867,6 +867,8 @@ def build(
     req_labels: dict[tuple[str, str], list[str]] = {}
     for r in routes or []:
         label = r["url"] if r.get("method") in (None, "", "ANY") else f'{r["method"]} {r["url"]}'
+        if r.get("review"):  # the handler came from a reviewer's finding, not the code's own routes
+            label += "  (confirmed by review)"
         for ci in r.get("callers") or []:
             for hi in r.get("handlers") or []:
                 s, t = comp_of.get(fi_of_node.get(ci)), comp_of.get(fi_of_node.get(hi))

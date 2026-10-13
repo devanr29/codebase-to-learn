@@ -1,6 +1,6 @@
 """``codemap`` command-line entry point.
 
-Subcommands: scan, explain, catchup, reviewed, note, install-hook, status.
+Subcommands: scan, explain, catchup, reviewed, note, install-hook, status, mcp, ...
 Only a subset is wired up per milestone; unimplemented ones say so and exit 0
 so a post-commit hook can never turn a stubbed command into a failed commit.
 """
@@ -502,6 +502,14 @@ def cmd_install_hook(args: argparse.Namespace) -> int:
     return intent.install_hook(root)
 
 
+def cmd_mcp(args: argparse.Namespace) -> int:
+    """Serve the repo to an AI assistant over MCP (stdio). Read tools, open
+    questions, and verified writes to ``.codemap/*.json`` -- see ``query.py``."""
+    from . import mcp_server
+
+    return mcp_server.main(Path(args.path) if args.path else None)
+
+
 # --------------------------------------------------------------------------- parser
 
 
@@ -578,6 +586,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("text", help="what the next commit is meant to do")
 
     add("install-hook", cmd_install_hook, "install the post-commit hook")
+
+    add("mcp", cmd_mcp, "serve this repo to an AI assistant over MCP (stdio; needs the `mcp` extra)")
 
     return p
 

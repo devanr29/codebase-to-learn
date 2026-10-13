@@ -69,11 +69,24 @@ pipx uninstall codemap
 This doesn't touch any repo's `.codemap/` directory — delete that yourself if
 you want to drop a repo's index too.
 
+### The MCP server (optional)
+
+`codemap mcp` lets an AI assistant investigate the repo and write verified
+answers back (see [`mcp.md`](mcp.md)). It needs the MCP SDK in codemap's
+environment:
+
+```
+pipx inject codemap mcp
+# uv: uv tool install --with mcp git+https://github.com/devanr29/codebase-to-learn
+# from a checkout: pip install -e ".[mcp]"
+```
+
 ## 2. The skills (optional, Claude Code plugin)
 
-The `codebase-to-course` skill writes the three JSON files (`libraries.json`,
-`explanations.json`, `scenarios.json`) that `codemap explore` bakes into the
-Learn, Graph, and Simulate tabs. You don't need it to use the CLI — every tab
+The plugin starts the `codemap` MCP server and adds the `codebase-to-course`
+skill. The skill drives an AI through the repo's open questions and writes the
+JSON files that `codemap explore` bakes into the Learn, Packages, Graph,
+Simulate and Architecture tabs. You don't need it to use the CLI — every tab
 works and falls back gracefully without it. See
 [`skills.md`](skills.md) for what it actually does.
 
@@ -96,7 +109,7 @@ This gives you the `codebase-to-course` skill plus three slash commands:
 | Command | Does |
 |---|---|
 | `/codemap:explore` | scan + open `explore.html` |
-| `/codemap:course` | run the full authoring workflow (emit briefs → invoke the skill → re-render) |
+| `/codemap:course` | run the full workflow (investigate open questions over MCP → author → check → re-render) |
 | `/codemap:review` | `codemap explain` / `catchup` for a commit or your uncommitted changes |
 
 ### Install the skill without the plugin system
@@ -114,5 +127,7 @@ manifest needed for this path.
 ### Verify
 
 Ask Claude Code "explain this codebase" in a repo that has `codemap`
-installed and indexed (`codemap scan` already run) — it should recognize and
-invoke `codebase-to-course` per its description trigger.
+installed and indexed (`codemap scan` already run). It should recognize and
+invoke `codebase-to-course` from its description trigger. `/mcp` should list a
+connected `codemap` server. If it shows as failed, run `codemap mcp` in a
+terminal: the most common cause is a missing SDK (`pipx inject codemap mcp`).

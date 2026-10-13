@@ -24,6 +24,7 @@ from dataclasses import asdict, dataclass
 from ..config import Config
 from . import architecture as _arch
 from . import explain as _explain
+from . import findings as _findings
 from . import glossary as _glossary
 from . import libraries as _libraries
 from . import scenarios as _scenarios
@@ -40,6 +41,7 @@ _AUTHORED = (
     _libraries.LIBRARIES_FILE,
     _arch.ARCHITECTURE_FILE,
     _glossary.GLOSSARY_FILE,
+    _findings.FINDINGS_FILE,
 )
 _SUGGEST_MAX = 40  # difflib over every key costs O(keys) per issue; cap how many issues pay it
 _BUDGET = "max_symbols budget"   # in the message of a key the node budget cut; format_text() folds those
@@ -74,7 +76,11 @@ def _dict(v: object) -> dict:
 class _Ctx:
     """The graph facts every check needs, computed once, plus the issue sink."""
 
-    def __init__(self, data: dict, all_keys: set[str] | None) -> None:
+    def __init__(self, data: dict, all_keys: set[str] | None,
+                 overrides: dict[str, object] | None = None) -> None:
+        # file name -> parsed content to check *instead of* the file on disk:
+        # `codemap mcp` validates a submission before it writes anything
+        self.overrides: dict[str, object] = overrides or {}
         self.keys: set[str] = {n["key"] for n in data.get("nodes", [])}
         self.all_keys: set[str] = all_keys if all_keys is not None else self.keys
         self.paths: set[str] = {f["path"] for f in data.get("files", [])}
@@ -132,6 +138,8 @@ class _Ctx:
 
 def _read(cfg: Config, name: str, ctx: _Ctx) -> object | None:
     """The parsed file, or ``None`` when absent (or unusable, which is reported)."""
+    if name in ctx.overrides:
+        return ctx.overrides[name]
     path = cfg.codemap_dir / name
     if not path.exists():
         return None
@@ -144,7 +152,9 @@ def _read(cfg: Config, name: str, ctx: _Ctx) -> object | None:
     return None
 
 
-def _read_quiet(cfg: Config, name: str) -> object | None:
+def _read_quiet(cfg: Config, name: str, ctx: _Ctx | None = None) -> object | None:
+    if ctx is not None and name in ctx.overrides:
+        return ctx.overrides[name]
     try:
         return json.loads((cfg.codemap_dir / name).read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -404,7 +414,7 @@ def _check_architecture(cfg: Config, ctx: _Ctx) -> None:
 
 def _check_glossary(cfg: Config, ctx: _Ctx, data: dict) -> None:
     shown = {t.lower() for t in _dict(_dict(data.get("glossary")).get("terms"))}
-    inline = _dict(_dict(_read_quiet(cfg, _walkthrough.WALKTHROUGH_FILE)).get("glossary"))
+    inline = _dict(_dict(_read_quiet(cfg, _walkthrough.WALKTHROUGH_FILE, ctx)).get("glossary"))
     for term in inline:
         if _s(term) and _s(term).lower() not in shown:
             ctx.add(_walkthrough.WALKTHROUGH_FILE, f'glossary["{term}"]', WARNING,
@@ -415,6 +425,32 @@ def _check_glossary(cfg: Config, ctx: _Ctx, data: dict) -> None:
                     "never appears in the authored prose, so it never shows as a tooltip")
 
 
+def _check_findings(cfg: Config, ctx: _Ctx, data: dict) -> None:
+    f = _findings.FINDINGS_FILE
+    raw = _read(cfg, f, ctx)
+    if raw is None:
+        return
+    items = _dict(raw).get("items")
+    if not isinstance(items, list):
+        ctx.add(f, "items", ERROR, 'expected an array under "items"; the whole file is ignored')
+        return
+    from .model import line_reader
+
+    line_text = line_reader(cfg, data.get("commit") or "")
+    for i, it in enumerate(items):
+        item = _findings.clean_item(it)
+        where = f"items[{i}]"
+        if item is None:
+            ctx.add(f, where, ERROR,
+                    "not a usable finding (needs a known `kind`, its fields, and `evidence` with "
+                    "file + line); it is ignored")
+            continue
+        where = f'items["{item["id"]}"]'
+        why = _findings.stale_reason(item, ctx.all_keys, line_text)
+        if why:
+            ctx.add(f, where, WARNING, f"stale, so it is not applied: {why}. Re-check it, then answer again or delete it")
+
+
 # --------------------------------------------------------------------------- public
 
 
@@ -423,19 +459,40 @@ def authored_files(cfg: Config) -> list[str]:
     return [n for n in _AUTHORED if (cfg.codemap_dir / n).exists()]
 
 
-def check(data: dict, cfg: Config, *, all_keys: set[str] | None = None) -> list[Issue]:
+def check(
+    data: dict,
+    cfg: Config,
+    *,
+    all_keys: set[str] | None = None,
+    overrides: dict[str, object] | None = None,
+    only: set[str] | None = None,
+) -> list[Issue]:
     """Issues in the authored files, errors first. ``data`` is ``model.build()``'s
     output; ``all_keys`` is every symbol key in the graph (see :func:`graph_keys`),
-    which lets a key cut by the ``max_symbols`` budget be told apart from a typo."""
+    which lets a key cut by the ``max_symbols`` budget be told apart from a typo.
+    ``overrides`` checks parsed content in place of a file on disk, and ``only``
+    limits the run to those file names (both used by ``codemap mcp``)."""
     if data.get("empty"):
         return []
-    ctx = _Ctx(data, all_keys)
-    _check_explanations(cfg, ctx)
-    _check_scenarios(cfg, ctx)
-    _check_walkthrough(cfg, ctx)
-    _check_libraries(cfg, ctx)
-    _check_architecture(cfg, ctx)
-    _check_glossary(cfg, ctx, data)
+    ctx = _Ctx(data, all_keys, overrides)
+
+    def want(name: str) -> bool:
+        return only is None or name in only
+
+    if want(_explain.EXPLAIN_FILE):
+        _check_explanations(cfg, ctx)
+    if want(_scenarios.SCENARIOS_FILE):
+        _check_scenarios(cfg, ctx)
+    if want(_walkthrough.WALKTHROUGH_FILE):
+        _check_walkthrough(cfg, ctx)
+    if want(_libraries.LIBRARIES_FILE):
+        _check_libraries(cfg, ctx)
+    if want(_arch.ARCHITECTURE_FILE):
+        _check_architecture(cfg, ctx)
+    if only is None:
+        _check_glossary(cfg, ctx, data)
+    if want(_findings.FINDINGS_FILE):
+        _check_findings(cfg, ctx, data)
     order = {ERROR: 0, WARNING: 1}
     return sorted(ctx.issues, key=lambda i: (order[i.severity], i.file, i.path))
 

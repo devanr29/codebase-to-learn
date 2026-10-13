@@ -160,6 +160,20 @@ codemap calls build_report --json         # nodes + edges, for scripts and the c
 A node already shown higher in the tree is marked `(*)` and not expanded again,
 so every edge appears exactly once and a cycle ends.
 
+## `codemap mcp`
+
+Serves the repo to an AI assistant over MCP (stdio): read tools over the index,
+the **open questions** static analysis couldn't settle, and verified writes to
+`.codemap/*.json`. Needs the optional SDK (`pipx inject codemap mcp`, or
+`pip install "codemap[mcp]"`); without it the command says so and exits 1.
+Everything about the tools, the questions and `findings.json` is in
+[`mcp.md`](mcp.md).
+
+```
+codemap mcp                     # in the repo; normally started by the client, not by hand
+codemap mcp --path /path/to/repo
+```
+
 ## `codemap trace -- <command>`
 
 Records a **real run** of your program as a call/return trace for the

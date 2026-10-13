@@ -129,13 +129,22 @@
   // blast radius, the entry path and "Trace back to entry" all walk these.
   var outAdjSure = N.map(function () { return []; });
   var inAdjSure = N.map(function () { return []; });
-  // links only the optional codebase-memory engine found (`via: "cbm"`), by "s:t"
+  // links only the optional codebase-memory engine found (`via: "cbm"`), and
+  // links a reviewer settled with evidence (`review`, from findings.json), by "s:t"
   var viaEdge = {};
   E.forEach(function (e) {
     outAdj[e.s].push(e.t); inAdj[e.t].push(e.s);
     if (e.confidence !== "AMBIGUOUS") { outAdjSure[e.s].push(e.t); inAdjSure[e.t].push(e.s); }
-    if (e.via) viaEdge[e.s + ":" + e.t] = e;
+    if (e.via || e.review) viaEdge[e.s + ":" + e.t] = e;
   });
+  // "Confirmed by review: <note> / evidence: file:line, ..." -- the hover text
+  // on every place a reviewed fact shows, so a reader can tell proven from inferred
+  function reviewTitle(rv) {
+    var ev = (rv.evidence || []).map(function (x) { return x.file + ":" + x.line + (x.note ? " (" + x.note + ")" : ""); });
+    return "Confirmed by review" + (rv.external ? " (outside service: " + rv.external + ")" : "") +
+      (rv.note ? ": " + rv.note : "") + (ev.length ? "\nevidence: " + ev.join(", ") : "") +
+      "\nNot proven by codemap's own analysis; recorded in .codemap/findings.json.";
+  }
   // per-caller calls, in call-site order — the Graph/Map views only need "is
   // there an edge", but Simulate (Lane 1) needs "in what order does this
   // frame make its calls", which only the line number on each edge carries.
@@ -2425,7 +2434,8 @@
           on: { click: function () { go("graph", n.key); } } }, [
           el("span", { class: "rk", text: kindLabel(n.kind) }),
           el("span", { class: "rn", text: n.qual }),
-          via ? el("span", { class: "cbm-tag", text: "cbm", title:
+          via && via.review ? el("span", { class: "cbm-tag is-review", text: "reviewed", title: reviewTitle(via.review) })
+            : via ? el("span", { class: "cbm-tag", text: "cbm", title:
             "Found by codebase-memory-mcp (" + (via.engine_strategy || "resolved call") +
             (via.engine_score != null ? ", score " + via.engine_score : "") +
             "); codemap's own analysis had no link here." }) : null,
