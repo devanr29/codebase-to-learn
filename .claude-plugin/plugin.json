@@ -1,7 +1,7 @@
 {
   "name": "codemap",
-  "version": "0.4.0",
-  "description": "Skills for the codemap CLI: author the Learn walkthrough, Packages reference, Simulate scenarios and glossary that codemap explore bakes into explore.html, plus slash commands that wrap the scan/explore/explain workflow.",
+  "version": "0.5.0",
+  "description": "codemap's MCP server and skills: an AI investigates the indexed repo, settles what static analysis couldn't (ambiguous calls, unmatched requests, misplaced architecture parts) with file:line evidence, and authors the Learn/Packages/Simulate/Architecture content that codemap explore bakes into explore.html, for engineers onboarding to a codebase.",
   "author": {
     "name": "Devan Ramadhana",
     "email": "devanr2911@gmail.com"
@@ -10,5 +10,13 @@
   "repository": "https://github.com/devanr29/codebase-to-learn",
   "license": "MIT",
   "skills": "./skills",
-  "commands": "./commands"
+  "commands": "./commands",
+  "mcpServers": {
+    "codemap": {
+      "command": "codemap",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
 }

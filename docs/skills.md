@@ -8,17 +8,23 @@ it writes JSON files under `.codemap/`, and the renderer bakes them in
 verbatim on the next `codemap explore`.
 
 ```
-codemap scan → index.db → codemap explore --emit-brief → .codemap/briefs/*
-                                                                  │
-                                              codebase-to-course skill reads
-                                                                  │
-                                                                  ▼
-       .codemap/{walkthrough,libraries,explanations,scenarios,glossary,architecture}.json
-                                                                  │
-                                              codemap explore (bakes them in)
-                                                                  ▼
-                                                    .codemap/explore.html
+codemap scan → index.db → codemap mcp ⇄ codebase-to-course skill (an AI model)
+                              │          open_questions → read_source / calls → answer_question / submit
+                              ▼  verified writes only
+   .codemap/{walkthrough,libraries,explanations,scenarios,glossary,architecture,findings}.json
+                              │
+                              ▼  codemap explore (bakes them in)
+                    .codemap/explore.html
 ```
+
+The skill first **investigates**. It works through the questions static
+analysis can't settle (ambiguous calls, unmatched requests, misplaced
+architecture parts, hidden services, unnamed workflows), answers each with
+`file:line` evidence, and only then writes prose. Every write goes through
+`codemap mcp`, which refuses anything that doesn't check out. See
+[`mcp.md`](mcp.md). Without the MCP tools the skill falls back to the older
+briefs path (`codemap explore --emit-brief` + hand-written JSON +
+`codemap check`).
 
 The renderer never calls the skill, never calls an LLM, and never blocks on
 these files existing — this is the one rule that makes the split safe:
@@ -33,6 +39,7 @@ these files existing — this is the one rule that makes the split safe:
 | `.codemap/scenarios.json` | **Simulate** | a derived scenario computed client-side in `explore.js` for the busiest few functions |
 | `.codemap/walkthrough.json` | **Learn** | a plain-language intro, an optional category map, and per-folder prose — falls back to a derived folder tree with no authored content |
 | `.codemap/glossary.json` | *(cross-cutting — every tab's prose)* | the two dictionaries bundled with `codemap` (well-known packages, common concepts) still power tooltips alone |
+| `.codemap/findings.json` | *(the graph itself)* | nothing changes: codemap's own edges, guesses and route links stand. With it, reviewed calls are confirmed or removed, reviewed request links are added, and each is tagged **reviewed** |
 | `.codemap/architecture.json` | **Architecture** | the full layered diagram derived from folder names, entry points, imports and manifests — the file only renames boxes, moves misplaced ones, and adds stores/services the imports don't reveal |
 
 The Map and Timeline tabs have **no** authored input at all — they're built

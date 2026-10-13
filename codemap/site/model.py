@@ -57,6 +57,24 @@ def _file_source(cfg: Config, sha: str, path: str) -> list[str] | None:
     return None if text is None else text.splitlines()
 
 
+def line_reader(cfg: Config, sha: str):
+    """``(path, line) -> that line's text`` (1-based, LF lines, the way the
+    parser counts), or ``None`` past the end or for a file not in the index.
+    Each file is read once."""
+    cache: dict[str, list[str] | None] = {}
+
+    def line_text(path: str, line: int) -> str | None:
+        if path not in cache:
+            text = _file_text(cfg, sha, path)
+            cache[path] = None if text is None else text.replace("\r\n", "\n").split("\n")
+        lines = cache[path]
+        if not lines or line < 1 or line > len(lines):
+            return None
+        return lines[line - 1]
+
+    return line_text
+
+
 # A line this long means a minified bundle or a data blob: nobody reads it in a
 # viewer, and one such file would eat the whole source budget.
 _MAX_SOURCE_LINE = 4000
@@ -158,6 +176,16 @@ def build(
         # config reads, browser storage. Adds nothing to `g` — a web request is
         # not a call edge — only route links and facts for the payload.
         native_info = _engine.native(cfg, file_rows, sym_rows, lambda p: _file_bytes(cfg, sha, p))
+        # facts an AI reviewer settled through `codemap mcp` (findings.py):
+        # confirmed or rejected guesses, calls made through dispatch. Applied
+        # after both engines so a review has the last word on a guess, and
+        # before fan-in/out are counted. Absent file -> nothing changes.
+        from . import findings as _findings
+
+        review_items = _findings.load(cfg)
+        line_text = line_reader(cfg, sha) if review_items else None
+        review_info = (_findings.apply_calls(g, review_items, line_text)
+                       if review_items else {"applied": 0, "stale": []})
 
         # call-site line numbers: `call_graph()` matches refs by (from_symbol_id,
         # target_name) but only keeps the edge, not where it happened — Simulate
@@ -248,6 +276,9 @@ def build(
     ordered = sorted(kept, key=lambda r: (r["file"], r["start_line"], r["key"]))
     key_to_i = {r["key"]: i for i, r in enumerate(ordered)}
     routes = _routes_payload((cbm_info, native_info), key_to_i)
+    if review_items:
+        review_info["stale"] += _findings.apply_routes(
+            routes, review_items, key_to_i, set(g.nodes), line_text)
 
     src_cache: dict[str, list[str] | None] = {}
 
@@ -351,10 +382,13 @@ def build(
             "confidence": edata.get("confidence", "AMBIGUOUS"),
             "line": line,
         }
-        if edata.get("via"):  # a link only the other engine found; the inspector says so
+        if edata.get("via"):  # a link only the other engine (or a reviewer) found; the inspector says so
             edge["via"] = edata["via"]
-            edge["engine_score"] = edata.get("cbm_score")
-            edge["engine_strategy"] = edata.get("cbm_strategy")
+            if edata["via"] != "review":
+                edge["engine_score"] = edata.get("cbm_score")
+                edge["engine_strategy"] = edata.get("cbm_strategy")
+        if edata.get("review"):  # settled by a reviewer (findings.json): note + evidence
+            edge["review"] = edata["review"]
         edges.append(edge)
 
     with progress.phase("imports") as _p_imports:
@@ -642,6 +676,12 @@ def build(
         }
     if routes:
         out["routes"] = routes
+    if review_items:
+        out["review"] = {
+            "findings": len(review_items),
+            "applied": review_info["applied"],
+            "stale": review_info["stale"],
+        }
     if native_info["used"]:
         out["facts"] = {
             "requests": native_info["requests"],

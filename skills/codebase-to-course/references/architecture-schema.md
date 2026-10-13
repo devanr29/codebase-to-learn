@@ -76,8 +76,8 @@ in any string.
   or move it.
 - Look at every **wrong-way import** the brief lists. Either one side is in the
   wrong layer (fix the `layer`) or it's a real shortcut (say so in a `body`).
-- A `title` names what the part **does for the app**, in words a vibe coder
-  would recognize: "Checkout rules", not "Service layer" or "BillingServiceImpl".
+- A `title` names what the part **does for the app**, in words an engineer new
+  to the repo would recognize: "Checkout rules", not "Service layer" or "BillingServiceImpl".
 - Add a store or service only when the code really reaches it without an
   import that reveals it: an ORM URL, a plain HTTP call, a queue named in config.
   Don't invent infrastructure the code never touches.

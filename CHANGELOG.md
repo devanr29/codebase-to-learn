@@ -6,6 +6,53 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-10-14
+
+The flow is now **index → investigate → write → bake**. An AI assistant
+queries the graph over MCP, settles what static analysis couldn't with
+`file:line` evidence, and only verified answers reach the page.
+
+### Added
+- **`codemap mcp`**, an MCP server over stdio (optional `mcp` extra:
+  `pipx inject codemap mcp`). Its logic lives in `codemap/query.py`, free of
+  the SDK. The tools:
+  - read tools: `overview`, `find_symbol`, `explain_symbol`, `calls`,
+    `impact`, `read_source`, `search_code`, `get_authored`, `check`;
+  - `open_questions`: nine ranked kinds of gap. They are ambiguous calls,
+    unmatched web requests, orphans, best-guess architecture boxes, wrong-way
+    imports, settings that hint at a database or service, entry points with no
+    scenario, and unexplained symbols and packages;
+  - `answer_question` and `submit`: verified writes. Evidence lines must
+    exist, keys must resolve, and an entry must not add a `codemap check`
+    error, or nothing is written and the reason comes back.
+- **`.codemap/findings.json`**, the facts a reviewer settled:
+  - `call` confirms an `AMBIGUOUS` edge, or adds a dispatch edge;
+  - `not_call` removes a false guess;
+  - `request` names a request's handler or outside service;
+  - `unknown` and `note` close a question without changing the graph.
+
+  `model.build` applies findings after both engines. A finding whose evidence
+  line changed, or whose symbol is gone, goes stale: it is not applied, and
+  `codemap check` warns.
+- The page marks reviewed facts. The Graph inspector shows a dashed
+  **reviewed** tag with the note and evidence. The Architecture tab labels
+  request links "(confirmed by review)". `explore --json` carries
+  `edges[].review`, `routes[].review` and a `review` summary.
+- The plugin starts the server (`mcpServers` in `plugin.json`).
+- `docs/mcp.md`.
+
+### Changed
+- **The audience is engineers onboarding to a repo**, not only non-technical
+  "vibe coders". The `codebase-to-course` skill and
+  `references/content-philosophy.md` now ask for responsibilities, inputs →
+  outputs, side effects, callers and gotchas, each tied to real keys.
+- The skill investigates over MCP first, then writes through `submit`. The
+  old briefs-and-hand-written-JSON path moved to
+  `references/file-mode.md` as the fallback.
+- `/codemap:course` follows the new flow.
+- `validate.check()` takes `overrides` (check content before it's written)
+  and `only` (limit the check to some files).
+
 ## [0.4.0] — 2026-10-11
 
 ### Added

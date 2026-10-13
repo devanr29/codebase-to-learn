@@ -1,112 +1,90 @@
 # Content philosophy
 
-Read this before writing `walkthrough.json`, `libraries.json`,
-`explanations.json` or the `summary` lines in `scenarios.json`. Every reader
-is a **vibe coder** — no CS background, here to acquire the vocabulary and
-judgement to steer AI tools.
+Read this before you write any prose: an explanation, a package entry, a
+walkthrough page, a scenario `summary`, or an architecture title. The reader
+is **an engineer new to this repo**. They can program. What they lack is a map
+of *this* codebase: what each part is responsible for, how data moves through
+it, and where the traps are.
 
-## Write for someone who's never heard of it
+## Say what a reader can't get from the signature
 
-- A `general` line explains the *package*, not this repo: "Graphs as data —
-  build nodes and edges, then run algorithms." Someone should be able to read it
-  with zero context and know whether it matters to them.
-- A `here` / `what` line is the opposite: ruthlessly specific to this codebase.
-  Name the real modules and functions. If the sentence would read the same for
-  any project using that library, it's not a `here` line.
-- A folder `purpose` line answers **what would be lost, not what's inside**:
-  "what would I lose if this folder were deleted," never "what files live in
-  here." `components/ui holds the buttons, cards, and inputs` is an inventory
-  and fails; `without this folder there's nothing to build a screen out of`
-  names the job and passes.
+- A `what` line states the **responsibility**, the **inputs → outputs**, and
+  any **side effect**: "Builds the explorer's data model from the index: reads
+  every symbol at the graph's commit, resolves calls, and returns one
+  JSON-ready dict. Read-only on the DB." Don't restate the name ("Builds the
+  model.") or the docstring.
+- `why` carries what bites: callers that depend on an odd behaviour, a slow
+  path, an invariant, a known false positive. Leave it out if there's nothing
+  to say.
+- A `general` line explains the *package* for someone who hasn't used it:
+  "Graph data structures and algorithms; here, directed graphs plus shortest
+  paths." A `here` line is ruthlessly specific to this repo. It names the real
+  modules and functions. If the sentence would read the same for any project
+  using that library, it isn't a `here` line.
+- A folder `purpose` answers **what would break or be missing without it**,
+  never "what files live in here". `components/ui holds buttons and inputs` is
+  an inventory and fails. `the shared UI kit every screen is built from; change
+  a component here and every screen changes` passes.
 
-## Two or three sentences, then stop
+## Precise, short, checkable
 
-- `general`, `here`, `what`, folder `purpose`: 2–3 plain sentences each. A
-  fourth sentence means you're explaining two things — split them or cut one.
-- **The tooltip carries jargon now, not the sentence.** Two bundled
-  dictionaries (~200 package/tool names, ~75 core programming concepts —
-  REPL, CLI, entry point, PATH, namespace, WSGI, ORM, ASGI, decorator, and
-  more) already power a hover/tap tooltip on those words wherever your prose
-  is rendered. A term either dictionary covers needs **no inline gloss at
-  all** — just write "a **hook**," not "a **hook** — a function that lets a
-  component tap into state or lifecycle events —". This is a real change from
-  before: don't write the old parenthetical-gloss pattern anymore. A term
-  *neither* dictionary covers — this project's own vocabulary, or an
-  everyday term that slipped through both lists — gets no inline gloss
-  either; it goes in `.codemap/glossary.json` instead (see
-  `references/glossary-schema.md`), never a parenthetical bolted onto the
-  sentence. **The vocabulary is still the learning** — it just lives in the
-  glossary pool now, not the prose. (Don't gloss terms the reader owns from
-  their own domain.)
+- Two or three sentences per `what` / `general` / `here` / `purpose`. A fourth
+  sentence means you're explaining two things: split them or cut one.
+- Technical terms are fine. Use the right one ("idempotent", "N+1 query",
+  "middleware") instead of a paraphrase. A term specific to *this* project
+  (its domain words, its own abstractions) goes in `glossary.json` so it gets
+  a tooltip everywhere it appears. Don't gloss it inline.
+- Name things the reader can open: `site/model.py::build`, not "the model
+  builder". Every key you cite must be real (`find_symbol`). The reader will
+  click it.
+- No analogies in place of facts. A short comparison is fine when it's
+  accurate ("a dispatch table: command name → handler function"), but the
+  explanation must stand without it.
 
-## Anchor in what they did
+## Ground every behavioural claim
 
-Prefer "you ran `codemap explore` — this is the package that parses your files"
-over "tree-sitter is an incremental parsing library." Tie the abstract thing to
-an action they've taken with the software.
-
-## Never touch the code
-
-`see` keys and the symbols you cite must be real. Don't invent a call site, a
-function name, or a file path — the reader will open the file and check.
+How the code *behaves* — who calls what, what a request hits, "only X writes
+Y" — is a factual claim. It ships only when `calls` / `impact` / `search_code`
+backs it, or an answered question's evidence does. Mark hops the graph can't
+show (a framework calling your handler, a registry lookup) as exactly that, in
+words. Never present them as calls you traced.
 
 ## Cover everything, rank nothing
 
-The Dependency reference and the Scenario index are the scope. Don't hand-pick
-"the interesting five" — a newcomer doesn't know which five those are yet. A
-one-line `general` for a boring dependency still saves them a web search.
+The open questions, the dependency list and the entry points are the scope.
+Don't hand-pick "the interesting five". A newcomer doesn't know which five
+those are yet. A one-line `general` for a boring dependency still saves them a
+search.
 
 ## Navigation, not completion
 
-Cover everything (previous section) — but never write as if finishing the
-list is the point. "Nobody understands a codebase entirely — not even the
-people who wrote it" is the tool's own opening line (the Learn tab's
-Orientation screen says this before anything else, unconditionally, whether or
-not this skill has run). Authored prose should read the same way: a `summary`
-is "what you'll see if you look here," not "step 12 of 40." Never write
-"complete this scenario" or number scenarios as a sequence to finish — `group`
-and `order` already tell the rail how to sort them; the copy shouldn't imply a
-checklist on top of that. A learner who reads three entries and stops has not
-failed to finish anything.
+"Nobody understands a codebase entirely — not even the people who wrote it."
+The page opens with that line, and your prose should read the same way. A
+scenario `summary` is "what you'll see if you follow this": "the request path
+from the router to the SQL query, including the retry". It is never "step 12
+of 40". Never number scenarios as a checklist; `group` and `order` already
+sort the rail.
 
-## The restaurant — one house metaphor, reused
+## Frontend and backend
 
-Reuse this one analogy across every module's `here` line instead of inventing
-a new one per file — a vibe coder who has seen it once in the Map tab's own
-legend should recognize it again in your prose:
+When the repo splits into a client and a server, the most valuable thing
+`walkthrough.json`'s `intro` explains is the **seam**:
+- which requests cross it;
+- who sends each one;
+- which handler serves it;
+- what shape the data has on each side.
 
-> The **menu** is what the outside world can ask for (routes, public
-> functions). The **waiter** carries the request back but doesn't cook
-> (controllers, thin request handlers). The **kitchen** does the actual work
-> (services, business logic — most of the code lives here). The **fridge /
-> pantry** is what survives after everyone goes home (the database, the
-> filesystem, persisted state). The **health inspector** checks the kitchen
-> without doing any cooking (tests).
+Give each side a `sides` entry and point `seam.see` at the real client call and
+the real handler. Answered `unmatched_request` questions are your source.
 
-Use the piece that actually fits — don't force all five onto a repo that only
-has three. A `here` line for a `services/` module can say "this is the
-kitchen: the actual `<verb>` logic other layers call into," reusing language
-the reader has already met once, instead of restating the whole architecture
-from scratch on every page.
+## Point at the four moves
 
-## The dining room and the kitchen
+The Orientation screen teaches four ways to move around any codebase:
+- search for text you saw on screen;
+- jump to a definition;
+- read the history;
+- run it and watch the order.
 
-When a repo splits into a frontend and a backend, this is now the single most
-valuable thing `walkthrough.json`'s `intro` explains — and the restaurant
-metaphor extends across that seam instead of stopping at it. The frontend is
-the **dining room**: what the customer sees, sits in, and touches — screens,
-buttons, layout. The backend is the **kitchen and storage**: where the work
-actually happens and where things are kept, out of the customer's sight —
-routes, business logic, the database. Use this framing for `intro.sides` and
-`intro.seam` specifically; it's a different cut than the five-role breakdown
-above, which describes what happens *inside* one side (usually the kitchen),
-not the split between the two.
-
-## Reinforce the four moves, don't compete with them
-
-The Orientation screen already teaches four ways to move around any codebase:
-search for text you saw on screen, jump to a definition, read the history,
-run it and watch the order. Authored `summary` lines should point at these,
-not around them — "watch what prints, in order" is a better scenario summary
-than "understand the explore command," because it tells the reader which of
-the four moves they're about to practice.
+Write summaries that point at these. "Watch which handler runs first, then
+where the DB write happens" tells the reader which move they're about to
+practise.

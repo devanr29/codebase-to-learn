@@ -493,7 +493,7 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
               "reference. Follow `references/libraries-schema.md`. Annotate every "
               "entry from the **Dependency reference** above with `general` + "
               "`here` (+ optional `see` keys); start from `libraries-derived.json`.")
-    ov.append("3. `.codemap/explanations.json` — one plain-English `what` line per "
+    ov.append("3. `.codemap/explanations.json` — one precise `what` line per "
               "symbol, shown in the Graph inspector. Follow "
               "`references/explanations-schema.md`. Key every entry by the symbol "
               "`key:` printed in the per-module briefs. Cover at least every "

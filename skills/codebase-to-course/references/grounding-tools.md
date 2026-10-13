@@ -5,7 +5,29 @@ Everything you write about how the code behaves — a scenario's steps, an
 These tools exist so each one is checked against a real call graph before it
 ships. Use the strongest set available; **always finish with `codemap check`**.
 
-## Always available: `codemap`
+## First choice: codemap's own MCP tools
+
+With the `codemap` MCP server connected (the plugin starts it; otherwise
+`claude mcp add codemap -- codemap mcp`), every check below is a tool call that
+also returns `file:line`:
+
+| Need | Tool |
+|---|---|
+| What the repo is, its layers and entry points | `overview` |
+| A symbol's key, signature, callers, callees and source | `find_symbol`, `explain_symbol` |
+| What a scenario's entry point really calls | `calls(key, "out", 4, false)` |
+| Who calls a function (for an exclusivity claim) | `calls(key, "in")`, `impact(key)` |
+| Exact lines to cite as evidence | `read_source(path, start, end)` |
+| Registrations, decorators, config, string references | `search_code(pattern)` |
+| What the graph couldn't settle | `open_questions(kind)` |
+| Record a settled fact / an authored entry | `answer_question`, `submit` (both verified) |
+| Everything still holds | `check` |
+
+A reviewed edge (`answer_question` on a call) carries its evidence into the
+page, tagged **reviewed** in the Graph inspector. If the cited line changes,
+the finding goes stale: it stops being applied and `check` warns.
+
+## Always available: the `codemap` CLI
 
 | Need | Command |
 |---|---|
@@ -51,7 +73,7 @@ do not install it for them; skip this section.
   `aspects: ["layers", "routes", "boundaries", "entry_points"]` next to
   `architecture-derived.json`. Use it to decide *which corrections to write*,
   not as text to copy: the names and layers must still read as what each part
-  does for a vibe coder.
+  does, for an engineer new to the repo.
 - **The frontend/backend seam.** `get_architecture` with `aspects: ["routes"]`,
   or `search_graph` with `label: "Route"`, lists each HTTP route with the
   functions that call it and the function that serves it: exactly the hop the
