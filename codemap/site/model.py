@@ -44,6 +44,23 @@ def _strip_trailers(body: str) -> str:
     return "\n\n".join(paras).strip()
 
 
+_LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s")
+
+
+def _first_paragraph(body: str) -> str:
+    """The body's opening paragraph on one line. Commit bodies are hard-wrapped
+    at ~72 columns, so taking only the first line cut the Timeline summary off
+    mid-sentence. A list stops the join at its first item."""
+    lines: list[str] = []
+    for ln in body.strip().splitlines():
+        if not ln.strip() or (lines and _LIST_ITEM.match(ln)):
+            break
+        lines.append(ln.strip())
+        if _LIST_ITEM.match(ln):
+            break
+    return " ".join(lines)
+
+
 def _short(sha: str | None) -> str:
     if not sha:
         return ""
@@ -819,7 +836,7 @@ def _timeline(
                 body_only = _strip_trailers(
                     "\n".join((text or "").strip().splitlines()[1:]).strip()
                 )
-                intent_text = body_only.splitlines()[0] if body_only else ""
+                intent_text = _first_paragraph(body_only)
             else:
                 intent_text = (text or "").strip().splitlines()[0] if text else ""
             out.append(

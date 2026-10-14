@@ -233,3 +233,12 @@ def test_strip_trailers_drops_git_trailer_block():
     # a lone un-hyphenated "Token: value" line is prose, not a trailer
     assert model._strip_trailers("Fix: crash on empty input") == "Fix: crash on empty input"
     assert model._strip_trailers("") == ""
+
+
+def test_first_paragraph_joins_hard_wrapped_lines():
+    body = "Graph: even spiral placement, fit-to-view uses the\nvisible canvas.\n\nMore detail."
+    assert model._first_paragraph(body) == "Graph: even spiral placement, fit-to-view uses the visible canvas."
+    # a list stops at its first item
+    assert model._first_paragraph("- one\n- two") == "- one"
+    assert model._first_paragraph("Intro line\n- item") == "Intro line"
+    assert model._first_paragraph("") == ""

@@ -3040,7 +3040,7 @@
         ]),
         el("div", { class: "tl-subj", text: c.subject || "(no message)" }),
         c.intent.text && c.intent.source !== "inferred"
-          ? el("div", { class: "muted", style: "font-size:12px", text: c.intent.text }) : null,
+          ? el("div", { class: "muted tl-intent", title: c.intent.text, text: c.intent.text }) : null,
         bars,
         c.headline ? el("div", { class: "tl-line" }, [el("b", { text: "Headline: " })].concat(codeify(c.headline))) : null,
         c.impact ? el("div", { class: "tl-line" }, [el("b", { text: "Impact: " }), c.impact]) : null,

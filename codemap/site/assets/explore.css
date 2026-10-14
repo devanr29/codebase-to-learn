@@ -1563,3 +1563,9 @@ button { font-family: inherit; }
   .sim-pane-toggle, .sim-pane-solo { width: 32px; height: 32px; }
   .mlink, .sim-scenario { padding-top: 10px; padding-bottom: 10px; }
 }
+
+/* Timeline: a commit body's first paragraph, kept to two lines */
+.tl-intent {
+  font-size: 12px; max-width: 72ch;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
+}

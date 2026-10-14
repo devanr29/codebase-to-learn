@@ -29,7 +29,9 @@ phone layouts, contrast and touch sizing. No change to the data model or CLI.
 - **Learn and Packages on a phone:** below 900px the side menu stacks above the
   text. The fixed 220px menu left the text one word wide.
 - **Timeline:** git trailers (`Co-Authored-By:`, `Signed-off-by:` …) at the end
-  of a commit message are dropped, so they no longer show as the summary.
+  of a commit message are dropped, so they no longer show as the summary. The
+  summary is the body's whole first paragraph (capped at two lines), not its
+  first hard-wrapped line, which stopped mid-sentence.
 - The "Skip to inspector" link is hidden until it gets keyboard focus. It sat
   on top of the logo.
 - Simulate's legend row "recorded — a real `codemap trace` run" no longer
