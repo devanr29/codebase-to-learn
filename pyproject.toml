@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "codemap"
-version = "0.5.1"
+version = "0.6.0"
 description = "Change explainer for AI-assisted codebases — a git-triggered semantic diff over a symbol-level graph"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -46,7 +46,9 @@ Documentation = "https://github.com/devanr29/codebase-to-learn/tree/main/docs"
 
 [project.optional-dependencies]
 llm = ["anthropic>=0.40"]
-mcp = ["mcp>=1.2"]
+# `codemap mcp` speaks the protocol itself (mcp_server.py) since 0.6; the extra
+# stays, empty, so existing `codemap[mcp]` install commands keep working.
+mcp = []
 dev = ["pytest>=8.0"]
 
 [project.scripts]

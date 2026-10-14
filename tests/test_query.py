@@ -210,12 +210,81 @@ def test_no_findings_file_changes_nothing(repo):
 # --------------------------------------------------------------------------- server
 
 
-def test_server_registers_every_tool(repo):
-    pytest.importorskip("mcp")
-    import asyncio
+TOOL_NAMES = {"overview", "find_symbol", "explain_symbol", "calls", "impact", "read_source",
+              "search_code", "get_authored", "open_questions", "answer_question", "submit", "check"}
+
+
+def _rpc(server, method, params=None, rid=1):
+    msg = {"jsonrpc": "2.0", "id": rid, "method": method}
+    if params is not None:
+        msg["params"] = params
+    return server.handle(msg)
+
+
+def test_server_registers_every_tool_with_a_schema(repo):
+    from codemap.mcp_server import build_server
+
+    tools = {t["name"]: t for t in _rpc(build_server(repo), "tools/list")["result"]["tools"]}
+    assert set(tools) == TOOL_NAMES
+    calls = tools["calls"]["inputSchema"]
+    assert calls["required"] == ["key"]
+    assert calls["properties"]["direction"] == {"type": "string", "default": "out"}
+    assert calls["properties"]["include_guesses"] == {"type": "boolean", "default": True}
+    answer = tools["answer_question"]["inputSchema"]["properties"]
+    assert answer["answer"] == {"type": "object"}
+    assert answer["evidence"] == {"type": "array", "items": {"type": "object"}}
+    assert all(t["description"] for t in tools.values())
+
+
+def test_server_speaks_json_rpc_over_stdio_lines(repo):
+    import io
 
     from codemap.mcp_server import build_server
 
-    names = {t.name for t in asyncio.run(build_server(repo).list_tools())}
-    assert names == {"overview", "find_symbol", "explain_symbol", "calls", "impact", "read_source",
-                     "search_code", "get_authored", "open_questions", "answer_question", "submit", "check"}
+    lines = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+         "params": {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "t"}}},
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},          # no reply
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+         "params": {"name": "find_symbol", "arguments": {"query": "lonely"}}},
+        {"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+         "params": {"name": "explain_symbol", "arguments": {"key": "no_such_symbol"}}},
+        {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "calls", "arguments": {}}},
+        {"jsonrpc": "2.0", "id": 5, "method": "nope"},
+    ]
+    inp = io.BytesIO(b"".join(json.dumps(m).encode() + b"\n" for m in lines) + b"{broken\n")
+    out = io.BytesIO()
+    build_server(repo).serve(inp, out)
+    replies = [json.loads(x) for x in out.getvalue().splitlines()]
+    assert [r.get("id") for r in replies] == [1, 2, 3, 4, 5, None]
+
+    init = replies[0]["result"]
+    assert init["protocolVersion"] == "2025-03-26" and init["serverInfo"]["name"] == "codemap"
+    assert "open_questions" in init["instructions"] and init["capabilities"] == {"tools": {"listChanged": False}}
+
+    found = replies[1]["result"]
+    assert found["isError"] is False
+    assert LONELY in found["content"][0]["text"]
+
+    missing = replies[2]["result"]                          # a QueryError is a tool error, not a crash
+    assert missing["isError"] is True and "find_symbol" in missing["content"][0]["text"]
+    assert replies[3]["result"]["isError"] is True and "key" in replies[3]["result"]["content"][0]["text"]
+    assert replies[4]["error"]["code"] == -32601
+    assert replies[5]["error"]["code"] == -32700
+
+
+def test_codemap_mcp_runs_as_a_subprocess(repo):
+    import sys
+
+    msgs = [
+        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}},
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+    ]
+    proc = subprocess.run(
+        [sys.executable, "-m", "codemap", "mcp", "--path", str(repo)],
+        input="".join(json.dumps(m) + "\n" for m in msgs).encode(), capture_output=True, timeout=120,
+    )
+    assert proc.returncode == 0, proc.stderr.decode(errors="replace")
+    replies = [json.loads(x) for x in proc.stdout.splitlines()]      # stdout holds protocol messages only
+    assert [r["id"] for r in replies] == [1, 2]
+    assert {t["name"] for t in replies[1]["result"]["tools"]} == TOOL_NAMES

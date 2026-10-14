@@ -6,6 +6,42 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] — 2026-10-15
+
+codemap is now standalone: the call-graph engine and the MCP server that used
+to come from other tools are built in.
+
+### Added
+- **Type-aware call resolution** for Python, JavaScript and TypeScript
+  (`codemap/enrich/typeflow.py`), a port of codebase-memory-mcp's "Hybrid LSP"
+  resolver (MIT). It works out what each call's receiver is (annotations,
+  constructors, `self.x` / class fields / TS constructor parameter properties,
+  return types, imports through `__init__.py` and barrel re-exports, base
+  classes, `super()`, `await`, `as` casts) and then adds the calls a name
+  match missed, confirms `AMBIGUOUS` guesses and removes the wrong ones, and
+  rules out calls on builtin or third-party values. A method call also reaches
+  every override in a repo subclass. Unsure stays unknown and leaves codemap's
+  own edges alone. Used by `explore`, `calls` and `mcp`; such links carry a
+  `typed` tag in the Graph inspector, and the topbar shows a `+ types` badge.
+  `[engine] types = "off"` turns it off.
+- **Python web requests** (`codemap/enrich/pyfacts.py`): `requests` / `httpx` /
+  `aiohttp` / test-client / `urlopen` calls are paired with the Python routes
+  that serve them, and with Express routes; a JS frontend's requests pair with
+  Python (Flask, FastAPI) routes too. They appear in Simulate, on the
+  Architecture tab and in the brief like the JS/TS links.
+
+### Changed
+- **`codemap mcp` no longer needs the MCP SDK.** The server speaks MCP's
+  JSON-RPC 2.0 over stdio itself (`codemap/mcp_server.py`), so a plain
+  `pipx install` is enough; `pipx inject codemap mcp` is no longer needed. The
+  `mcp` extra stays, empty, so existing install commands still work.
+- `codemap calls` and the MCP tools read the same type-resolved graph as
+  `explore`, so a call settled by types is no longer an open question.
+
+### Removed
+- Reading a codebase-memory-mcp index (`codemap/enrich/cbm.py`). Its
+  `[engine] codebase_memory` and `cache_dir` settings are ignored if present.
+
 ## [0.5.1] — 2026-10-14
 
 A frontend pass over `explore.html`: layout bugs found on a real repo,
@@ -422,7 +458,8 @@ This release fixes all of it, by phase.
   `/explore` and `/review` slash commands.
 - Post-commit hook for diff explanations.
 
-[Unreleased]: https://github.com/devanr29/codebase-to-learn/compare/v0.5.1...HEAD
+[Unreleased]: https://github.com/devanr29/codebase-to-learn/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.3.1...v0.4.0

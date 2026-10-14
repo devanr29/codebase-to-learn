@@ -143,11 +143,11 @@ button { font-family: inherit; }
   font: 500 10px/1 var(--font-mono); color: var(--color-accent);
   border: 1px solid var(--color-accent-300); border-radius: 999px; padding: 3px 7px; cursor: help;
 }
-.rowitem .cbm-tag {
+.rowitem .engine-tag {
   font: 500 9px/1 var(--font-mono); color: var(--color-accent);
   border: 1px solid var(--color-accent-300); border-radius: 4px; padding: 2px 4px; margin-left: 6px; cursor: help;
 }
-.rowitem .cbm-tag.is-review { color: var(--color-success, var(--color-accent)); border-style: dashed; }
+.rowitem .engine-tag.is-review { color: var(--color-success, var(--color-accent)); border-style: dashed; }
 
 .tabs { display: flex; gap: 2px; margin-left: 8px; }
 .tab {

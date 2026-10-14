@@ -18,7 +18,7 @@ generated it with AI and now has to own it. After every commit, it also answers:
 |  | **The tool** | **The MCP server** | **The skills** |
 |---|---|---|---|
 | What | the `codemap` CLI | `codemap mcp` | a Claude Code plugin |
-| Install | `pipx install git+https://github.com/devanr29/codebase-to-learn` | `pipx inject codemap mcp` | `/plugin install codemap@codemap` |
+| Install | `pipx install git+https://github.com/devanr29/codebase-to-learn` | included with the tool | `/plugin install codemap@codemap` |
 | Does | indexes your repo, explains diffs, renders `explore.html` | lets an AI assistant query the graph and settle what static analysis can't, with `file:line` evidence | drives that investigation, then authors the prose `explore.html` can't derive |
 | Optional? | — | yes | yes — every tab has a deterministic fallback with zero authored content |
 
@@ -79,55 +79,56 @@ degrades gracefully if Google Fonts is unreachable. The generated page never
 calls an LLM. It also works on a phone: side menus stack above the content,
 and controls grow to finger size on touch screens.
 
-## Web requests, settings and browser storage (JS/TS)
+## Web requests, settings and browser storage
 
 The call graph has no edge across a web request, so a screen calling `/api/x`
-and the handler serving it would never meet. For JavaScript and TypeScript,
-codemap reads them out of the code itself:
+and the handler serving it would never meet. codemap reads both ends out of the
+code itself:
 
-- **Request → handler links.** `fetch` / `axios` / `ky`-style calls (a URL built
-  with `${id}` becomes `/api/orders/:param`) are paired with the Express routes
-  that serve them, prefixes from `app.use('/api/orders', router)` included.
-  Simulate walks from the client call into the handler, the Architecture tab
-  draws a labelled dashed connector, and the brief lists each link.
-- **Settings.** Every `process.env` / `import.meta.env` / `process.argv` read,
-  with its `||` / `??` default, listed in the brief.
-- **Browser storage.** `localStorage` / `sessionStorage` / IndexedDB / Cache
-  Storage keys, shown as a store on the Architecture tab.
+- **Request → handler links.** JS/TS `fetch` / `axios` / `ky`-style calls (a URL
+  built with `${id}` becomes `/api/orders/:param`) and Python `requests` /
+  `httpx` / `aiohttp` / test-client calls (an f-string URL the same way) are
+  paired with the routes that serve them: Express routes, prefixes from
+  `app.use('/api/orders', router)` included, and Python Flask / FastAPI routes.
+  A React screen calling a FastAPI handler pairs like any other. Simulate walks
+  from the client call into the handler, the Architecture tab draws a labelled
+  dashed connector, and the brief lists each link.
+- **Settings** (JS/TS). Every `process.env` / `import.meta.env` / `process.argv`
+  read, with its `||` / `??` default, listed in the brief.
+- **Browser storage** (JS/TS). `localStorage` / `sessionStorage` / IndexedDB /
+  Cache Storage keys, shown as a store on the Architecture tab.
 
-The detection rules are ported from [REA](https://github.com/morluto/rea) (MIT),
-re-expressed over tree-sitter; codemap adds the URL patterns, mounts and
-pairing. Set `native = "off"` under `[engine]` to skip them.
+The JS/TS detection rules are ported from [REA](https://github.com/morluto/rea)
+(MIT), re-expressed over tree-sitter; codemap adds the URL patterns, mounts,
+the Python side and the pairing. Set `native = "off"` under `[engine]` to skip
+them.
 
-## Works better with codebase-memory-mcp (optional)
+## Type-aware call resolution (Python, JavaScript, TypeScript)
 
-[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) is a fast,
-local code-graph engine built for AI agents: many languages, type-aware call
-resolution. codemap does not try to be that; it is the layer that explains a
-codebase to a person. If you have indexed your repo with it, `codemap explore`
-reads that index (read-only, never written to) and adds what codemap's own
-analysis missed:
+A name match can't tell `self.repo.get()` (a `Repo`) from `cache.get()` (a
+dict). For Python, JavaScript and TypeScript, codemap also works out what each
+call's receiver *is*: parameter and return annotations, `x = Foo()` and
+`new Foo()`, `self.x = ...` / class fields / constructor parameter properties,
+imports followed through `__init__.py` and barrel re-exports, base classes and
+`super()`, `await`, `for x in items: list[Foo]` and `as Foo` casts. Then:
 
-- **Call links** it resolved that codemap could not, and `AMBIGUOUS` name-only
-  guesses it settles. Each one is tagged `cbm` in the Graph inspector.
-- **Web requests in other languages.** codemap pairs JS/TS requests itself
-  (above); the index adds the ones it resolves elsewhere, merged into the same
-  links.
+- a call it resolves becomes a link, even where the name match had none (a
+  method on a field, a `new` expression), and a method call also reaches every
+  override in a repo subclass, since that is what can run;
+- an `AMBIGUOUS` name-only guess it settles is confirmed, and the wrong ones
+  are removed, but only when *every* call to that name from that function is
+  decided;
+- a call on a builtin or third-party value (`dict.get`, `requests.get`,
+  `console.log`) is ruled out as a repo call.
 
-```
-codebase-memory-mcp cli index_repository --repo-path .
-codemap status     # engine: codemap + codebase-memory (project ..., N call links indexed ...)
-codemap explore --open
-```
-
-Nothing here is required: without it everything works exactly as before, and
-codemap never installs, runs or configures the other tool. Links from an index
-that is out of date for a file (the file changed since it was indexed) are
-skipped, and an index in a format codemap doesn't know is ignored, with the
-reason shown by `codemap status`. Set `codebase_memory = "off"` under `[engine]`
-in `.codemap/config.toml` to never look. The course skill also uses the tool's
-MCP tools, when your agent has them, to double-check what it writes; see
-[`docs/spec.md`](docs/spec.md) §20.
+Anything unsure stays as the name match left it: a variable bound to two types,
+an interface or `Protocol`, an abstract method with no override. Links it added
+or confirmed carry a `typed` tag in the Graph inspector, and the topbar's
+`+ types` badge says how many. The design is a port of
+[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp)'s
+"Hybrid LSP" resolver (MIT), written in Python over codemap's own parse, so
+nothing else needs installing. Set `types = "off"` under `[engine]` in
+`.codemap/config.toml` to keep the plain name-based graph.
 
 ## Known blind spots
 
@@ -138,13 +139,15 @@ MCP tools, when your agent has them, to double-check what it writes; see
 - Caller resolution is receiver-aware: a `self.x()`/`Class.x()` call only
   resolves against that class, and a call on a variable needs import
   evidence to resolve at all (a stoplist of common container/IO names like
-  `.get`/`.then`/`.json` blocks even that). A **bare call**, with no receiver
-  in front of it, still falls back to a repo-wide name match when nothing
-  more specific applies, so false positives remain possible there — always
-  within the same language family, never into a test file from production
-  code. Confidence (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`) is shown per edge;
-  the Graph tab draws an `AMBIGUOUS` edge dashed and leaves it out of
-  fan-in/fan-out and blast radius.
+  `.get`/`.then`/`.json` blocks even that). In Python, JavaScript and
+  TypeScript, type resolution (above) fills in most of what that misses; in
+  the other languages it doesn't run. A **bare call** it can't settle still
+  falls back to a repo-wide name match when nothing more specific applies, so
+  false positives remain possible there — always within the same language
+  family, never into a test file from production code. Confidence
+  (`EXTRACTED`/`INFERRED`/`AMBIGUOUS`) is shown per edge; the Graph tab draws
+  an `AMBIGUOUS` edge dashed and leaves it out of fan-in/fan-out and blast
+  radius.
 - Go and Rust methods show up with a flat name, not `Type.method` — see
   [`docs/spec.md`](docs/spec.md) §14.
 - A folder that contains no file in an indexed language (docs-only, data-only,

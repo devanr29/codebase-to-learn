@@ -46,8 +46,8 @@ Do not implement these, even partially, even if they look easy:
   HTML artifact **is** in scope (M10–M14, §12); it is rendered from the DB by
   deterministic code and never runs a process.
 - Full type inference or a compiler-grade index (see §5 on resolution tiers)
-- A many-language, type-resolving indexer of our own: broader coverage comes from optionally
-  reading a codebase-memory-mcp index (§20), and no language is added to the built-in
+- A many-language, compiler-grade type resolver: type resolution (§20) covers Python,
+  JavaScript and TypeScript, conservatively, and no language is added to the built-in
   indexer without a user request
 - Vector search / embeddings / RAG
 - Multi-repo or cross-repo analysis
@@ -934,12 +934,12 @@ layer — see §18.
 
 ---
 
-## 20. Authoring checks, call grounding and an optional engine (M22)
+## 20. Authoring checks, call grounding and type resolution (M22)
 
 The Learn/Packages/Simulate/Architecture prose is written by the
 `codebase-to-course` skill and baked in by deterministic code. Two gaps made
 that prose hard to trust, and one made the call graph itself the limit. This
-milestone closes them without adding a required dependency.
+milestone closes them without adding a dependency.
 
 **`codemap check`** (`site/validate.py`) re-reads the raw `.codemap/*.json` and
 compares every reference with the model `explore` builds. The loaders under
@@ -965,67 +965,74 @@ skill checks a scenario's steps and an "only X does Y" claim against the graph
 instead of memory. A bare name matching several symbols lists the keys and
 exits 1; a bare name also matches methods (`run` finds `Job.run`).
 
-**Optional engine: codebase-memory-mcp** (`enrich/`). When a
-[codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) index of
-the repo exists, `model.build()` merges its resolved calls into codemap's call
-graph right after `call_graph()`. codemap's symbols and keys stay the source of
-truth, so nothing authored against a key moves.
+**Type resolution** (`enrich/typeflow.py`, since 0.6). `model.build()` and
+`calls.build_graph()` (so `codemap calls` and `codemap mcp` too) fold
+type-resolved calls into codemap's call graph right after `call_graph()`.
+codemap's symbols and keys stay the source of truth, so nothing authored against
+a key moves. The design is a port of codebase-memory-mcp's "Hybrid LSP" layer
+(MIT, `internal/cbm/lsp/py_lsp.c` / `ts_lsp.c`), cut down to what a call graph
+needs and written in Python over codemap's own tree-sitter parse, for Python,
+JavaScript and TypeScript:
 
-- *Finding it.* `$CBM_CACHE_DIR`, then `~/.cache/codebase-memory-mcp` (or
-  `[engine] cache_dir`). Each `*.db` is opened **read-only** (`mode=ro`, falling
-  back to `immutable=1` as CBM's own query path does) and matched by its recorded
-  `projects.root_path`, both sides fully resolved (symlinks, `..`, Windows 8.3
-  names, case on Windows) — never by CBM's project-naming rules.
-- *Guarding.* Its schema is not promised stable (its documented interface is the
-  MCP tools), so `PRAGMA user_version` must be one codemap was written against
-  (1) and the columns it reads must exist. Otherwise enrichment is off, with the
-  reason shown by `codemap status`; nothing raises.
-- *Trusting.* An edge is used only when both files still hash (SHA-256 of the raw
-  bytes) as they did when CBM indexed them, both ends map to a codemap symbol by
-  `(file, start line)` or a unique `(file, name)`, and its score is CBM's own
-  "high" band (>= 0.70). >= 0.90 (import or same-scope resolution) is
-  `EXTRACTED`, otherwise `INFERRED`. A link codemap lacked is added (`via="cbm"`);
-  an `AMBIGUOUS` codemap edge CBM confirms is upgraded; when CBM resolves one call
-  site to a single target, codemap's `AMBIGUOUS` edges to the other same-named
-  symbols are dropped. A confident codemap edge is never touched.
-- *Routes.* (codemap's own `enrich/jsfacts.py` produces the same links for JS/TS
-  without CBM — see the README's "Web requests, settings and browser storage";
-  `model._routes_payload` merges both by method + URL.)
-  `HTTP_CALLS`/`HANDLES` around a `Route` node become `data.routes`
-  (`{url, method, callers[], handlers[]}` as node indexes). The call graph has no
-  edge across an HTTP request, so Simulate's derived tree gets a `note` step
-  ("`main` sends `GET /api/report` ...") then the handler's `call`, the brief lists
-  a **Route links** section and crosses the same hop in `scenarios-derived.json`,
-  and the Architecture payload gets `requests` (kept apart from `links`: those are
-  layer-ordered imports, where a frontend calling a route handler would read as a
-  wrong-way import), drawn as a dashed labelled connector.
-- *Reporting.* `data.engine` (and the topbar badge "+ codebase-memory", and a
-  `cbm` tag with a tooltip on each engine-only caller/callee in the inspector)
-  appear **only when the engine was used**; with it absent or `off`, the payload
-  is identical to before. `codemap status` prints the engine line either way.
-- *Config.* `[engine] codebase_memory = "auto" | "off"` (default `auto`) and
-  `cache_dir`.
+- *Bind.* Every scope's names: classes, functions, variables, parameters,
+  imports. Imports are followed through `__init__.py`, `export * from` /
+  `export { a as b } from` barrels, default and namespace imports, and
+  `require`; an import that leaves the repo (stdlib / third-party, classified by
+  `resolve.py`) is *external*.
+- *Type an expression.* Parameter and return annotations (`Optional`, `X |
+  None`, `list[X]`, `Promise<X>`, `Type[X]`, `Self`, `Annotated`/`Mapped`/...
+  unwrapped), `x = Foo()` / `new Foo()`, `self.x = ...` in any method, class
+  fields and TS constructor parameter properties, a function's return type
+  (annotated, or every `return` agreeing), `with ... as`, `for x in xs`,
+  `await`, `as Foo`, `super()`. Flow-insensitive and conservative: a name bound
+  to two different types anywhere in its scope is *unknown*; `None`/`null`
+  bindings are ignored; a `TypeVar` or type alias used as an annotation is
+  unknown, never a class.
+- *Decide each call site*: `resolved` to symbol keys (a method also reaches
+  every override in a repo subclass, since that is what can run; an
+  `@abstractmethod` / `...` / `raise NotImplementedError` stub is never a target
+  itself, and a `Protocol` receiver is unknown), `external` (a builtin, stdlib or
+  third-party target), or `unknown`.
+- *Merge* (`engine.merge`). A resolved link codemap lacked is added
+  (`via="types"`, `EXTRACTED` within a file, else `INFERRED`); an `AMBIGUOUS`
+  codemap edge it confirms is upgraded; when **every** call to a name from one
+  symbol is decided, codemap's `AMBIGUOUS` edges from it to the other same-named
+  symbols are dropped. A confident codemap edge is never touched, and an unknown
+  site changes nothing.
+- *Reporting.* `data.engine` (`{name: "types", files, added, upgraded,
+  dropped}`), the topbar badge "+ types" when something changed, and a `typed`
+  tag with a tooltip (how it was found) on each type-resolved caller/callee in
+  the inspector. `[engine] types = "off"` keeps the plain name-based graph.
+
+**Routes** (`enrich/jsfacts.py`, `enrich/pyfacts.py`). The call graph has no edge
+across an HTTP request. JS/TS requests and Express routes come from `jsfacts`;
+Python requests (`requests` / `httpx` / `aiohttp` / a test client / `urlopen`,
+only when the URL looks like one) from `pyfacts`, and Python server routes from
+the `route` entry points codemap already records. `jsfacts.link` pairs them all,
+across languages, into `data.routes` (`{url, method, callers[], handlers[]}` as
+node indexes). Simulate's derived tree gets a `note` step ("`main` sends
+`GET /report` ...") then the handler's `call`, the brief lists a **Route links**
+section and crosses the same hop in `scenarios-derived.json`, and the
+Architecture payload gets `requests` (kept apart from `links`: those are
+layer-ordered imports, where a frontend calling a route handler would read as a
+wrong-way import), drawn as a dashed labelled connector.
 
 ### Engine scope / non-goals
 
-- codemap keeps its **small in-house tree-sitter indexer** for the languages in
-  §14. It is not turned into a many-language, type-resolving engine: that is a
-  different project (codebase-memory-mcp covers ~160 languages and resolves types
-  for about ten), and duplicating it would leave codemap worse at the one thing
-  only it does.
-- Broad language coverage and type-aware call links come from the **optional**
-  enrichment above. There is no new required dependency, no daemon, and codemap
-  never runs, installs or configures the other tool (its installer edits an
-  agent's settings; that is the user's call).
+- Type resolution covers **Python, JavaScript and TypeScript** only; the other
+  languages in §14 keep name-based, receiver-aware matching. Another language
+  gets a resolver only on a user request.
+- It is not a compiler: no generics instantiation beyond unwrapping, no
+  narrowing (`isinstance`), no cross-call data flow. Unsure means unknown, and
+  unknown means codemap's own edges stand.
 - **No new language is added to the built-in indexer without a user request.**
-- The effort goes to what an engine built for agents will not: checking authored
-  content against the graph (`check`, `calls`), Simulate, the plain-English
-  Architecture tab and learning order.
 
-Two decisions worth remembering: the engine is *additive* (never authoritative,
-never a rewrite of keys), and the frontend-to-backend hop is only drawn when the
-engine found it: detecting `fetch("/api/x")` in the frontend natively would be
-building the engine again.
+Two decisions worth remembering. Through 0.5, broader resolution came from
+*optionally reading* a codebase-memory-mcp index; 0.6 dropped that for a native
+port so codemap is standalone (one install, nothing else to index or keep in
+sync), keeping the engine *additive*: never authoritative, never a rewrite of
+keys. And the frontend-to-backend hop is drawn only when both ends were found
+in the code.
 
 ---
 

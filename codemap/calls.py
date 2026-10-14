@@ -134,15 +134,29 @@ def call_lines(conn: sqlite3.Connection, sha: str) -> dict[tuple[int, str], int]
 
 
 def edge_lines(
-    edges: list[Edge], symbols: dict[str, Sym], raw: dict[tuple[int, str], int]
+    edges: list[Edge], symbols: dict[str, Sym], raw: dict[tuple[int, str], int], g: nx.DiGraph | None = None
 ) -> dict[tuple[str, str], int | None]:
-    """The call-site line, in the caller, of each edge (``None`` when the ref
-    was resolved through an import alias and so isn't under the callee's name)."""
-    return {(e.src, e.dst): raw.get((symbols[e.src].sid, symbols[e.dst].name)) for e in edges}
+    """The call-site line, in the caller, of each edge: the first ref under the
+    callee's name, else the line type resolution recorded on the edge (a
+    ``new Foo()``, which is no ref), else ``None`` (an import-alias match)."""
+    out: dict[tuple[str, str], int | None] = {}
+    for e in edges:
+        line = raw.get((symbols[e.src].sid, symbols[e.dst].name))
+        if line is None and g is not None and g.has_edge(e.src, e.dst):
+            line = g.edges[e.src, e.dst].get("line")
+        out[(e.src, e.dst)] = line
+    return out
 
 
 def build_graph(conn: sqlite3.Connection, cfg: Config, sha: str) -> nx.DiGraph:
-    return call_graph(conn, sha, aliases=resolve.load_ts_aliases(cfg.root, sha))
+    """The call graph at ``sha``: codemap's name-based edges, then type
+    resolution (``enrich/typeflow.py``) folded in."""
+    from .enrich import engine
+
+    aliases = resolve.load_ts_aliases(cfg.root, sha)
+    g = call_graph(conn, sha, aliases=aliases)
+    engine.apply_from_db(conn, cfg, sha, g, aliases)
+    return g
 
 
 # --------------------------------------------------------------------------- render

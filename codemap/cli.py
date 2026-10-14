@@ -70,7 +70,7 @@ def cmd_status(args: argparse.Namespace) -> int:
 
         print(f"engine:        {_engine.describe(cfg)}")
         print("js facts:      " + ("off (engine.native = \"off\")" if cfg.engine.native == "off" else
-                                   "on — web requests tied to routes, config reads, browser storage (JS/TS)"))
+                                   "on — web requests tied to routes (JS/TS, Python), config reads and browser storage (JS/TS)"))
         if sum(counts.values()) == 0:
             print("index:       empty")
         else:
@@ -397,7 +397,7 @@ def cmd_calls(args: argparse.Namespace) -> int:
     results = {}
     for d in directions:
         edges, truncated = _calls.walk(g, target.key, direction=d, depth=depth, guesses=not args.no_guesses)
-        results[d] = (edges, truncated, _calls.edge_lines(edges, symbols, raw_lines))
+        results[d] = (edges, truncated, _calls.edge_lines(edges, symbols, raw_lines, g))
 
     if args.json:
         payload = {
@@ -587,7 +587,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     add("install-hook", cmd_install_hook, "install the post-commit hook")
 
-    add("mcp", cmd_mcp, "serve this repo to an AI assistant over MCP (stdio; needs the `mcp` extra)")
+    add("mcp", cmd_mcp, "serve this repo to an AI assistant over MCP (stdio)")
 
     return p
 

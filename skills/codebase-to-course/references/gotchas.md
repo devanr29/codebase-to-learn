@@ -63,8 +63,8 @@ Check these before you call the reference done.
     `codemap check --json` last and fix every error; you are not done until it
     reports `"errors": 0`.
 
-13. **Copying a name from another tool into a key.** A `codebase-memory` result
-    names a symbol `project.src.api.users.get_user`; codemap's key is
-    `src/api/users.py::get_user`. Build the key from the file path and name it
-    reports, then confirm it with `codemap calls <key> --depth 1` — see
-    `references/grounding-tools.md`.
+13. **Copying a dotted name into a key.** A stack trace or another tool names a
+    symbol `project.src.api.users.get_user`; codemap's key is
+    `src/api/users.py::get_user` (a method: `src/api/users.py::UserApi.get`).
+    Get the key from `find_symbol`, or build it from the file path and name and
+    confirm it with `codemap calls <key> --depth 1`.

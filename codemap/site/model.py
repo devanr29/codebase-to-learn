@@ -205,19 +205,23 @@ def build(
         ts_aliases = resolve.load_ts_aliases(cfg.root, sha)
         g = call_graph(conn, sha, aliases=ts_aliases)
 
-        # optional second opinion: codebase-memory-mcp's resolved calls, merged
-        # into `g` before anything below counts fan-in/out. Absent, off or
-        # unreadable, this changes nothing and the payload has no `engine` key.
+        # type resolution (enrich/typeflow.py): calls resolved through what each
+        # receiver *is*, merged into `g` before anything below counts fan-in/out.
+        # Off, or no Python/JS/TS files, this changes nothing and the payload
+        # has no `engine` key.
         from ..enrich import engine as _engine
 
-        cbm_info = _engine.apply(cfg, g, sym_rows, lambda p: _file_bytes(cfg, sha, p))
-        # codemap's own JS/TS facts (enrich/jsfacts.py): request -> route links,
-        # config reads, browser storage. Adds nothing to `g` — a web request is
-        # not a call edge — only route links and facts for the payload.
-        native_info = _engine.native(cfg, file_rows, sym_rows, lambda p: _file_bytes(cfg, sha, p))
+        types_info = _engine.apply(cfg, g, sha, file_rows, sym_rows, lambda p: _file_bytes(cfg, sha, p),
+                                   aliases=ts_aliases)
+        # codemap's own request facts (enrich/jsfacts.py, pyfacts.py): request ->
+        # route links across JS/TS and Python, config reads, browser storage.
+        # Adds nothing to `g` — a web request is not a call edge — only route
+        # links and facts for the payload.
+        native_info = _engine.native(cfg, file_rows, sym_rows, lambda p: _file_bytes(cfg, sha, p),
+                                     entry_points=_entry_points(conn, sha))
         # facts an AI reviewer settled through `codemap mcp` (findings.py):
         # confirmed or rejected guesses, calls made through dispatch. Applied
-        # after both engines so a review has the last word on a guess, and
+        # after both passes so a review has the last word on a guess, and
         # before fan-in/out are counted. Absent file -> nothing changes.
         from . import findings as _findings
 
@@ -314,7 +318,7 @@ def build(
     # node list, ordered by file then line so the tree reads naturally
     ordered = sorted(kept, key=lambda r: (r["file"], r["start_line"], r["key"]))
     key_to_i = {r["key"]: i for i, r in enumerate(ordered)}
-    routes = _routes_payload((cbm_info, native_info), key_to_i)
+    routes = _routes_payload((native_info,), key_to_i)
     if review_items:
         review_info["stale"] += _findings.apply_routes(
             routes, review_items, key_to_i, set(g.nodes), line_text)
@@ -421,11 +425,10 @@ def build(
             "confidence": edata.get("confidence", "AMBIGUOUS"),
             "line": line,
         }
-        if edata.get("via"):  # a link only the other engine (or a reviewer) found; the inspector says so
+        if edata.get("via"):  # a link type resolution (or a reviewer) settled; the inspector says so
             edge["via"] = edata["via"]
-            if edata["via"] != "review":
-                edge["engine_score"] = edata.get("cbm_score")
-                edge["engine_strategy"] = edata.get("cbm_strategy")
+            if edata["via"] == "types":
+                edge["engine_strategy"] = edata.get("type_strategy")
         if edata.get("review"):  # settled by a reviewer (findings.json): note + evidence
             edge["review"] = edata["review"]
         edges.append(edge)
@@ -704,14 +707,13 @@ def build(
         "glossary": gloss,
         "sim": sim,
     }
-    if cbm_info["used"]:
+    if types_info["used"]:
         out["engine"] = {
-            "name": "codemap + codebase-memory",
-            "project": cbm_info["project"],
-            "added": cbm_info["added"],
-            "upgraded": cbm_info["upgraded"],
-            "dropped": cbm_info["dropped"],
-            "stale_files": cbm_info["stale_files"],
+            "name": "types",
+            "files": types_info["files"],
+            "added": types_info["added"],
+            "upgraded": types_info["upgraded"],
+            "dropped": types_info["dropped"],
         }
     if routes:
         out["routes"] = routes
@@ -733,8 +735,7 @@ def build(
 
 
 def _routes_payload(infos, key_to_i: dict[str, int]) -> list[dict]:
-    """Every engine's HTTP route links (codebase-memory's, codemap's own
-    jsfacts) as node indexes: which symbols call a route and which serve it,
+    """Every pass's HTTP route links (codemap's jsfacts) as node indexes: which symbols call a route and which serve it,
     merged by method + URL. A route with neither end among the kept nodes is
     dropped."""
     merged: dict[tuple[str, str], dict] = {}

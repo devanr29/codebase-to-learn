@@ -129,8 +129,8 @@
   // blast radius, the entry path and "Trace back to entry" all walk these.
   var outAdjSure = N.map(function () { return []; });
   var inAdjSure = N.map(function () { return []; });
-  // links only the optional codebase-memory engine found (`via: "cbm"`), and
-  // links a reviewer settled with evidence (`review`, from findings.json), by "s:t"
+  // links type resolution found or confirmed (`via: "types"`), and links a
+  // reviewer settled with evidence (`review`, from findings.json), by "s:t"
   var viaEdge = {};
   E.forEach(function (e) {
     outAdj[e.s].push(e.t); inAdj[e.t].push(e.s);
@@ -850,8 +850,18 @@
       stat("edges", s.edges), stat("cycles", s.cycles),
     ]);
   }
-  // shown only when a codebase-memory-mcp index of this repo was merged into
-  // the call graph (model.py adds `engine` then, and only then)
+  // the inspector's "typed" tag hover: how typeflow.py found the callee
+  var STRATEGY_TEXT = {
+    self: "a method on the same object",
+    type: "the receiver's declared or inferred type",
+    super: "the parent class, through super()",
+    new: "a constructor call",
+    module: "an attribute of an imported module",
+    "import": "an imported name",
+    local: "a name defined in this scope",
+  };
+  // shown when type resolution changed the call graph (model.py adds
+  // `engine` only when it ran over Python / JS / TS files)
   function engineBadge() {
     var en = DATA.engine;
     if (!en) return null;
@@ -859,11 +869,10 @@
     if (en.added) bits.push(en.added + " call link" + (en.added === 1 ? "" : "s") + " added");
     if (en.upgraded) bits.push(en.upgraded + " guess" + (en.upgraded === 1 ? "" : "es") + " confirmed");
     if (en.dropped) bits.push(en.dropped + " wrong guess" + (en.dropped === 1 ? "" : "es") + " removed");
-    return el("span", { class: "engine-badge", text: "+ codebase-memory", title:
-      "Call links here were checked against a codebase-memory-mcp index of this repo" +
-      (bits.length ? ": " + bits.join(", ") + "." : ".") +
-      (en.stale_files ? " " + en.stale_files + " file" + (en.stale_files === 1 ? "" : "s") +
-        " changed since it was indexed and were skipped." : "") });
+    if (!bits.length) return null;
+    return el("span", { class: "engine-badge", text: "+ types", title:
+      "Call links were checked by resolving what each call's receiver is (annotations, " +
+      "constructors, fields, imports, base classes): " + bits.join(", ") + "." });
   }
   function stat(label, v) {
     return el("div", { class: "stat" }, [label, el("b", { text: v == null ? "0" : String(v) })]);
@@ -2446,11 +2455,10 @@
           on: { click: function () { go("graph", n.key); } } }, [
           el("span", { class: "rk", text: kindLabel(n.kind) }),
           el("span", { class: "rn", text: n.qual }),
-          via && via.review ? el("span", { class: "cbm-tag is-review", text: "reviewed", title: reviewTitle(via.review) })
-            : via ? el("span", { class: "cbm-tag", text: "cbm", title:
-            "Found by codebase-memory-mcp (" + (via.engine_strategy || "resolved call") +
-            (via.engine_score != null ? ", score " + via.engine_score : "") +
-            "); codemap's own analysis had no link here." }) : null,
+          via && via.review ? el("span", { class: "engine-tag is-review", text: "reviewed", title: reviewTitle(via.review) })
+            : via ? el("span", { class: "engine-tag", text: "typed", title:
+            "Resolved from the receiver's type (" + (STRATEGY_TEXT[via.engine_strategy] || "resolved call") +
+            "), not from the name alone." }) : null,
           el("span", { class: "rc", text: n.file.split("/").pop() }),
         ]));
       });
@@ -3570,7 +3578,7 @@
   var A_SERVICES = ARCH.services || [];
   var A_ACTORS = ARCH.actors || [];
   var A_LINKS = ARCH.links || [];
-  // web requests between parts (only when a codebase-memory index was merged in):
+  // web requests between parts (when codemap paired a request with its route):
   // kept apart from A_LINKS, which are layer-ordered imports
   var A_REQS = ARCH.requests || [];
   var A_COMP = {}, A_LAYER = {};
@@ -4495,8 +4503,8 @@
     return null;
   }
 
-  // HTTP routes (model.py adds `routes` from codemap's own JS/TS request/route
-  // matching and/or a codebase-memory index): routeOut[i] = the routes symbol i calls that some handler
+  // HTTP routes (model.py adds `routes` from codemap's own JS/TS and Python
+  // request/route matching): routeOut[i] = the routes symbol i calls that some handler
   // in this repo serves. The call graph has no edge across that hop — the
   // request leaves this code and comes back in as a different entry point —
   // so a derived tree would otherwise stop at the API client call.

@@ -38,6 +38,7 @@ import re
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import PurePosixPath
+from typing import Iterable
 
 from tree_sitter import Parser
 
@@ -125,8 +126,7 @@ class FileFacts:
 
 @dataclass
 class RouteLink:
-    """Same shape as ``cbm.RouteLink``: keys of the symbols that send a request
-    and of the symbols that serve it."""
+    """Keys of the symbols that send a request and of the symbols that serve it."""
     url: str
     method: str
     callers: list[str] = field(default_factory=list)
@@ -754,9 +754,10 @@ def served_routes(facts: list[FileFacts], keys: set[str]) -> list[Served]:
     return served
 
 
-def link(facts: list[FileFacts], symbols: list[SymSpan]) -> Linked:
+def link(facts: list[FileFacts], symbols: list[SymSpan], extra_served: Iterable[Served] = ()) -> Linked:
     """Join every file's facts into route links, config reads and storage uses,
-    each tied to the codemap symbol that owns it."""
+    each tied to the codemap symbol that owns it. ``extra_served`` are routes
+    found some other way (Python's, from ``pyfacts``), paired the same way."""
     paths = {f.path for f in facts}
     by_path = {f.path: f for f in facts}
     keys = {s.key for s in symbols}
@@ -767,7 +768,8 @@ def link(facts: list[FileFacts], symbols: list[SymSpan]) -> Linked:
     def target_of(ff: FileFacts, local: str) -> tuple[str, str] | None:
         return _target_of(ff, local, paths, by_path)
 
-    served = [(s.method, _route_segments(s.path), s.handler, s.path) for s in served_routes(facts, keys)]
+    served = [(s.method, _route_segments(s.path), s.handler, s.path)
+              for s in [*served_routes(facts, keys), *extra_served]]
 
     def base_of(ff: FileFacts, name: str | None) -> str:
         if not name:

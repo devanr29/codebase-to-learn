@@ -29,10 +29,9 @@ plain-line form.
 
 Prints the index state — commit/file/symbol/ref/change counts, and which
 `graph:` head `explore`/`snapshot` are currently reading, and the `engine:`
-line: `codemap only` with the reason (no codebase-memory-mcp index of this repo,
-an index format codemap doesn't know, or `engine.codebase_memory = "off"`), or
-`codemap + codebase-memory` when its index will be merged in by `explore`. On
-first run in a repo, creates `.codemap/` and a default `config.toml`.
+line: whether type resolution (Python / JavaScript / TypeScript) runs on top of
+the name-based graph, or `engine.types = "off"`. On first run in a repo, creates
+`.codemap/` and a default `config.toml`.
 
 ```
 codemap status
@@ -164,8 +163,8 @@ so every edge appears exactly once and a cycle ends.
 
 Serves the repo to an AI assistant over MCP (stdio): read tools over the index,
 the **open questions** static analysis couldn't settle, and verified writes to
-`.codemap/*.json`. Needs the optional SDK (`pipx inject codemap mcp`, or
-`pip install "codemap[mcp]"`); without it the command says so and exits 1.
+`.codemap/*.json`. The server is built in (it speaks MCP's JSON-RPC over
+stdio itself), so there is nothing extra to install.
 Everything about the tools, the questions and `findings.json` is in
 [`mcp.md`](mcp.md).
 
@@ -226,18 +225,16 @@ Turn the explore-rebuild half off per-repo without uninstalling the hook:
 rebuild_on_commit = false
 ```
 
-## Optional engine (`[engine]`)
+## Analysis passes (`[engine]`)
 
-If a [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) index
-of the repo exists, `explore` merges its call links into the graph (see
-`docs/spec.md` §20). Nothing to enable; to control it:
+Both passes are on by default and need nothing installed (see `docs/spec.md` §20):
 
 ```toml
 # .codemap/config.toml
 [engine]
-codebase_memory = "auto"   # "off" never looks
-cache_dir = ""             # empty = $CBM_CACHE_DIR, then ~/.cache/codebase-memory-mcp
+types = "auto"    # type-aware call resolution (Python / JS / TS); "off" = name-based only
+native = "auto"   # web request -> route links, JS settings and browser storage; "off" skips them
 ```
 
-Index the repo with `codebase-memory-mcp cli index_repository --repo-path .`, then
-`codemap status` shows whether it was found.
+`explore`, `calls` and `mcp` all read the same resolved graph. `codemap status`
+shows what is on.

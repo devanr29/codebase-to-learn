@@ -29,7 +29,7 @@ def _route_label(r: dict) -> str:
 def _route_hops(data: dict) -> dict[int, list[tuple[str, int]]]:
     """``{caller node: [(route label, handler node), ...]}`` for every HTTP route a
     symbol calls that some handler in this repo serves — the hop the call graph
-    itself has no edge for (only present with a codebase-memory index merged in)."""
+    itself has no edge for (present when codemap paired a request with its route)."""
     hops: dict[int, list[tuple[str, int]]] = {}
     for r in data.get("routes", []):
         for c in r["callers"]:
@@ -392,8 +392,7 @@ def emit(conn: sqlite3.Connection, cfg: Config, data: dict) -> list[str]:
     routes = data.get("routes", [])
     if routes:
         ov.append("## Route links (web requests that cross between parts)")
-        ov.append("Found by codemap's own request/route matching (JS/TS) and, when present, the "
-                  "optional codebase-memory engine. The call graph has no edge "
+        ov.append("Found by codemap's own request/route matching (JS/TS). The call graph has no edge "
                   "across an HTTP request, so this is the only place a client call is tied to "
                   "the code that serves it. Use it for the seam scenario: root it at a caller, "
                   "narrate the request, then the handler. `scenarios-derived.json` trees already "

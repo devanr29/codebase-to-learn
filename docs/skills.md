@@ -94,5 +94,5 @@ move together. See [`install.md`](install.md) for the install paths.
 - [`skills/codebase-to-course/SKILL.md`](../skills/codebase-to-course/SKILL.md) — the authoring workflow
 - [`skills/codebase-to-course/references/content-philosophy.md`](../skills/codebase-to-course/references/content-philosophy.md) — audience and tone rules
 - [`skills/codebase-to-course/references/gotchas.md`](../skills/codebase-to-course/references/gotchas.md) — common authoring mistakes
-- [`skills/codebase-to-course/references/grounding-tools.md`](../skills/codebase-to-course/references/grounding-tools.md) — checking claims against a call graph: `codemap calls`, and the optional codebase-memory MCP tools
+- [`skills/codebase-to-course/references/grounding-tools.md`](../skills/codebase-to-course/references/grounding-tools.md) — checking claims against a call graph: `codemap calls`, the MCP tools, and what type resolution already settles
 - [`skills/codebase-to-course/references/interactive-elements.md`](../skills/codebase-to-course/references/interactive-elements.md) — how the rendered tabs use this content
