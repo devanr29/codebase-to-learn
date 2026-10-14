@@ -288,7 +288,7 @@ view on the focused symbol.
 **Mass — a treemap of the whole repo.**
 - rectangle area = lines of code, grouped by folder
 - fill = how many commits have touched the file (darker = quiet, brighter =
-  changes a lot)
+  changes a lot); the brightest tiles switch to dark text so names stay readable
 - a hatched rectangle = every function in that file is unreachable at the
   current tier — a candidate for deletion, or a sign of missing edges
 - click a rectangle to open the file in the Graph tab
@@ -364,7 +364,9 @@ format.
 ## 8. The Timeline tab
 
 Newest commit first. Each card shows:
-- the stated intent and where it came from (commit message / note / session)
+- the stated intent and where it came from (commit message / note / session).
+  Git trailers at the end of a message (`Co-Authored-By:`, `Signed-off-by:`)
+  are left out.
 - coloured bars: structural / behavioral / cosmetic change counts
 - the headline change and its blast radius
 - any new dependency

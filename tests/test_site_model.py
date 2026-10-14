@@ -223,3 +223,13 @@ def test_third_party_dependency_is_detected(fixture_repo, tmp_path):
     assert {"name": "requests", "kind": "third_party"} in core["deps"]
     # the app.util sibling import shows up as an internal dep on the same file
     assert any(d["kind"] == "internal" for d in core["deps"])
+
+
+def test_strip_trailers_drops_git_trailer_block():
+    # body that is only trailers → nothing left to show as the summary line
+    assert model._strip_trailers("Co-Authored-By: A <a@x>\nClaude-Session: https://x") == ""
+    # prose paragraph survives, trailer paragraph goes
+    assert model._strip_trailers("Explains why.\n\nSigned-off-by: B <b@x>") == "Explains why."
+    # a lone un-hyphenated "Token: value" line is prose, not a trailer
+    assert model._strip_trailers("Fix: crash on empty input") == "Fix: crash on empty input"
+    assert model._strip_trailers("") == ""

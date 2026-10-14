@@ -6,6 +6,45 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-10-14
+
+A frontend pass over `explore.html`: layout bugs found on a real repo,
+phone layouts, contrast and touch sizing. No change to the data model or CLI.
+
+### Fixed
+- **Graph:** files in a folder bubble are spread on an even spiral (most-used
+  in the middle) instead of at random, so nodes and their names no longer pile
+  on top of each other.
+- **Graph:** fit-to-view uses the area the canvas actually shows, not the
+  fixed 1040×700 drawing area, and keeps folder titles on screen. A near-square
+  canvas is no longer a third empty.
+- **Graph on a phone:** the bottom-corner controls now only reserve a bottom
+  strip; reserving their width at the sides too shrank the graph to a
+  thumbnail.
+- **Architecture:** a web-request label (`POST /api/contact …`) looks for a gap
+  along its arrow that no box covers, and is drawn above the boxes. It used to
+  sit under the nearest card.
+- **Map → Mass:** tiles near the light end of the churn ramp get dark text
+  (about 9:1); white labels there were about 2:1.
+- **Learn and Packages on a phone:** below 900px the side menu stacks above the
+  text. The fixed 220px menu left the text one word wide.
+- **Timeline:** git trailers (`Co-Authored-By:`, `Signed-off-by:` …) at the end
+  of a commit message are dropped, so they no longer show as the summary.
+- The "Skip to inspector" link is hidden until it gets keyboard focus. It sat
+  on top of the logo.
+- Simulate's legend row "recorded — a real `codemap trace` run" no longer
+  breaks into three columns.
+- The page height uses `100dvh`, so mobile browser bars don't cover the bottom
+  controls.
+
+### Changed
+- Small grey labels use a new `--color-text-faint` token that meets 4.5:1 on
+  every panel. Native controls render dark (`color-scheme: dark`).
+- Buttons, tabs and pills shrink slightly while pressed (off under reduced
+  motion). On touch screens, controls are 32–42px tall.
+- Three panels lost their thick left-edge stripe in favour of a thin accent
+  border with a light tint.
+
 ## [0.5.0] — 2026-10-14
 
 The flow is now **index → investigate → write → bake**. An AI assistant
@@ -381,6 +420,9 @@ This release fixes all of it, by phase.
   `/explore` and `/review` slash commands.
 - Post-commit hook for diff explanations.
 
+[Unreleased]: https://github.com/devanr29/codebase-to-learn/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.5.0...v0.5.1
+[0.5.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.3.1...v0.4.0
 [0.3.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.2.4...v0.3.0

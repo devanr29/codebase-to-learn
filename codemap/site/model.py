@@ -8,6 +8,7 @@ story as ``codemap explain``. Deterministic apart from ``built_at``.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import datetime, timezone
 
@@ -20,6 +21,27 @@ from ..db import get_meta
 from ..impact import AMBIGUOUS, call_graph
 from ..impact import entry_points as _entry_points
 from ..indexer import WORKTREE_SHA
+
+
+_TRAILER_LINE = re.compile(r"^[A-Za-z][A-Za-z0-9-]*:\s+\S")
+
+
+def _strip_trailers(body: str) -> str:
+    """Drop a commit body's git trailer block (`Co-Authored-By:`,
+    `Signed-off-by:`, …). Git defines it as the last paragraph when every
+    line in it is `Token: value`; without this a body that is only trailers
+    showed `Co-Authored-By: …` on the Timeline as if it were the summary."""
+    paras = re.split(r"\n\s*\n", body.strip())
+    last = paras[-1].splitlines() if paras and paras[-1] else []
+    # a lone paragraph like "Fix: crash on empty input" is prose, not a
+    # trailer; real trailers (Co-Authored-By, Signed-off-by, …) are hyphenated.
+    lone = len(paras) == 1
+    if last and all(
+        _TRAILER_LINE.match(ln) and (not lone or "-" in ln.split(":", 1)[0])
+        for ln in last
+    ):
+        paras = paras[:-1]
+    return "\n\n".join(paras).strip()
 
 
 def _short(sha: str | None) -> str:
@@ -794,7 +816,9 @@ def _timeline(
                 # `subject` would just repeat it verbatim. Show the body
                 # instead (empty when there's none beyond the subject line,
                 # which the explorer then renders no intent line for at all).
-                body_only = "\n".join((text or "").strip().splitlines()[1:]).strip()
+                body_only = _strip_trailers(
+                    "\n".join((text or "").strip().splitlines()[1:]).strip()
+                )
                 intent_text = body_only.splitlines()[0] if body_only else ""
             else:
                 intent_text = (text or "").strip().splitlines()[0] if text else ""

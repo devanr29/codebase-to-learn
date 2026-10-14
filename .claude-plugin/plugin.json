@@ -1,6 +1,6 @@
 {
   "name": "codemap",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "codemap's MCP server and skills: an AI investigates the indexed repo, settles what static analysis couldn't (ambiguous calls, unmatched requests, misplaced architecture parts) with file:line evidence, and authors the Learn/Packages/Simulate/Architecture content that codemap explore bakes into explore.html, for engineers onboarding to a codebase.",
   "author": {
     "name": "Devan Ramadhana",

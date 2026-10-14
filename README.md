@@ -76,7 +76,8 @@ codemap calls build_report --in  # what really calls this, with file:line and ho
 Icons are vendored into the page itself (base64, no CDN) — they render the
 same offline or on a network that blocks arbitrary CDNs. The body font
 degrades gracefully if Google Fonts is unreachable. The generated page never
-calls an LLM.
+calls an LLM. It also works on a phone: side menus stack above the content,
+and controls grow to finger size on touch screens.
 
 ## Web requests, settings and browser storage (JS/TS)
 

@@ -1161,9 +1161,13 @@
       var arr = perModule[mn].sort(function (a, b) { return b.weight - a.weight; });
       if (grain === 2 && arr.length > 42) { arr = arr.slice(0, 42); capped = true; }
       var c = centers[mn] || { x: cx, y: cy, rx: 120, ry: 90 };
+      var spin = rnd(hashSeed(mn)) * Math.PI * 2;
       arr.forEach(function (it, k) {
-        var a = (k / Math.max(arr.length, 1)) * Math.PI * 2 + rnd(hashSeed(it.key)) * 0.9;
-        var rr = 0.34 + rnd(hashSeed(it.key) * 2) * 0.5;
+        // a sunflower (Vogel) spiral: evenly spaced, heaviest at the centre. The
+        // old random angle + radius clumped a 30-file lobe into piles of
+        // overlapping nodes and labels while leaving other parts of it empty.
+        var a = spin + k * 2.39996323;
+        var rr = 0.86 * Math.sqrt((k + 0.5) / arr.length);
         var x = c.x + Math.cos(a) * c.rx * rr, y = c.y + Math.sin(a) * c.ry * rr;
         pos[it.key] = { x: x, y: y };
         var dead = it.kind === "sym" && it.ref.fan_in === 0 && it.ref.entry.length === 0;
@@ -1531,16 +1535,11 @@
     var s = Math.min(r.width / VBW, r.height / VBH) || 1;
     var legendEl = canvasEl && canvasEl.querySelector(".legend");
     var zEl = canvasEl && canvasEl.querySelector(".zoombox");
-    if (legendEl) {
-      var lr = legendEl.getBoundingClientRect();
-      m.right = Math.max(m.right, lr.width / s + 18);
-      m.bottom = Math.max(m.bottom, lr.height / s + 18);
-    }
-    if (zEl) {
-      var zr = zEl.getBoundingClientRect();
-      m.left = Math.max(m.left, zr.width / s + 18);
-      m.bottom = Math.max(m.bottom, zr.height / s + 18);
-    }
+    // Both sit in the bottom corners, so they only claim a bottom strip.
+    // Reserving their width at the sides as well squeezed a phone canvas
+    // (where each is a third of the screen wide) to a sliver.
+    if (legendEl) m.bottom = Math.max(m.bottom, legendEl.getBoundingClientRect().height / s + 18);
+    if (zEl) m.bottom = Math.max(m.bottom, zEl.getBoundingClientRect().height / s + 18);
     return m;
   }
   // Fits state.view to whatever a layout actually placed, instead of the old
@@ -1559,13 +1558,26 @@
       if (top < minY) minY = top;
       if (bot > maxY) maxY = bot;
     });
+    (lay.lobes || []).forEach(function (lo) {   // keep each lobe and its title on screen
+      minX = Math.min(minX, lo.x - lo.rx); maxX = Math.max(maxX, lo.x + lo.rx);
+      minY = Math.min(minY, lo.y - lo.ry - 22); maxY = Math.max(maxY, lo.y + lo.ry + 4);
+    });
     var mg = reservedMargins();
-    var availW = Math.max(160, VBW - mg.left - mg.right);
-    var availH = Math.max(160, VBH - mg.top - mg.bottom);
+    // The viewBox is a fixed 1040x700 letterboxed ("meet") into a canvas of any
+    // shape, so a tall or wide canvas shows more than the viewBox. Fit to what
+    // is actually on screen — fitting to 1040x700 left a near-square canvas a
+    // third empty, top and bottom.
+    var vis = { x: 0, y: 0, w: VBW, h: VBH };
+    if (svgEl) {
+      var r = svgEl.getBoundingClientRect(), s = Math.min(r.width / VBW, r.height / VBH);
+      if (s > 0) { vis.w = r.width / s; vis.h = r.height / s; vis.x = (VBW - vis.w) / 2; vis.y = (VBH - vis.h) / 2; }
+    }
+    var availW = Math.max(160, vis.w - mg.left - mg.right);
+    var availH = Math.max(160, vis.h - mg.top - mg.bottom);
     var bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
     var k = clampK(Math.min(availW / bw, availH / bh, 1.6));
     var cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    state.view = { x: mg.left + availW / 2 - cx * k, y: mg.top + availH / 2 - cy * k, k: k };
+    state.view = { x: vis.x + mg.left + availW / 2 - cx * k, y: vis.y + mg.top + availH / 2 - cy * k, k: k };
   }
   function applyView() {
     if (sceneG) sceneG.setAttribute("transform",
@@ -3069,6 +3081,15 @@
     // linear ramp would crush every ordinary file into the dark end.
     return lerpHex(CHURN_LO, CHURN_HI, Math.log1p(churnOf[fi] || 0) / churnLogMax);
   }
+  // true when dark text reads better than white on this fill — the top of the
+  // churn ramp is light lavender, where white labels fall to ~2:1
+  function lightFill(rgb) {
+    var c = rgb.match(/\d+/g).slice(0, 3).map(function (v) {
+      v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+    });
+    var L = 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+    return (L + 0.05) / 0.0588 > 1.05 / (L + 0.05);   // vs #15131f, vs #fff
+  }
   // trim an SVG label to a pixel width (mono ≈ 6.6px/char at our sizes)
   function fitText(s, w, cpx) {
     var max = Math.max(1, Math.floor(w / (cpx || 6.6)));
@@ -3479,12 +3500,13 @@
       inner.forEach(function (fc) {
         var f = fc.item.f, dead = fileAllDead(f.fi) && !isTestPath(f.path),
             cw = Math.max(0, fc.w - GAP), ch = Math.max(0, fc.h - GAP);
-        var cell = el("g", { class: "mass-cell",
+        var fill = churnFill(f.fi);
+        var cell = el("g", { class: "mass-cell" + (lightFill(fill) ? " lt" : ""),
           on: { click: function () { fileAct(f)(); } } }, [
           el("title", { text: f.path.split("/").pop() + " · " + (f.loc || 0) + " loc · " +
             (churnOf[f.fi] || 0) + " commits" + (dead ? " · every function unreachable" : "") }),
         ]);
-        cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw, height: ch, rx: 3, fill: churnFill(f.fi) }));
+        cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw, height: ch, rx: 3, fill: fill }));
         if (dead)
           cell.appendChild(el("rect", { x: fc.x, y: fc.y, width: cw, height: ch, rx: 3, fill: "url(#cm-hatch)" }));
         if (cw > 40 && fc.h > 20) {
@@ -3864,8 +3886,9 @@
     var svg = el("svg", { class: "arch", width: W, height: H, viewBox: "0 0 " + W + " " + H,
       role: "img", "aria-label": "Architecture diagram: " + (ARCH.stack || []).join(", ") });
     var gBands = el("g"), gArrows = el("g", { class: "arch-arrows" }), gHi = el("g", { class: "arch-hi", fill: "none" }),
-        gItems = el("g");
+        gItems = el("g"), gReqLbl = el("g", { class: "arch-req" });
     svg.appendChild(gBands); svg.appendChild(gArrows); svg.appendChild(gHi); svg.appendChild(gItems);
+    svg.appendChild(gReqLbl);   // route labels sit above the boxes, never under them
 
     function layerTitle(id) { return (A_LAYER[id] && A_LAYER[id].title) || id; }
     // the band a layer occupies in a given row, or null (the actors and services rows have none)
@@ -4030,28 +4053,57 @@
     // the calling part to the one serving the route, labelled with the route.
     A_REQS.filter(function (q) { return visible(q.s) && visible(q.t) && pos[q.s] && pos[q.t]; })
       .slice(0, A_REQ_MAX).forEach(function (q) {
-        var a = pos[q.s], b = pos[q.t], d, hx, hy, head, lx, ly;
+        var a = pos[q.s], b = pos[q.t], d, hx, hy, head, P;
         if (b.y > a.y + a.h - 1 || b.y + b.h < a.y + 1) {          // one row above the other
           var down = b.y > a.y, y1 = down ? a.y + a.h : a.y, y2 = down ? b.y : b.y + b.h, dy = (y2 - y1) * 0.45;
-          d = "M " + a.cx + " " + y1 + " C " + a.cx + " " + (y1 + dy) + " " + b.cx + " " + (y2 - dy) + " " + b.cx + " " + y2;
+          P = [[a.cx, y1], [a.cx, y1 + dy], [b.cx, y2 - dy], [b.cx, y2]];
           hx = b.cx; hy = y2; head = down ? "l -4 -7 h 8 z" : "l -4 7 h 8 z";
-          lx = (a.cx + b.cx) / 2; ly = (y1 + y2) / 2 - 4;
         } else {                                   // side by side in one row: arc over the box tops
           var rise = 22;                           // (the gap between them is far too narrow to draw in)
-          d = "M " + a.cx + " " + a.y + " C " + a.cx + " " + (a.y - rise) + " " + b.cx + " " + (b.y - rise) + " " + b.cx + " " + b.y;
+          P = [[a.cx, a.y], [a.cx, a.y - rise], [b.cx, b.y - rise], [b.cx, b.y]];
           hx = b.cx; hy = b.y; head = "l -4 -7 h 8 z";
-          lx = (a.cx + b.cx) / 2; ly = Math.min(a.y, b.y) - rise * 0.75 - 3;
         }
+        d = "M " + P[0].join(" ") + " C " + P[1].join(" ") + " " + P[2].join(" ") + " " + P[3].join(" ");
+        var txt = fitText(q.routes[0], 170, 5.9) + (q.n > 1 ? "  +" + (q.n - 1) : "");
         var tip = q.n + " web request" + (q.n === 1 ? "" : "s") + " from " + A_COMP[q.s].title + " to " +
           A_COMP[q.t].title + ":\n" + q.routes.join("\n");
         gArrows.appendChild(el("g", { class: "arch-req" }, [
           el("title", { text: tip }),
           el("path", { d: d }),
           el("path", { class: "head", d: "M " + hx + " " + hy + " " + head }),
-          el("text", { x: lx, y: ly, "text-anchor": "middle",
-            text: fitText(q.routes[0], 170, 5.9) + (q.n > 1 ? "  +" + (q.n - 1) : "") }),
         ]));
+        var lp = reqLabelSpot(P, txt.length * 5.9);
+        gReqLbl.appendChild(el("text", { x: lp[0], y: lp[1], "text-anchor": "middle", text: txt }));
       });
+    // A spot on the connector, just above or below it, whose label box clears
+    // every part box — the midpoint first, then points either side of it. The
+    // old fixed midpoint landed on whatever box sat between the two ends.
+    function reqLabelSpot(P, w) {
+      function at(t) {
+        var u = 1 - t;
+        return [0, 1].map(function (k) {
+          return u * u * u * P[0][k] + 3 * u * u * t * P[1][k] + 3 * u * t * t * P[2][k] + t * t * t * P[3][k];
+        });
+      }
+      function clear(x, y) {           // y = text baseline; the glyphs span ~y-7 .. y+2
+        return !Object.keys(pos).some(function (id) {
+          var r = pos[id];
+          return r && x + w / 2 > r.x - 2 && x - w / 2 < r.x + r.w + 2 && y + 2 > r.y && y - 7 < r.y + r.h;
+        });
+      }
+      // nearest-first vertical offsets, 1px apart, so a label can drop into the
+      // ~12px gap between two rows of boxes rather than miss it
+      var offs = [];
+      for (var o = -26; o <= 26; o++) offs.push(o);
+      offs.sort(function (p, q) { return Math.abs(p + 4) - Math.abs(q + 4); });
+      var ts = [0.5, 0.4, 0.6, 0.3, 0.7, 0.2, 0.8];
+      for (var i = 0; i < ts.length; i++) {
+        var m = at(ts[i]);
+        for (var j = 0; j < offs.length; j++) if (clear(m[0], m[1] + offs[j])) return [m[0], m[1] + offs[j]];
+      }
+      var mid = at(0.5);
+      return [mid[0], mid[1] - 4];
+    }
 
     // ── items ──
     var itemEls = {}, itemBase = {};
@@ -5332,7 +5384,10 @@
     box.appendChild(el("div", { class: "sim-legend" }, [
       el("div", { class: "row" }, [el("i", { class: "ph ph-lightning" }), "derived — computed from the call graph, not a real run"]),
       el("div", { class: "row" }, [el("i", { class: "ph ph-pencil-simple" }), "authored — written for this course"]),
-      el("div", { class: "row" }, [el("i", { class: "ph ph-record" })].concat(codeify("recorded — a real `codemap trace` run"))),
+      // codeify() returns several nodes; wrapped in one span so the flex row
+      // doesn't lay each text/code fragment out as its own column.
+      el("div", { class: "row" }, [el("i", { class: "ph ph-record" }),
+        el("span", {}, codeify("recorded — a real `codemap trace` run"))]),
     ]));
     return box;
   }
