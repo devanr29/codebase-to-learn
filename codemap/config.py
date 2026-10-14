@@ -82,13 +82,11 @@ max_snippet_lines = 40
 max_source_bytes = 4000000
 
 [engine]
-# Optional call-graph engine. "auto" uses a codebase-memory-mcp index of this
-# repo when one exists (extra, better-resolved call links; nothing to install
-# for codemap itself); "off" never looks. codemap's own graph is always the base.
-codebase_memory = "auto"
-# Where codebase-memory-mcp keeps its index. Empty = $CBM_CACHE_DIR, then
-# ~/.cache/codebase-memory-mcp.
-cache_dir = ""
+# Type resolution for Python, JavaScript and TypeScript: works out what each
+# call's receiver is (annotations, constructors, fields, imports, base classes)
+# to add the calls a name match misses and settle its ambiguous guesses.
+# "off" keeps the plain name-based graph.
+types = "auto"
 # codemap's own JS/TS facts: web requests tied to the route that serves them,
 # config (process.env) reads, browser storage. "off" skips them.
 native = "auto"
@@ -111,8 +109,7 @@ class ExploreConfig:
 
 @dataclass
 class EngineConfig:
-    codebase_memory: str = "auto"   # "auto" | "off"
-    cache_dir: str = ""
+    types: str = "auto"             # "auto" | "off" — enrich/typeflow.py
     native: str = "auto"            # "auto" | "off" — enrich/jsfacts.py
 
 
@@ -174,10 +171,9 @@ def load(root: Path | str) -> Config:
         max_source_bytes=int(exp.get("max_source_bytes", 4_000_000)),
     )
     eng = data.get("engine", {})
-    mode = str(eng.get("codebase_memory", "auto")).strip().lower()
+    # (`codebase_memory` / `cache_dir` from releases before 0.6 are ignored)
     cfg.engine = EngineConfig(
-        codebase_memory=mode if mode in ("auto", "off") else "auto",
-        cache_dir=str(eng.get("cache_dir", "")).strip(),
+        types="off" if str(eng.get("types", "auto")).strip().lower() == "off" else "auto",
         native="off" if str(eng.get("native", "auto")).strip().lower() == "off" else "auto",
     )
     return cfg

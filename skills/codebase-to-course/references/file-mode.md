@@ -111,8 +111,7 @@ Everything else in `SKILL.md` (audience, non-negotiables) still applies.
    client directly). That one scenario is worth more than either half alone —
    it is the only place in the whole surface that shows how the two sides of
    the app actually connect. When the overview has a **Route links** section
-   (codemap pairs JS/TS requests with their routes itself; a codebase-memory
-   index adds more, see `references/grounding-tools.md`),
+   (codemap pairs JS/TS and Python requests with their routes itself),
    it names each web request, the code that sends it and the code that serves
    it; the derived trees already cross those hops with a `note` step carrying a
    `route` field, so narrate that step instead of inventing the connection (it

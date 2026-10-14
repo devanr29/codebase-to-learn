@@ -1,14 +1,14 @@
-"""Web-request links from the optional codebase-memory engine: the Architecture tab's
-request connectors, Simulate's "request crosses to the server" hop, and the brief.
+"""Web-request links: the Architecture tab's request connectors, Simulate's
+"request crosses to the server" hop, and the brief.
 
-The call graph has no edge across an HTTP request, so a screen calling `/api/x` and
-the handler serving it were never joined. `model.build` now carries the engine's
-route links as `routes`; these tests follow them into each surface.
+The call graph has no edge across an HTTP request, so a client calling `/report`
+and the handler serving it were never joined. `model.build` carries codemap's own
+request -> route links (`enrich/pyfacts.py` for Python, `jsfacts.py` for JS/TS) as
+`routes`; these tests follow one into each surface.
 """
 
 from __future__ import annotations
 
-import hashlib
 import html as _html
 import json
 import re
@@ -18,14 +18,30 @@ import pytest
 
 from codemap import config, db, indexer
 from codemap.site import brief, model, render
-from tests.cbm_fake import IMPACT_EDGES, IMPACT_NODES, make_cbm_db
-from tests.fixtures.build_repo import build_impact_repo
+from tests.fixtures.build_repo import _git, build_impact_repo
 from tests.test_arch_arrows import (
     CLIENT, PAGES, SPLIT_ROW, USERS, _arch_page, _browser, _dump_dom, _numbers,
 )
 from tests.test_architecture import mk_file, run
 
-GET_REPORT = "GET /api/report"
+GET_REPORT = "GET /report"
+
+# svc/cli.py at the extra commit: main() asks the running web app for the
+# report instead of building it in-process -- a request to svc/web.py's
+# `@app.get("/report")` handler, which only request -> route linking can join.
+CLI_WITH_REQUEST = '''import requests
+
+from svc.report import build_report
+
+
+def main():
+    print(build_report("cli"))
+    print(requests.get("http://localhost:8000/report").text)
+
+
+if __name__ == "__main__":
+    main()
+'''
 
 
 # --------------------------------------------------------------------------- architecture.build
@@ -80,54 +96,58 @@ def test_no_routes_means_no_requests():
 # --------------------------------------------------------------------------- through the model
 
 
+def _index(repo_path, conn_path, until):
+    cfg = config.load(repo_path)
+    cfg.codemap_dir.mkdir(exist_ok=True)
+    conn = db.connect(conn_path)
+    db.migrate(conn)
+    indexer.scan(conn, cfg, until=until)
+    return cfg, conn
+
+
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
+    """The impact repo plus one commit in which main() sends a real request."""
     repo = build_impact_repo(tmp_path_factory.mktemp("route_repo"))
-    cfg = config.load(repo.path)
-    cfg.codemap_dir.mkdir(exist_ok=True)
-    conn = db.connect(cfg.db_path)
-    db.migrate(conn)
-    indexer.scan(conn, cfg, until=repo.sha("i3-sig-partial"))
-    hashes = {p: hashlib.sha256((repo.path / p).read_bytes()).hexdigest()
-              for p in ("svc/cli.py", "svc/data.py", "svc/report.py", "svc/web.py")}
-    yield SimpleNamespace(repo=repo, cfg=cfg, conn=conn, hashes=hashes)
+    plain_cfg, plain = _index(repo.path, tmp_path_factory.mktemp("plain") / "index.db",
+                              until=repo.sha("i3-sig-partial"))
+    (repo.path / "svc" / "cli.py").write_text(CLI_WITH_REQUEST, encoding="utf-8", newline="\n")
+    _git(repo.path, "add", "-A")
+    _git(repo.path, "commit", "-q", "-m", "cli: ask the web app for the report")
+    cfg, conn = _index(repo.path, config.load(repo.path).db_path, until=_git(repo.path, "rev-parse", "HEAD"))
+    yield SimpleNamespace(repo=repo, cfg=cfg, conn=conn, plain=plain, plain_cfg=plain_cfg)
     conn.close()
+    plain.close()
 
 
-@pytest.fixture
-def cache(tmp_path, monkeypatch):
-    d = tmp_path / "cbm-cache"
-    d.mkdir()
-    monkeypatch.setenv("CBM_CACHE_DIR", str(d))
-    return d
-
-
-def _with_engine(env, cache):
-    make_cbm_db(cache, env.repo.path, nodes=IMPACT_NODES, edges=IMPACT_EDGES, hashes=env.hashes)
+def _with_request(env):
     return model.build(env.conn, env.cfg)
 
 
-def test_the_model_draws_the_request_only_when_the_engine_found_a_route(env, cache):
-    without = model.build(env.conn, env.cfg)
-    assert without["architecture"]["requests"] == [] and "routes" not in without
+def test_the_model_draws_the_request_only_when_the_code_sends_one(env):
+    without = model.build(env.plain, env.plain_cfg)
+    assert without["architecture"]["requests"] == []
+    # the served route is still listed ("this address exists"), with nobody calling it
+    assert all(not r["callers"] for r in without.get("routes", []))
 
-    data = _with_engine(env, cache)
+    data = _with_request(env)
     assert data["architecture"]["requests"] == [
         {"s": "entry:svc/cli.py", "t": "entry:svc/web.py", "routes": [GET_REPORT], "n": 1}
     ]
     json.dumps(data)
 
 
-def test_a_derived_brief_tree_crosses_the_request_and_the_overview_lists_it(env, cache, tmp_path):
+def test_a_derived_brief_tree_crosses_the_request_and_the_overview_lists_it(env, tmp_path):
     cfg = config.load(env.repo.path)
     cfg.codemap_dir.mkdir(exist_ok=True)
-    # plain repo: no route section, no hop
-    plain = model.build(env.conn, cfg)
-    brief.emit(env.conn, cfg, plain)
-    overview = (cfg.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
-    assert "Route links" not in overview
+    # no request in the code: main's tree never crosses to the server
+    plain = model.build(env.plain, env.plain_cfg)
+    brief.emit(env.plain, cfg, plain)
+    derived = json.loads((cfg.codemap_dir / "briefs" / "scenarios-derived.json").read_text(encoding="utf-8"))
+    tree = next(s for s in derived["scenarios"] if s["root_key"] == "svc/cli.py::main")["steps"]
+    assert not any(st.get("route") for st in tree)
 
-    data = _with_engine(env, cache)
+    data = _with_request(env)
     brief.emit(env.conn, cfg, data)
     overview = (cfg.codemap_dir / "briefs" / "00-overview.md").read_text(encoding="utf-8")
     assert "## Route links" in overview and f"`{GET_REPORT}`" in overview
@@ -204,8 +224,8 @@ def test_the_request_connector_leaves_the_caller_and_lands_on_the_handler(
 
 
 @needs_browser
-def test_simulate_walks_from_the_client_call_into_the_handler(env, cache, tmp_path):
-    data = _with_engine(env, cache)
+def test_simulate_walks_from_the_client_call_into_the_handler(env, tmp_path):
+    data = _with_request(env)
     page = tmp_path / "explore.html"
     page.write_text(render.render(data), encoding="utf-8")
     dom = _dump_dom(page, "#/sim/derive:svc/cli.py::main/0")
@@ -214,9 +234,9 @@ def test_simulate_walks_from_the_client_call_into_the_handler(env, cache, tmp_pa
     assert f"{GET_REPORT} arrives at report_view." in text
     assert "travels over the network to the server" in text
 
-    # ...and nothing of the kind appears when the engine wasn't there
+    # ...and nothing of the kind appears when request linking is off
     off = config.load(env.repo.path)
-    off.engine.codebase_memory = "off"
+    off.engine.native = "off"
     page.write_text(render.render(model.build(env.conn, off)), encoding="utf-8")
     dom = _dump_dom(page, "#/sim/derive:svc/cli.py::main/0")
     text = _html.unescape(re.sub(r"<[^>]+>", " ", dom))

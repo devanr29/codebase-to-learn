@@ -38,7 +38,8 @@ that doesn't hold up.
 
 **Prerequisites.**
 - The `codemap` CLI is on `PATH`. If `codemap --version` fails, tell the user to
-  run `pipx install "codemap[mcp] @ git+https://github.com/devanr29/codebase-to-learn"`.
+  run `pipx install git+https://github.com/devanr29/codebase-to-learn` (the MCP
+  server is built in).
 - The `codemap` MCP tools are in your tool list. The plugin starts the server.
   Without the plugin, run `claude mcp add codemap -- codemap mcp`.
 - If neither is available, follow `references/file-mode.md` instead of the
@@ -134,9 +135,8 @@ Write precisely. Technical terms are fine; tie every claim to real code. See
 
 ## Grounding
 
-See `references/grounding-tools.md` for the codemap tools, and for using a
-`codebase-memory` MCP server as a second opinion when it is installed. Never
-install it for the user.
+See `references/grounding-tools.md` for the codemap tools, and for what the
+graph's type resolution already settles before you start.
 
 ## Non-negotiables
 

@@ -240,10 +240,10 @@ reveal, the `codebase-to-course` skill (§10) writes corrections into
 `skills/codebase-to-course/references/architecture-schema.md` for the file
 format.
 
-**Web requests** (only with a codebase-memory-mcp index of the repo, see
-`docs/spec.md` §20). A screen calling `/api/x` and the handler that serves it
-have no import between them, so nothing above joins them. When the index found
-the route, a dashed, labelled connector runs from the part that sends the
+**Web requests** (JS/TS and Python, see `docs/spec.md` §20). A screen calling
+`/api/x` and the handler that serves it have no import between them, so nothing
+above joins them. When codemap pairs the request with the route that serves
+it, a dashed, labelled connector runs from the part that sends the
 request to the part that serves it (hover it for every route between the two),
 the part's inspector gets "Sends web requests to" / "Serves web requests from",
 and the legend gains a row. It is separate from the layer arrows on purpose: a
@@ -347,9 +347,9 @@ A derived (⚡) scenario's banner spells out honestly what it is — a predictio
 from the code's shape, not a recorded run — and gives you the exact
 `codemap trace` command to record the real thing instead.
 
-With a codebase-memory-mcp index of the repo, a derived scenario also follows a
-web request: after the calls a function makes, a step reads "`main` sends
-`GET /api/report` — the server's router hands it to `report_view`", and the
+A derived scenario also follows a web request codemap paired with its route:
+after the calls a function makes, a step reads "`main` sends
+`GET /report` — the server's router hands it to `report_view`", and the
 trace carries on inside the handler. The call graph itself has no edge across
 that hop.
 
@@ -522,11 +522,12 @@ max_source_bytes  = 4000000 # whole-file source embedded for the source viewer
                              #   0 = embed no files.
 ```
 
-`[engine]` is the optional codebase-memory-mcp link: `codebase_memory = "auto"`
-(or `"off"`) and `cache_dir` (see [`cli.md`](cli.md)). When its index is merged
-in, the topbar shows a "+ codebase-memory" badge (hover it for what was added),
-and a caller or callee only it found carries a small `cbm` tag in the Graph
-inspector.
+`[engine]` switches codemap's two extra analysis passes: `types = "auto"` (or
+`"off"`) for type-aware call resolution in Python / JavaScript / TypeScript, and
+`native` for web-request links (see [`cli.md`](cli.md)). When type resolution
+changed the graph, the topbar shows a "+ types" badge (hover it for what was
+added, confirmed or removed), and a caller or callee it found or confirmed
+carries a small `typed` tag in the Graph inspector (hover it for how).
 
 `max_source_bytes` is the knob for page size: on this repo the whole page is
 about 2.3 MB with every file embedded. Minified files and files with a line

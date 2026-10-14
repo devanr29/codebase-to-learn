@@ -69,17 +69,11 @@ pipx uninstall codemap
 This doesn't touch any repo's `.codemap/` directory — delete that yourself if
 you want to drop a repo's index too.
 
-### The MCP server (optional)
+### The MCP server
 
 `codemap mcp` lets an AI assistant investigate the repo and write verified
-answers back (see [`mcp.md`](mcp.md)). It needs the MCP SDK in codemap's
-environment:
-
-```
-pipx inject codemap mcp
-# uv: uv tool install --with mcp git+https://github.com/devanr29/codebase-to-learn
-# from a checkout: pip install -e ".[mcp]"
-```
+answers back (see [`mcp.md`](mcp.md)). It is part of the install above: codemap
+speaks the protocol itself, so there is no SDK to add.
 
 ## 2. The skills (optional, Claude Code plugin)
 
@@ -129,5 +123,7 @@ manifest needed for this path.
 Ask Claude Code "explain this codebase" in a repo that has `codemap`
 installed and indexed (`codemap scan` already run). It should recognize and
 invoke `codebase-to-course` from its description trigger. `/mcp` should list a
-connected `codemap` server. If it shows as failed, run `codemap mcp` in a
-terminal: the most common cause is a missing SDK (`pipx inject codemap mcp`).
+connected `codemap` server. If it shows as failed, run `codemap --version` in a
+terminal: the most common cause is that the `codemap` command isn't on `PATH`
+for the shell Claude Code starts (open a new terminal after `pipx install`, or
+run `pipx ensurepath`).

@@ -31,12 +31,11 @@ writes under `.codemap/`.
 
 ## Setup
 
-The SDK is an optional extra, so the core install stays small:
+The server ships with codemap: it speaks MCP's JSON-RPC 2.0 over stdio itself
+(`codemap/mcp_server.py`), so there is no SDK to install.
 
 ```
 pipx install git+https://github.com/devanr29/codebase-to-learn
-pipx inject codemap mcp            # adds the MCP SDK to codemap's environment
-# from a checkout: pip install -e ".[mcp]"
 ```
 
 **Claude Code, with the plugin.** `/plugin install codemap@codemap` starts the
@@ -112,7 +111,7 @@ The settled facts that have no other home live here. Each one has an `id`, a
 `kind` (`call`, `not_call`, `request`, `unknown`, `note`), a `note`, an
 `evidence` list (`file`, `line`, and that line's `text` when it was written),
 the index commit and a date. `model.build` applies them after codemap's own
-analysis and any codebase-memory index, so a reviewed answer has the last word
+analysis (name matching, then type resolution), so a reviewed answer has the last word
 on a guess. It never removes a confident edge.
 
 **Staleness.** When an evidence line no longer reads the same, or a symbol in

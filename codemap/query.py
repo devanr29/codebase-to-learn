@@ -285,7 +285,7 @@ class Session:
         symbols = self._c("symbols")
         edges, truncated = _calls.walk(self._c("g"), s.key, direction=direction,
                                        depth=max(1, min(depth, 6)), guesses=include_guesses)
-        lines = _calls.edge_lines(edges, symbols, self._c("raw_lines"))
+        lines = _calls.edge_lines(edges, symbols, self._c("raw_lines"), self._c("g"))
         return _calls.as_dict(symbols, s, edges, truncated, direction=direction, lines=lines)
 
     def impact(self, target: str, depth: int | None = None) -> dict:

@@ -6,8 +6,8 @@ Run the full `codebase-to-course` workflow against the current repo.
 
 1. Check the CLI is installed: run `codemap --version`. If that fails, tell the
    user to install it first and stop. The install is
-   `pipx install git+https://github.com/devanr29/codebase-to-learn` followed by
-   `pipx inject codemap mcp` (the MCP SDK), or the `uv tool install` equivalent.
+   `pipx install git+https://github.com/devanr29/codebase-to-learn` (the MCP
+   server is built in), or the `uv tool install` equivalent.
 2. If there is no `.codemap/index.db` yet, or `overview` reports the index is
    stale, run `codemap scan`.
 3. Invoke the `codebase-to-course` skill and follow its workflow exactly:
