@@ -6,6 +6,21 @@ to follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-10-15
+
+The explorer drops from seven tabs to six. The Map tab's three views each moved
+to the tab that already does their job.
+
+### Changed
+- **Map tab removed.** Map ▸ Mass is now **Timeline ▸ Hot files**
+  (`#/timeline/files`), the same treemap of size, churn and dead code, plus a
+  "Changed most" list of the five busiest non-test files. Map ▸ Run trace
+  is replaced by Simulate: the Graph inspector's link is now "Simulate calls
+  from here". From Map ▸ Layers, only the import cycles survive, as an
+  **Import cycles** list in the Architecture overview. The top bar's `cycles`
+  count is that list's length. Old `#/map/…` links open the view that replaced
+  them.
+
 ## [0.6.0] — 2026-10-15
 
 codemap is now standalone: the call-graph engine and the MCP server that used
@@ -458,7 +473,8 @@ This release fixes all of it, by phase.
   `/explore` and `/review` slash commands.
 - Post-commit hook for diff explanations.
 
-[Unreleased]: https://github.com/devanr29/codebase-to-learn/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/devanr29/codebase-to-learn/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.5.1...v0.6.0
 [0.5.1]: https://github.com/devanr29/codebase-to-learn/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/devanr29/codebase-to-learn/compare/v0.4.0...v0.5.0

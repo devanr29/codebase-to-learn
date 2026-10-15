@@ -92,8 +92,8 @@ codemap snapshot
 
 ## `codemap explore`
 
-Renders `.codemap/explore.html` — the self-contained, seven-tab browsable
-surface (Graph / Architecture / Map / Simulate / Learn / Packages / Timeline).
+Renders `.codemap/explore.html` — the self-contained, six-tab browsable
+surface (Graph / Architecture / Simulate / Learn / Packages / Timeline).
 See [`explore-guide.md`](explore-guide.md) for what's in it.
 
 ```

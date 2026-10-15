@@ -2,8 +2,7 @@
 (Lane 3) scenarios, resolved against the current graph.
 
 Lane 1 (derived from the call graph) is deliberately **not** built here: like
-every other Map-tab view (``layerCake``/``runTrace``/``massMap`` in
-``explore.js``), it is computed entirely client-side from ``data.nodes`` /
+the Hot files treemap and the import-cycle list in ``explore.js``, it is computed entirely client-side from ``data.nodes`` /
 ``data.edges`` -- the payload already carries everything it needs (including
 the call-site ``line`` on each edge, see ``model.py``), so it stays available
 even when a repo has neither ``scenarios.json`` nor a recorded trace, and it

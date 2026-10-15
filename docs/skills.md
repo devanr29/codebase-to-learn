@@ -42,7 +42,7 @@ these files existing — this is the one rule that makes the split safe:
 | `.codemap/findings.json` | *(the graph itself)* | nothing changes: codemap's own edges, guesses and route links stand. With it, reviewed calls are confirmed or removed, reviewed request links are added, and each is tagged **reviewed** |
 | `.codemap/architecture.json` | **Architecture** | the full layered diagram derived from folder names, entry points, imports and manifests — the file only renames boxes, moves misplaced ones, and adds stores/services the imports don't reveal |
 
-The Map and Timeline tabs have **no** authored input at all — they're built
+The Timeline tab has **no** authored input at all — they're built
 entirely from the graph.
 
 ## Why a separate skill instead of building this into the CLI

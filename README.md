@@ -61,17 +61,16 @@ codemap check                    # are the authored explanations, scenarios and 
 codemap calls build_report --in  # what really calls this, with file:line and how sure codemap is
 ```
 
-## The seven tabs
+## The six tabs
 
 | Tab | Answers | |
 |---|---|---|
 | **Graph** | What calls what — source tree, a neural-style code graph, focus any symbol to see its callers/callees, blast radius, and source. | ![Graph tab](docs/images/graph.png) |
 | **Architecture** | What the system is made of — layers from routes down to data, the tech each part is built on, and the databases and outside services it talks to. | ![Architecture tab](docs/images/architecture.png) |
-| **Map** | What shape is the system, and where — dependency layers, a subway-map run trace, a treemap of the whole repo. | ![Map tab, Layers view](docs/images/map-layers.png) |
 | **Simulate** | What happens when it *runs* — a transport-controlled animation of one call-by-call scenario, with a scrollable trace log. | ![Simulate tab](docs/images/simulate.png) |
 | **Learn** | A guided tour of the codebase — what its parts are, how they fit together, and what each folder is for. | _walkthrough — see [`docs/explore-guide.md`](docs/explore-guide.md)_ |
 | **Packages** | What every dependency and repo module actually does, in general and in this codebase. | ![Packages tab](docs/images/learn.png) |
-| **Timeline** | Every commit, its stated intent, and its blast radius. | ![Timeline tab](docs/images/timeline.png) |
+| **Timeline** | Every commit, its stated intent, and its blast radius — plus **Hot files**, a treemap of where the code is, which files change most, and which look dead. | ![Timeline tab](docs/images/timeline.png) ![Timeline tab, Hot files view](docs/images/hot-files.png) |
 
 Icons are vendored into the page itself (base64, no CDN) — they render the
 same offline or on a network that blocks arbitrary CDNs. The body font
@@ -134,7 +133,7 @@ nothing else needs installing. Set `types = "off"` under `[engine]` in
 
 - Dynamic imports, `getattr`/dictionary dispatch, string-based routing,
   dependency injection, and wrapping decorators are invisible or distorted in
-  the graph — the Map tab's Run trace marks where a chain hits one of these
+  the graph — Simulate marks where a chain hits one of these
   instead of silently stopping.
 - Caller resolution is receiver-aware: a `self.x()`/`Class.x()` call only
   resolves against that class, and a call on a variable needs import
@@ -152,7 +151,7 @@ nothing else needs installing. Set `types = "off"` under `[engine]` in
   [`docs/spec.md`](docs/spec.md) §14.
 - A folder that contains no file in an indexed language (docs-only, data-only,
   a Markdown-only skill directory) never enters the index, so it gets no row
-  in the Map tab's treemap, no folder page in Learn, and no entry in the
+  in Timeline's Hot files treemap, no folder page in Learn, and no entry in the
   folder brief the `codebase-to-course` skill reads from — there's nothing to
   derive it from. Nothing breaks; that folder is just invisible to the tool.
 - The Architecture tab's layers are a scored guess from folder names, file
