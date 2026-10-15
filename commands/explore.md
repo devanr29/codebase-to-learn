@@ -1,5 +1,5 @@
 ---
-description: Index the repo and open codemap's explore.html (Graph / Map / Simulate / Learn / Timeline).
+description: Index the repo and open codemap's explore.html (Graph / Architecture / Simulate / Learn / Packages / Timeline).
 ---
 
 Run codemap's explore workflow against the current repo.

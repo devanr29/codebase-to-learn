@@ -2,7 +2,7 @@
 
 `codemap explore` turns the symbol graph in `.codemap/index.db` into **one
 self-contained file**, `.codemap/explore.html`, that you open in a browser. No
-server, no build step. Seven tabs: Graph, Architecture, Map, Simulate, Learn,
+server, no build step. Six tabs: Graph, Architecture, Simulate, Learn,
 Packages, Timeline. It opens on Learn's Orientation screen (§9) first, not the graph —
 read the map before the words.
 
@@ -19,7 +19,7 @@ see [§14](#14-running-from-a-checkout-instead-of-an-install).
 3. [Generate and open the explorer](#3-generate-and-open-the-explorer)
 4. [The Graph tab](#4-the-graph-tab-the-main-page)
 5. [The Architecture tab](#5-the-architecture-tab-the-system-as-layers)
-6. [The Map tab](#6-the-map-tab-structure-not-connections)
+6. [Where the Map tab went](#6-where-the-map-tab-went)
 7. [The Simulate tab](#7-the-simulate-tab-what-happens-when-it-runs-step-by-step)
 8. [The Timeline tab](#8-the-timeline-tab)
 9. [The Learn tab](#9-the-learn-tab-project-walkthrough)
@@ -121,7 +121,8 @@ at a time. The "Whole graph" button clears the focus.
   `fetch`), with a **"Trace back to entry ▶"** link that plays that exact
   chain as a Simulate scenario instead of just printing it (hidden when this
   symbol *is* the entry point — there's nothing to walk back through)
-- a "Trace calls from here" link into the Map tab's Run trace (§6)
+- a "Simulate calls from here" link that plays what this symbol calls as a
+  Simulate scenario (§7)
 - the symbol's source: a numbered, syntax-coloured preview of its first 30
   lines, a **View source** button (the source viewer, below), and an "Open in
   editor" link
@@ -150,7 +151,7 @@ scrolled into view.
   grain — a guessed call: the name matched somewhere in the repo with no
   import connecting the two files, so it might not be a real call at all.
   These never count toward fan-in/fan-out, blast radius, or an entry path
-  (above); Simulate and the Map tab's Run trace skip them too
+  (above); Simulate skips them too
 - module-level calls are **not** drawn at all
 - **Folder | Layer** switch — colours the dots and edges by folder (the
   default) or by the architecture layer the Architecture tab (§5) placed each
@@ -164,7 +165,7 @@ Nothing is ever labelled "dead" — only "no inbound edge at tier N".
 
 ## 5. The Architecture tab (the system as layers)
 
-The Graph tab shows every call and the Map tab shows import depth. The
+The Graph tab shows every call. The
 Architecture tab draws the picture you'd sketch on a whiteboard for a new
 teammate: the classic "routes → views / API → logic → models" diagram, with
 each part labelled by what it's built with. It's derived from the index, so
@@ -221,7 +222,13 @@ it needs no extra step, and it works on any repo.
   - its **files** (click one to open it in the Graph tab)
   - a link to its folder in Learn (§9)
 - with nothing selected, the panel shows the stack, how big each layer is,
-  the list of wrong-way imports, and a legend
+  the list of wrong-way imports, the **import cycles**, and a legend
+- **Import cycles** lists every group of files that import each other,
+  directly or round a loop (`a.py ⇄ b.py ⇄ c.py`), biggest first. None of them
+  loads on its own, and a change to one can break the others, so they're worth
+  knowing before you edit. Click one to open its biggest file in the Graph tab.
+  Cycles made only of test files appear once "Show tests" is on. The `cycles`
+  count in the top bar is the same number
 - every selection is a link: `#/arch/<layer>:<path>`
 
 **How placement works.** Every file is scored:
@@ -249,53 +256,23 @@ the part's inspector gets "Sends web requests to" / "Serves web requests from",
 and the legend gains a row. It is separate from the layer arrows on purpose: a
 frontend calling a route handler is not a wrong-way import.
 
-## 6. The Map tab (structure, not connections)
+## 6. Where the Map tab went
 
-The Graph tab answers "what calls what". The Map tab answers three questions
-it doesn't: what *shape* is the system, what happens when it *runs*, and
-*where* is the code. Three views, switched with the buttons at top left. Built
-from the same graph — no extra step, no extra data.
+Up to 0.6.0 there was a Map tab with three views. Two of them repeated another
+tab with less context, so 0.6.1 folded each into the tab that already did its
+job better:
 
-**Layers — the dependency skeleton.** Files are stacked into layers by their
-in-repo imports: L0 at the bottom imports nothing else in the repo (config,
-logging, small helpers), each layer above imports only from below, entry
-points end up at the top.
-- block width = lines of code
-- block colour = folder (same colours as the Graph tab legend)
-- a block marked with a loop arrow is an **import cycle** — several files that
-  import each other, collapsed into one block; hover it for the members
-- hover any block to light up what it imports (downward) and what imports it
-  (upward)
-- click a block to jump to that file in the Graph tab
-- "Hide tests" drops `tests/**` so the production skeleton stands alone
+| Was | Now | Why |
+|---|---|---|
+| Map ▸ **Layers** (files stacked by import depth) | the **Import cycles** list in the Architecture overview (§5) | Architecture already shows the layers, named and explained; the cycles were the one thing only Layers showed |
+| Map ▸ **Run trace** (one call chain, column by column) | **Simulate** (§7): "Simulate calls from here" in the Graph inspector plays the same chain, narrated | Simulate walks the same chain step by step, with source and output |
+| Map ▸ **Mass** (treemap by size and churn) | **Timeline ▸ Hot files** (§8) | how often a file changes is history |
 
-**Run trace — one call chain as a subway map.** Pick a starting function from
-the dropdown (ranked by how much they reach). Columns are call depth: the root
-on the left, what it calls in the next column, and so on.
-- dot size = how many callers that function has
-- dot colour = folder
-- "+N more calls" appears when a column is busy; click to expand it
-- the `<` / `>` buttons step a highlight one hop at a time, so you can watch
-  the cascade instead of reading a wall of lines
-- a lightning-bolt card means the chain hit a call the indexer can't follow
-  statically — e.g. a CLI's `args.func(args)`, where the real target is chosen
-  at runtime. The trace stops there **on purpose** and tells you, rather than
-  pretending the function is a dead end.
-
-The Graph tab's inspector has a "Trace calls from here" link that opens this
-view on the focused symbol.
-
-**Mass — a treemap of the whole repo.**
-- rectangle area = lines of code, grouped by folder
-- fill = how many commits have touched the file (darker = quiet, brighter =
-  changes a lot); the brightest tiles switch to dark text so names stay readable
-- a hatched rectangle = every function in that file is unreachable at the
-  current tier — a candidate for deletion, or a sign of missing edges
-- click a rectangle to open the file in the Graph tab
+Old `#/map/…` links still work: they open the view that replaced them.
 
 ## 7. The Simulate tab (what happens when it runs, step by step)
 
-The Graph and Map tabs are about **structure**. Simulate is about **time**: it
+The Graph and Architecture tabs are about **structure**. Simulate is about **time**: it
 replays one run of the code as an animation you drive with a transport bar
 (play / pause / step / scrub / speed).
 
@@ -363,7 +340,9 @@ format.
 
 ## 8. The Timeline tab
 
-Newest commit first. Each card shows:
+Two views, switched with the buttons at top left: **Commits** and **Hot files**.
+
+**Commits** — newest first. Each card shows:
 - the stated intent and where it came from (commit message / note / session).
   Git trailers at the end of a message (`Co-Authored-By:`, `Signed-off-by:`)
   are left out.
@@ -374,12 +353,25 @@ Newest commit first. Each card shows:
 Click "Read this first: …" on a card to jump straight to that symbol in the
 Graph tab.
 
+**Hot files** (`#/timeline/files`) — a treemap of the whole repo: where the
+code is, and which parts keep changing.
+- rectangle area = lines of code, grouped by folder
+- fill = how many commits have changed the file (darker = quiet, brighter =
+  changes a lot); the brightest tiles switch to dark text so names stay readable
+- a hatched rectangle = no function in that file is reachable from an entry
+  point. It's either dead code or a call the analysis can't see (a plugin
+  registry, a framework hook) — check before deleting
+- **Changed most** in the legend names the five busiest non-test files. Big
+  and often-changed is where bugs and merge conflicts collect, so read those
+  first
+- click a rectangle or a name to open the file in the Graph tab
+
 ## 9. The Learn tab (project walkthrough)
 
 This is where `explore.html` opens by default — on **Orientation**, not the
 graph. It states the tool's whole premise up front (nobody understands a
 codebase entirely, including whoever wrote it), lays out which tabs show what
-*exists* (Graph, Architecture, Map, Learn, Packages) versus what *happens* (Simulate,
+*exists* (Graph, Architecture, Learn, Packages) versus what *happens* (Simulate,
 Timeline), lists the repo's own top-level folders before anything else, and
 names the four ways to actually move around unfamiliar code: search for text
 you saw on screen, jump to a definition, read the history, run it and watch

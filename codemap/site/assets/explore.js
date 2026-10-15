@@ -460,21 +460,14 @@
     return best;
   }
 
-  // ---- map-tab derivations ------------------------------------------
-  // The Graph tab answers "what calls what". These power a second tab that
-  // answers three questions the call graph alone never shows: what SHAPE is this
-  // system (layer cake), what happens when it RUNS (run trace), and where does
-  // the code sit and keep moving (mass map). All from the payload already inlined
-  // — no Python change. `fileAdj` (s imports t) is reused from the traffic model.
-
-  var fileImpBy = FILES.map(function () { return []; });   // reverse: who imports me
-  fileAdj.forEach(function (outs, s) {
-    outs.forEach(function (t) { fileImpBy[t].push(s); });
-  });
+  // ---- file-level derivations ----------------------------------------
+  // Import cycles (Architecture overview) and per-file churn / dead code
+  // (Timeline ▸ Hot files), from the payload already inlined. `fileAdj`
+  // (s imports t) is reused from the traffic model.
 
   // Strongly-connected components of the file-import graph (iterative Tarjan —
   // recursion could blow the stack on a big repo). An SCC with >1 member is an
-  // import cycle, drawn later as one merged block.
+  // import cycle.
   function fileSCCs() {
     var n = FILES.length, idx = 0;
     var num = new Array(n).fill(-1), low = new Array(n).fill(0);
@@ -507,28 +500,11 @@
     }
     return { comp: comp, comps: comps };
   }
-  var _scc = fileSCCs();
-  var fileComp = _scc.comp;              // fi -> component id
-  var sccMembers = _scc.comps;           // component id -> [fi, ...]
-  var compAdj = sccMembers.map(function () { return new Set(); });
-  fileAdj.forEach(function (outs, s) {
-    outs.forEach(function (t) {
-      if (fileComp[s] !== fileComp[t]) compAdj[fileComp[s]].add(fileComp[t]);
-    });
-  });
-  // longest-path layer over the condensed DAG: 0 = imports nothing in-repo
-  var compLayer = new Array(sccMembers.length).fill(-1);
-  (function () {
-    function depthOf(c) {
-      if (compLayer[c] >= 0) return compLayer[c];
-      compLayer[c] = 0;                  // guard against any stray re-entry
-      var d = 0;
-      compAdj[c].forEach(function (t) { d = Math.max(d, 1 + depthOf(t)); });
-      return (compLayer[c] = d);
-    }
-    for (var c = 0; c < sccMembers.length; c++) depthOf(c);
-  })();
-  function fileLayer(fi) { return compLayer[fileComp[fi]]; }
+  // import cycles: files that import each other, biggest first
+  var importCycles = fileSCCs().comps
+    .filter(function (c) { return c.length > 1; })
+    .map(function (c) { return c.slice().sort(function (a, b) { return (FILES[b].loc || 0) - (FILES[a].loc || 0); }); })
+    .sort(function (a, b) { return b.length - a.length; });
 
   // per-file churn (Σ non-cosmetic changes) + "every function unreachable" flag
   var churnOf = FILES.map(function () { return 0; });
@@ -545,7 +521,7 @@
   });
   function fileAllDead(fi) { return funcOf[fi] > 0 && deadOf[fi] === funcOf[fi]; }
   // matches "tests/…" AND "pkg/tests/…" — a top-level-only check misses any
-  // nested tests dir. Shared by Map's "Hide tests" pill and anywhere else
+  // nested tests dir. Shared by Hot files, Simulate's root ranking and anywhere else
   // "unreachable" needs to mean something (a test file's own functions are
   // never called by production code either — that's not the interesting kind
   // of dead code, so it shouldn't read as a warning).
@@ -570,10 +546,10 @@
     }
     return seen.size - 1;
   }
-  // real entry points (routes, main guards, jobs, …) belong at the top of the
-  // Run-trace root picker; a test file's own top-level functions have huge
-  // subtrees too (they call into everything they exercise) and used to
-  // outrank the actual entry points the picker exists to surface.
+  // real entry points (routes, main guards, jobs, …) come first among the
+  // roots Simulate derives scenarios from; a test file's own top-level
+  // functions have huge subtrees too (they call into everything they
+  // exercise) and used to outrank the actual entry points.
   var TRACE_ENTRY_NODES = new Set((DATA.entry_points || [])
     .map(function (ep) { return ep.node; }).filter(function (i) { return i != null; }));
   var traceRoots = N.map(function (nd) { return { i: nd.i, size: subtreeSize(nd.i, 6) }; })
@@ -587,7 +563,6 @@
       return b.size - a.size || an.qual.localeCompare(bn.qual);
     })
     .slice(0, 14);
-  var traceExpand = {};   // "<root>:<depth>" -> true once the "+N more" is opened
 
   // ---- app state ---------------------------------------------------
   var reduceMotion = window.matchMedia &&
@@ -611,10 +586,7 @@
     srcOpen: false,       // Graph: the source viewer slide-over is open on the focused symbol
     srcTargetLine: null,  // Graph: one-shot line to scroll the source viewer to, e.g. from a file-text search hit — consumed by syncSrc() and cleared right after, else it defaults to the focused symbol's own first line
     pin: null,            // a click-pinned node key: spotlight it + its edges
-    mapView: "layers",    // Map tab: "layers" | "trace" | "mass"
-    traceRoot: null,      // Map/trace: node index of the traced call root
-    traceStep: null,      // Map/trace: BFS depth the step wave has reached (null = all)
-    hideTests: false,     // Map/layers: drop tests/** and collapse empty bands
+    timelineView: "commits", // Timeline: "commits" | "files" (the hot-files treemap)
     archSel: null,        // Architecture: selected item key (component id, or store:/service:/actor:<id>)
     archShowTests: false, // Architecture: include the tests side panel
     mobileRail: false,    // narrow viewport: source tree shown as an overlay, not a column
@@ -642,7 +614,7 @@
   if (flowPref == null && state.flow && layoutOverview().links.length > 150) state.flow = false;
 
   // ---- routing ---------------------------------------------------
-  var TAB_LABEL = { graph: "the Graph", arch: "Architecture", map: "Map", sim: "Simulate",
+  var TAB_LABEL = { graph: "the Graph", arch: "Architecture", sim: "Simulate",
     learn: "Learn", libs: "Packages", timeline: "Timeline" };
   function parseHash() {
     var h = (location.hash || "#/learn").replace(/^#/, "");
@@ -667,13 +639,11 @@
     if (t === "learn") return "#/learn" + (state.module && state.module !== ORIENTATION_ID ? "/" + encodeURIComponent(state.module) : "");
     if (t === "arch") return "#/arch" + (state.archSel ? "/" + encodeURIComponent(state.archSel) : "");
     if (t === "libs") return "#/libs" + (state.pkg ? "/" + encodeURIComponent(state.pkg) : "");
-    if (t === "map") {
-      var seg = state.mapView;
-      if (state.mapView === "trace" && state.traceRoot != null) seg += "/" + encodeURIComponent(N[state.traceRoot].key);
-      return "#/map/" + seg;
-    }
     if (t === "sim") return "#/sim" + (state.simScenario ? "/" + encodeURIComponent(state.simScenario) : "");
-    if (t === "timeline") return "#/timeline" + (state.timelineSha ? "/" + encodeURIComponent(state.timelineSha) : "");
+    if (t === "timeline") {
+      if (state.timelineView === "files") return "#/timeline/files";
+      return "#/timeline" + (state.timelineSha ? "/" + encodeURIComponent(state.timelineSha) : "");
+    }
     return "#/" + t;
   }
   function go(tab, arg) {
@@ -694,12 +664,22 @@
     var prevTab = state.tab;            // read before route() below overwrites it — see
                                          // updateGraphFocus()'s fast path at the bottom
     var r = parseHash();
+    // The Map tab was retired in 0.6.1: Mass became Timeline ▸ Hot files, Run
+    // trace became Simulate's derived scenarios, and Layers' import cycles
+    // moved to the Architecture overview. Old links land on their replacement.
+    if (r.tab === "map") {
+      var mseg = r.arg.split("/"), mkey = mseg.slice(1).join("/");
+      r = mseg[0] === "mass" ? { tab: "timeline", arg: "files" }
+        : mseg[0] === "trace" && keyToI[mkey] != null ? { tab: "sim", arg: "derive:" + mkey + "/0" }
+        : { tab: "arch", arg: "" };
+      history.replaceState(null, "", "#/" + r.tab + (r.arg ? "/" + encodeURIComponent(r.arg) : ""));
+    }
     // Set below whenever the hash names a tab or an argument that doesn't
     // actually resolve to anything real — the URL then gets corrected
     // (history.replaceState) to whatever ends up on screen, with a small
     // note, instead of silently showing a fallback under a wrong-looking URL.
     var badLink = null;
-    var tabKnown = ["graph", "arch", "learn", "libs", "timeline", "map", "sim"].indexOf(r.tab) >= 0;
+    var tabKnown = ["graph", "arch", "learn", "libs", "timeline", "sim"].indexOf(r.tab) >= 0;
     if (r.tab && !tabKnown) badLink = "tab “" + r.tab + "”";
     state.tab = tabKnown ? r.tab : "learn";
     if (state.tab === "graph") {
@@ -754,20 +734,6 @@
         badLink = badLink || "package “" + state.pkg + "”";
         state.pkg = null;
       }
-    } else if (state.tab === "map") {
-      var seg = r.arg.split("/");
-      if (["layers", "trace", "mass"].indexOf(seg[0]) >= 0) state.mapView = seg[0];
-      else if (!r.arg) state.mapView = "layers";   // "#/map" with no arg always lands on Layers (M14 — Map Back)
-      else badLink = badLink || "map view “" + seg[0] + "”";
-      if (state.mapView === "trace") {
-        var key = seg.slice(1).join("/");
-        if (key && keyToI[key] != null) { state.traceRoot = keyToI[key]; state.traceStep = null; }
-        else if (!key) { if (traceRoots.length) { state.traceRoot = traceRoots[0].i; state.traceStep = null; } }   // "#/map/trace" with no key resets to the default root, even if one was already picked
-        else {
-          badLink = badLink || "trace root “" + key + "”";
-          if (state.traceRoot == null && traceRoots.length) state.traceRoot = traceRoots[0].i;
-        }
-      }
     } else if (state.tab === "sim") {
       // "#/sim/<scenario-id>/<step>" — the id itself may contain "/" (e.g. a
       // symbol key), so split off the trailing numeric step, not the first "/".
@@ -778,7 +744,7 @@
       // ensureScenario (not a bare simById lookup) so a "derive:"/"origin:"
       // deep link materializes on arrival even when its target was never one
       // of the handful pre-seeded into the rail — this is what makes both
-      // Map ▸ "Simulate ▶" and the inspector's "Trace back to entry ▶" work
+      // "Simulate calls from here" and the inspector's "Trace back to entry ▶" work
       // for a symbol outside the top few busiest in the repo.
       if (scId && ensureScenario(scId)) {
         state.simScenario = scId;
@@ -796,7 +762,10 @@
       state.simStep = hasStep ? parseInt(lastPart, 10) : 0;
       state.simPlaying = false;
     } else if (state.tab === "timeline") {
-      state.timelineSha = r.arg || null;
+      // "#/timeline/files" = the hot-files treemap; anything else is a commit
+      // sha (hex, so it can never be the word "files")
+      state.timelineView = r.arg === "files" ? "files" : "commits";
+      state.timelineSha = r.arg && r.arg !== "files" ? r.arg : null;
     }
     state.routeNote = badLink ? ("Link not found (" + badLink + ") — showing " + (TAB_LABEL[state.tab] || state.tab) + ".") : null;
     if (badLink) {
@@ -817,7 +786,6 @@
     var tabs = [
       ["graph", "ph ph-graph", "Graph"],
       ["arch", "ph ph-tree-structure", "Architecture"],
-      ["map", "ph ph-stack", "Map"],
       ["sim", "ph ph-play-circle", "Simulate"],
       ["learn", "ph ph-graduation-cap", "Learn"],
       ["libs", "ph ph-package", "Packages"],
@@ -2395,8 +2363,8 @@
             el("b", { text: Math.round(covered / loc * 100) + "%" }), " of ",
             el("b", { text: loc + " lines" }), ". Gaps are module-level code."]),
           el("div", { class: "anatomy-keys" }, dots),
-          el("div", { class: "trace-link", text: "Trace calls from here →",
-            on: { click: function () { go("map", "trace/" + n.key); } } }),
+          el("div", { class: "trace-link", text: "Simulate calls from here →",
+            on: { click: function () { go("sim", "derive:" + n.key + "/0"); } } }),
         ]),
       ]),
     ]);
@@ -3020,7 +2988,24 @@
   });
 
   // ---- timeline tab -------------------------------------
+  // Two views over the repo's history: the commit list, and Hot files — a
+  // treemap of every file sized by lines and lit by how often it changes.
   function timelineTab() {
+    var seg = el("div", { class: "seg" },
+      [["commits", "Commits", ""], ["files", "Hot files", "files"]].map(function (v) {
+        return el("button", { class: state.timelineView === v[0] ? "on" : "",
+          "aria-pressed": state.timelineView === v[0] ? "true" : "false",
+          on: { click: function () { go("timeline", v[2]); } } }, [v[1]]);
+      }));
+    var bar = el("div", { class: "map-bar" }, [seg, el("div", { class: "spacer" })]);
+    if (state.timelineView === "files") {
+      var built = hotFiles();
+      return el("div", { class: "map" }, [bar,
+        el("div", { class: "map-body" }, [el("div", { class: "map-canvas" }, [built.content]), built.legend])]);
+    }
+    return el("div", { class: "map" }, [bar, commitList()]);
+  }
+  function commitList() {
     var wrap = el("div", { class: "tl-wrap" });
     (DATA.timeline || []).forEach(function (c) {
       var touched = state.touched && c.touched.some(function (i) { return state.touched.has(i); });
@@ -3071,9 +3056,7 @@
     return el("div", { class: "tl" }, [wrap]);
   }
 
-  // ---- map tab: structure views ----------------------------------------
-  // Three static, laid-out-once views (no pan/zoom, they scroll). Each builder
-  // returns { controls, content, legend }; mapTab() frames them.
+  // ---- shared SVG helpers (Hot files treemap, Architecture) -------------
   function lerpHex(a, b, t) {
     t = Math.max(0, Math.min(1, t));
     function ch(hex, o) { return parseInt(hex.substr(o, 2), 16); }
@@ -3156,324 +3139,10 @@
     return res;
   }
 
-  function mapTab() {
-    var built = state.mapView === "trace" ? runTrace()
-      : state.mapView === "mass" ? massMap()
-      : layerCake();
-    var seg = el("div", { class: "seg" },
-      [["layers", "Layers"], ["trace", "Run trace"], ["mass", "Mass"]].map(function (v) {
-        return el("button", { class: state.mapView === v[0] ? "on" : "",
-          on: { click: function () { go("map", v[0]); } } }, [v[1]]);
-      }));
-    var bar = el("div", { class: "map-bar" },
-      [seg].concat(built.controls || [], [el("div", { class: "spacer" })]));
-    return el("div", { class: "map" }, [
-      bar,
-      el("div", { class: "map-body" }, [
-        el("div", { class: "map-canvas" }, [built.content]),
-        built.legend || null,
-      ]),
-    ]);
-  }
-
-  // ── 1. Layer cake ── "what shape is this system" ─────────────────────
-  function layerCake() {
-    var hide = state.hideTests;
-    var visible = FILES.filter(function (f) {
-      return !(hide && isTestPath(f.path));
-    });
-    var vis = {};
-    visible.forEach(function (f) { vis[f.fi] = true; });
-
-    // one block per file, or one merged block per import cycle with >1 shown file
-    var byComp = {};
-    visible.forEach(function (f) { (byComp[fileComp[f.fi]] = byComp[fileComp[f.fi]] || []).push(f); });
-    var blocks = [];
-    Object.keys(byComp).forEach(function (cid) {
-      var fs = byComp[cid].slice().sort(function (a, b) { return b.loc - a.loc; });
-      var loc = fs.reduce(function (s, f) { return s + (f.loc || 0); }, 0);
-      var cyc = sccMembers[cid].length > 1;
-      blocks.push({
-        id: "b" + cid, files: fs, loc: loc, layer: compLayer[cid], cyc: cyc && fs.length > 1,
-        hue: colorForPath(fs[0].path),
-        label: cyc && fs.length > 1 ? fs.length + " files in a cycle" : fs[0].path.split("/").pop(),
-      });
-    });
-
-    var layers = [];
-    blocks.forEach(function (b) { if (layers.indexOf(b.layer) < 0) layers.push(b.layer); });
-    layers.sort(function (a, b) { return b - a; });   // highest layer at the top
-
-    var PAD = 16, ROWH = 78, GAP = 4, MINW = 48, LBLW = 34;
-    var band = {};
-    var maxBandLoc = 1;
-    layers.forEach(function (L) {
-      band[L] = blocks.filter(function (b) { return b.layer === L; })
-        .sort(function (a, b) { return b.loc - a.loc; });
-      var s = band[L].reduce(function (a, b) { return a + b.loc; }, 0);
-      if (s > maxBandLoc) maxBandLoc = s;
-    });
-    var avail = 980 - LBLW - PAD * 2;
-    var pxPerLoc = Math.min(0.6, avail / maxBandLoc);
-    var innerW = layers.reduce(function (mx, L) {
-      var w = band[L].reduce(function (a, b) { return a + Math.max(MINW, b.loc * pxPerLoc) + GAP; }, 0);
-      return Math.max(mx, w);
-    }, 0);
-    var W = LBLW + PAD * 2 + innerW;
-    var H = PAD * 2 + layers.length * ROWH;
-
-    var pos = {};   // block id -> {cx, cy}
-    var svg = el("svg", { class: "cake", width: W, height: H, viewBox: "0 0 " + W + " " + H });
-    var edgeLayer = el("g", { class: "cake-edges", fill: "none" });
-    svg.appendChild(edgeLayer);
-
-    layers.forEach(function (L, row) {
-      var y = PAD + row * ROWH;
-      svg.appendChild(el("text", { x: LBLW - 8, y: y + ROWH / 2, "text-anchor": "end",
-        "dominant-baseline": "middle", class: "cake-lnum", text: "L" + L }));
-      var x = LBLW + PAD;
-      band[L].forEach(function (b) {
-        var w = Math.max(MINW, b.loc * pxPerLoc), h = ROWH - 22;
-        pos[b.id] = { cx: x + w / 2, cy: y + h / 2, x: x, y: y, w: w, h: h };
-        var titleTxt = b.cyc
-          ? "import cycle: " + b.files.map(function (f) { return f.path.split("/").pop(); }).join(" ⇄ ")
-          : b.files[0].path + " · " + b.loc + " loc";
-        var gEl = el("g", { class: "cake-block" + (b.cyc ? " cyc" : ""),
-          on: {
-            mouseenter: function () { drawCakeEdges(b); },
-            mouseleave: function () { clear(edgeLayer); },
-            click: function () { fileAct(b.files[0])(); },
-          } }, [el("title", { text: titleTxt })]);
-        gEl.appendChild(el("rect", { x: x, y: y, width: w, height: h, rx: 5,
-          fill: hexA(b.hue, b.cyc ? 0.16 : 0.24), stroke: b.hue,
-          "stroke-width": b.cyc ? 2 : 1.1 }));
-        if (b.cyc)
-          gEl.appendChild(el("text", { x: x + 7, y: y + 15, class: "cake-cyc", text: "↺" }));
-        var cakeLbl = fitText(b.cyc ? "cycle · " + b.files.length : b.label, w - 10);
-        // a block too narrow to fit at least ~6 real characters just shows a
-        // 1-2 letter fragment ("f…") that reads as noise, not a name — skip
-        // painting it and rely on the <title> (already on gEl) for hover/tap.
-        if (w > 34 && cakeLbl.replace(/…$/, "").length >= 6)
-          gEl.appendChild(el("text", { x: x + w / 2, y: y + h / 2 + 1, "text-anchor": "middle",
-            "dominant-baseline": "middle", class: "cake-name", text: cakeLbl }));
-        if (w > 78)
-          gEl.appendChild(el("text", { x: x + w / 2, y: y + h + 12, "text-anchor": "middle",
-            class: "cake-loc", text: b.loc + " loc" }));
-        svg.appendChild(gEl);
-        x += w + GAP;
-      });
-    });
-
-    function drawCakeEdges(b) {
-      clear(edgeLayer);
-      var here = pos[b.id];
-      if (!here) return;
-      var seen = {};
-      b.files.forEach(function (f) {
-        fileAdj[f.fi].forEach(function (t) { if (vis[t]) seen[blockIdOf(t)] = "down"; });
-        fileImpBy[f.fi].forEach(function (s) { if (vis[s]) seen[blockIdOf(s)] = "up"; });
-      });
-      Object.keys(seen).forEach(function (bid) {
-        if (bid === b.id || !pos[bid]) return;
-        var o = pos[bid];
-        var y1 = seen[bid] === "down" ? here.y + here.h : here.y;
-        var y2 = seen[bid] === "down" ? o.y : o.y + o.h;
-        var my = (y1 + y2) / 2;
-        edgeLayer.appendChild(el("path", {
-          d: "M " + here.cx + " " + y1 + " C " + here.cx + " " + my + " " +
-             o.cx + " " + my + " " + o.cx + " " + y2,
-          stroke: b.hue, "stroke-width": 1.4, opacity: 0.7 }));
-      });
-    }
-    function blockIdOf(fi) { return "b" + fileComp[fi]; }
-
-    var controls = [
-      el("button", { class: "pill" + (state.hideTests ? " on" : ""),
-        title: "tests/** — the health inspector: checks the kitchen, doesn't do the cooking",
-        on: { click: function () { state.hideTests = !state.hideTests; render(); } } },
-        [el("i", { class: "ph ph-flask" }), "Hide tests"]),
-    ];
-    // The restaurant (teacher's principle 2, reused as the house metaphor —
-    // see content-philosophy.md): a menu is what the outside world can ask
-    // for, a waiter carries the order back but doesn't cook, the kitchen does
-    // the actual work, the fridge/pantry is what survives after everyone goes
-    // home. This diagram's own axis — longest-path import depth — lines up
-    // with it almost exactly: L0 depends on nothing else here (the pantry),
-    // the top layer is called by almost nothing and calls into everything
-    // below it (the waiter), and the cooking happens in the layers between.
-    var legend = el("div", { class: "map-legend" }, [
-      el("div", { class: "lk", text: "LAYER CAKE" }),
-      lgRow(el("span", { class: "sw", style: "width:26px;height:12px;border-radius:3px;" +
-        "background:" + hexA(GROUP_HUES[0], 0.24) + ";border:1px solid " + GROUP_HUES[0] }),
-        "block = file · width = lines of code · fill = folder"),
-      lgRow(el("span", { class: "sw", style: "width:14px;height:12px;border-radius:3px;" +
-        "background:transparent;border:2px solid " + GROUP_HUES[0] }), "↺ merged = import cycle"),
-      lgRow(el("span", { class: "sw", style: "border:0" }), "L0 imports nothing in-repo · hover a block for its imports"),
-      lgRow(el("span", { class: "sw", style: "border:0" }),
-        "the restaurant: bottom = the pantry & fridge (little calls out, lots call in) · top = the waiter (calls everything, called by little) · the kitchen is between"),
-    ]);
-    return { controls: controls, content: svg, legend: legend };
-  }
-
-  // ── 2. Run trace ── "what happens when this runs" ───────────────────
-  function runTrace() {
-    var root = state.traceRoot != null ? state.traceRoot
-      : (traceRoots.length ? traceRoots[0].i : null);
-    if (root == null)
-      return { content: el("div", { class: "map-empty", text: "No call graph to trace." }) };
-
-    var depth = new Map([[root, 0]]);
-    var order = [root], qi = 0;
-    while (qi < order.length) {
-      var u = order[qi++], du = depth.get(u);
-      // confident edges only (outAdjSure) — an AMBIGUOUS one used to be able
-      // to walk this trace straight from production code into an unrelated
-      // same-named method, even a test file's.
-      (outAdjSure[u] || []).forEach(function (v) {
-        if (!depth.has(v)) { depth.set(v, du + 1); order.push(v); }
-      });
-    }
-    var cols = [];
-    depth.forEach(function (d, i) { (cols[d] = cols[d] || []).push(i); });
-    var maxD = cols.length - 1;
-    // a short trace on its own means nothing — a small repo or a shallow
-    // root looks identical. Only call it out when a real leaf in the trace
-    // shows an actual dynamic-dispatch pattern in its own source.
-    var dynLeaf = null;
-    for (var li = 0; li < order.length && !dynLeaf; li++) {
-      var leafU = order[li];
-      if ((outAdjSure[leafU] || []).length) continue;
-      if (classifyUnresolvedCalls(N[leafU]) === "dynamic") dynLeaf = N[leafU];
-    }
-
-    var BUDGET = 12, COLW = 208, ROWH = 44, TOP = 30, LEFT = 24;
-    var shown = {}, colShown = [];
-    cols.forEach(function (arr, d) {
-      var ranked = arr.slice().sort(function (a, b) { return N[b].fan_in - N[a].fan_in; });
-      var open = traceExpand[root + ":" + d];
-      var take = open || ranked.length <= BUDGET ? ranked : ranked.slice(0, BUDGET);
-      take.forEach(function (i) { shown[i] = true; });
-      colShown[d] = { list: take, hidden: (open ? 0 : Math.max(0, ranked.length - take.length)) };
-    });
-    var maxRows = colShown.reduce(function (m, c) { return Math.max(m, c.list.length + (c.hidden ? 1 : 0)); }, 1);
-    var W = LEFT * 2 + (maxD + 1) * COLW + (dynLeaf ? 220 : 0);
-    var Hh = TOP * 2 + maxRows * ROWH;
-    var yOf = {}, xOf = {};
-    colShown.forEach(function (c, d) {
-      var n = c.list.length + (c.hidden ? 1 : 0);
-      var y0 = TOP + (maxRows - n) * ROWH / 2;
-      c.list.forEach(function (i, k) { yOf[i] = y0 + k * ROWH + ROWH / 2; xOf[i] = LEFT + d * COLW; });
-      c._chipY = y0 + c.list.length * ROWH + ROWH / 2;
-      c._x = LEFT + d * COLW;
-    });
-    var step = state.traceStep;
-    var svg = el("svg", { class: "trace", width: W, height: Hh, viewBox: "0 0 " + W + " " + Hh });
-
-    var eG = el("g", { fill: "none" });
-    svg.appendChild(eG);
-    order.forEach(function (u) {
-      if (!shown[u]) return;
-      (outAdj[u] || []).forEach(function (v) {
-        if (!shown[v] || depth.get(v) !== depth.get(u) + 1) return;
-        var dim = step != null && depth.get(v) > step;
-        var x1 = xOf[u] + 30, x2 = xOf[v] - 8, mx = (x1 + x2) / 2;
-        eG.appendChild(el("path", {
-          d: "M " + x1 + " " + yOf[u] + " C " + mx + " " + yOf[u] + " " + mx + " " + yOf[v] +
-             " " + x2 + " " + yOf[v],
-          stroke: colorForNode(N[u]), "stroke-width": 1.3, opacity: dim ? 0.1 : 0.4 }));
-      });
-    });
-
-    colShown.forEach(function (c, d) {
-      svg.appendChild(el("text", { x: c._x + 12, y: 16, class: "trace-dnum",
-        text: d === 0 ? "root" : "depth " + d }));
-      c.list.forEach(function (i) {
-        var n = N[i], dim = step != null && d > step;
-        var r = 7 + Math.min(6, Math.sqrt(n.fan_in));
-        var gEl = el("g", { class: "trace-st" + (dim ? " dim" : ""),
-          on: { click: function () { go("graph", n.key); } } },
-          [el("title", { text: n.qual + " · " + n.fan_in + " callers" })]);
-        gEl.appendChild(el("circle", { cx: xOf[i], cy: yOf[i], r: r,
-          fill: hexA(colorForNode(n), 0.9), stroke: colorForNode(n), "stroke-width": 1.4 }));
-        gEl.appendChild(el("text", { x: xOf[i] + r + 8, y: yOf[i] - 3, class: "trace-nm",
-          text: fitText(n.name, COLW - r - 20, 6.4) }));
-        gEl.appendChild(el("text", { x: xOf[i] + r + 8, y: yOf[i] + 9, class: "trace-fl",
-          text: fitText(n.file.split("/").pop(), COLW - r - 20, 5.4) }));
-        svg.appendChild(gEl);
-      });
-      if (c.hidden) {
-        var cy = c._chipY;
-        var chip = el("g", { class: "trace-more",
-          on: { click: function () { traceExpand[root + ":" + d] = true; render(); } } });
-        chip.appendChild(el("rect", { x: c._x + 2, y: cy - 12, width: 150, height: 24, rx: 12,
-          fill: "var(--color-neutral-900)", stroke: "var(--color-neutral-800)" }));
-        chip.appendChild(el("text", { x: c._x + 12, y: cy + 4, class: "trace-nm",
-          text: "+ " + c.hidden + " more calls" }));
-        svg.appendChild(chip);
-      }
-    });
-
-    if (dynLeaf) {
-      var lastLine = null;
-      (srcOf(dynLeaf) || "").split("\n").forEach(function (ln) {
-        if (SIM_DYN_RE.test(ln)) lastLine = ln.trim();
-      });
-      var bx = LEFT + (maxD + 1) * COLW, by = TOP + maxRows * ROWH / 2 - 34;
-      var dg = el("g", { class: "trace-dispatch" });
-      dg.appendChild(el("rect", { x: bx, y: by, width: 200, height: 68, rx: 8,
-        fill: "var(--color-surface-2)", stroke: "var(--color-accent-700)" }));
-      dg.appendChild(el("text", { x: bx + 12, y: by + 20, class: "trace-nm", text: "⚡ dynamic dispatch" }));
-      dg.appendChild(el("text", { x: bx + 12, y: by + 38, class: "trace-fl",
-        text: dynLeaf.name + " — the indexer can't follow this" }));
-      if (lastLine)
-        dg.appendChild(el("text", { x: bx + 12, y: by + 55, class: "trace-code",
-          text: lastLine.length > 26 ? lastLine.slice(0, 25) + "…" : lastLine }));
-      svg.appendChild(dg);
-    }
-
-    var rootList = traceRoots.slice();
-    if (!rootList.some(function (r) { return r.i === root; }))
-      rootList.unshift({ i: root, size: order.length - 1 });   // a hand-picked root not in the top ranks
-    var picker = el("select", { class: "map-select",
-      on: { change: function (e) { go("map", "trace/" + e.target.value); } } },
-      rootList.map(function (r) {
-        return el("option", { value: N[r.i].key, selected: r.i === root ? "selected" : null,
-          text: N[r.i].qual + "  (" + r.size + " reached)" });
-      }));
-    var stepLabel = step == null ? "all" : step + " / " + maxD;
-    var controls = [
-      picker,
-      el("button", { class: "pill", on: { click: function () {
-        go("sim", "derive:" + N[root].key + "/0");
-      } } }, [el("i", { class: "ph ph-play-circle" }), "Simulate ▶"]),
-      el("div", { class: "stepper" }, [
-        el("button", { "aria-label": "step back",
-          on: { click: function () {
-            state.traceStep = step == null ? Math.max(0, maxD - 1) : Math.max(0, step - 1);
-            render();
-          } } }, [el("i", { class: "ph ph-caret-left" })]),
-        el("b", { class: "mono", text: stepLabel }),
-        el("button", { "aria-label": "step forward",
-          on: { click: function () {
-            state.traceStep = step == null ? 0 : Math.min(maxD, step + 1);
-            if (state.traceStep >= maxD) state.traceStep = null;
-            render();
-          } } }, [el("i", { class: "ph ph-caret-right" })]),
-      ]),
-    ];
-    var legend = el("div", { class: "map-legend" }, [
-      el("div", { class: "lk", text: "RUN TRACE" }),
-      lgRow(el("span", { class: "sw", style: "border:0" }), "column = calls N hops from the root"),
-      lgRow(el("span", { class: "sw dot", style: "background:var(--color-neutral-400);width:13px;height:13px" }),
-        "bigger dot = more callers (fan-in)"),
-      lgRow(el("span", { class: "sw", style: "border:0" }), "◀ ▶ walks the cascade one hop at a time"),
-      lgRow(el("span", { class: "sw", style: "border:0" }), "⚡ = a call resolved at runtime, not statically"),
-    ]);
-    return { controls: controls, content: svg, legend: legend };
-  }
-
-  // ── 3. Mass map ── "where is the code, and what keeps moving" ────────
-  function massMap() {
+  // ── Timeline ▸ Hot files ── "where is the code, and what keeps moving" ──
+  // A static, laid-out-once treemap (no pan/zoom, it scrolls); returns
+  // { content, legend } for timelineTab() to frame.
+  function hotFiles() {
     var W = 1000, Hh = 660, GAP = 3, LBL = 15;
     var groups = {};
     FILES.forEach(function (f) { (groups[dirGroup(f.path)] = groups[dirGroup(f.path)] || []).push(f); });
@@ -3543,13 +3212,28 @@
       style: "width:60px;height:10px;border-radius:2px;background:linear-gradient(90deg," +
         CHURN_LO + "," + CHURN_HI + ")" });
     var legend = el("div", { class: "map-legend" }, [
-      el("div", { class: "lk", text: "MASS MAP" }),
+      el("div", { class: "lk", text: "HOT FILES" }),
       lgRow(el("span", { class: "sw", style: "border:0" }), "area = lines of code · grouped by folder"),
       lgRow(ramp, "fill = commits touching it (low → high)"),
       lgRow(el("span", { class: "sw", style: "width:16px;height:12px;background:var(--color-surface-2);" +
         "background-image:repeating-linear-gradient(45deg,var(--color-neutral-500) 0 1px,transparent 1px 4px)" }),
         "hatched = every function unreachable"),
     ]);
+    // the hottest few, by name: big + often-changed is where bugs and merge
+    // conflicts concentrate, so it's the first list worth reading
+    var hottest = FILES.filter(function (f) { return churnOf[f.fi] > 0 && !isTestPath(f.path); })
+      .sort(function (a, b) { return churnOf[b.fi] - churnOf[a.fi] || (b.loc || 0) - (a.loc || 0); })
+      .slice(0, 5);
+    if (hottest.length) {
+      legend.appendChild(el("div", { class: "lk hot-lk", text: "CHANGED MOST" }));
+      hottest.forEach(function (f) {
+        legend.appendChild(el("div", { class: "row hot-row", title: "Open " + f.path + " in the Graph",
+          on: { click: fileAct(f) } }, [
+          el("span", { class: "hot-n", text: String(churnOf[f.fi]) }),
+          el("span", { class: "hot-p", text: f.path }),
+        ]));
+      });
+    }
     // area is proportional to LOC, so a 0-line file (a stub, an __init__.py,
     // a barrel export) squarifies to zero area and just isn't drawn — say so
     // rather than let it silently vanish with no trace anywhere in the view.
@@ -3569,7 +3253,7 @@
   // side panel of shared code with dashed links into the layers that use it.
   // Every placement comes from DATA.architecture (codemap/site/architecture.py
   // scores each file and ships the evidence) — nothing is guessed here, this
-  // section only lays it out once per render and wires hover/click. Like Map it
+  // section only lays it out once per render and wires hover/click. Like Hot files it
   // scrolls instead of pan/zooming; hover only rewrites classes and repaints
   // one small highlight layer, never the scene.
   var ARCH = DATA.architecture || {};
@@ -4308,6 +3992,18 @@
         ].concat(ups.slice(0, 20).map(function (l) {
           return row("⚠", A_COMP[l.s].title + " → " + A_COMP[l.t].title, l.n, function () { go("arch", l.s); });
         }))));
+      // files that import each other, so neither can be read or changed alone;
+      // tests are left out unless the tests panel is on
+      var cycles = importCycles.filter(function (c) {
+        return state.archShowTests || c.some(function (fi) { return !isTestPath(FILES[fi].path); });
+      });
+      if (cycles.length)
+        body.push(sec("IMPORT CYCLES · " + cycles.length, [
+          note(["Files that import each other, directly or round a loop. Changing one can break the others, and none of them loads first on its own."]),
+        ].concat(cycles.slice(0, 12).map(function (c) {
+          return row("↺ " + c.length, c.map(function (fi) { return FILES[fi].path.split("/").pop(); }).join(" ⇄ "), null,
+            fileAct(FILES[c[0]]), c.map(function (fi) { return FILES[fi].path; }).join("\n"));
+        }))));
       if ((ARCH.declared_only || []).length)
         body.push(sec("DECLARED, NEVER IMPORTED", [note(["Listed in a manifest, but no indexed file imports it."])]
           .concat(ARCH.declared_only.map(function (d) { return row(null, d.label, d.source.split("/").pop(), null, d.source); }))));
@@ -4648,7 +4344,8 @@
   });
   // Lane 1 (⚡ derived) fills the rail only when the skill authored nothing.
   // With a curriculum present the rail *is* the curriculum; derive:<key> stays
-  // reachable on demand via ensureScenario (deep links, Map ▸ "Simulate ▶").
+  // reachable on demand via ensureScenario (deep links, the inspector's
+  // "Simulate calls from here", Architecture's entry-point ▶).
   if (!SIM_AUTHORED.length)
     traceRoots.slice(0, 6).forEach(function (r) { SIM_SCENARIOS.push(derivedScenario(r.i)); });
   var simById = {};
@@ -5713,8 +5410,8 @@
     if (!sc)
       return el("div", { class: "sim-empty" }, [
         el("i", { class: "ph ph-play-circle" }),
-        el("p", {}, codeify("No scenarios yet — open a busy symbol in Map ▸ Run trace and press " +
-          "“Simulate ▶”, write .codemap/scenarios.json, or run `codemap trace`.")),
+        el("p", {}, codeify("No scenarios yet — pick a symbol in the Graph and press " +
+          "“Simulate calls from here”, write .codemap/scenarios.json, or run `codemap trace`.")),
       ]);
     var steps = scenarioSteps(sc);
     var i = Math.max(0, Math.min(steps.length - 1, state.simStep));
@@ -6032,14 +5729,13 @@
           el("div", { class: "orient-col-h", text: "What exists — the floor plan" }),
           orientLink("graph", null, "Graph", "every file and function, and what calls what"),
           orientLink("arch", null, "Architecture", "the layers, what each is built with, and what it talks to"),
-          orientLink("map", null, "Map", "import depth, one call chain, and where the code sits"),
           orientLink("learn", null, "Learn", "what this project is and how its parts fit together"),
           orientLink("libs", null, "Packages", "what every dependency and module actually does"),
         ]),
         el("div", { class: "orient-col" }, [
           el("div", { class: "orient-col-h", text: "What happens — the walk" }),
           orientLink("sim", null, "Simulate", "watch one thing the app does, call by call"),
-          orientLink("timeline", null, "Timeline", "every commit, and what it actually changed"),
+          orientLink("timeline", null, "Timeline", "every commit, what it changed, and which files change most"),
         ]),
       ]),
     ]);
@@ -6224,8 +5920,8 @@
   (DATA.folders || []).forEach(function (f) { FOLDER_BY_PATH[f.path] = f; });
   // a page id no real folder path can ever produce (folders.py never emits a
   // path wrapped in double underscores) — the "what this app is made of"
-  // category-map screen. Deliberately NOT the bare string "map": that collides
-  // with state.mapView / the Map tab's own vocabulary, and nothing stops a
+  // category-map screen. Deliberately NOT the bare string "map": that once collided
+  // with the old Map tab's own vocabulary, and nothing stops a
   // real repo from having a folder literally named "map".
   var CATEGORY_MAP_ID = "__categories__";
 
@@ -6713,8 +6409,6 @@
       frag.appendChild(el("main", { class: "view" }, [skipLink, railNode, stage(), inspNode, backdrop]));
     } else if (state.tab === "arch")
       frag.appendChild(el("main", { class: "view" }, [archTab()]));
-    else if (state.tab === "map")
-      frag.appendChild(el("main", { class: "view" }, [mapTab()]));
     else if (state.tab === "sim")
       frag.appendChild(el("main", { class: "view" }, [simTab()]));
     else if (state.tab === "timeline")

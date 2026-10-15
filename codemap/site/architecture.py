@@ -1,7 +1,7 @@
 """Files + imports -> a layered architecture model for the Architecture tab.
 
-The Graph tab says what calls what, Map ▸ Layers says how deep each file sits
-in the import graph. Neither says *"this is the API layer, it runs on Flask,
+The Graph tab says what calls what, file by file and function by function.
+It never says *"this is the API layer, it runs on Flask,
 it talks to Postgres"*. This module does: it puts every indexed file in one
 architectural **layer** (routes & entry → views / API → logic → data, plus a
 side panel of shared code and tests), groups files into **components**, names

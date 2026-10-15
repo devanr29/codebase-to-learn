@@ -542,11 +542,11 @@ def build(
         )
 
     # -- stats -------------------------------------------------------
-    # File-import cycles, not symbol-call cycles: the Map tab's Layers view
-    # (explore.js) only ever draws the former (a loop of files that import
-    # each other) — this used to count strongly-connected symbols in the
-    # call graph `g` instead, a different, usually larger number that made
-    # the top bar and the Map tab disagree about how many cycles exist.
+    # File-import cycles, not symbol-call cycles: the Architecture overview's
+    # IMPORT CYCLES list (explore.js) only ever shows the former (a loop of
+    # files that import each other) — this used to count strongly-connected
+    # symbols in the call graph `g` instead, a different, usually larger
+    # number that made the top bar and that list disagree.
     file_g = nx.DiGraph()
     file_g.add_nodes_from(f["fi"] for f in files)
     file_g.add_edges_from((e["s"], e["t"]) for e in file_edges)

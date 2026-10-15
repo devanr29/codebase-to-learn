@@ -104,8 +104,8 @@ def test_timeline_intent_text_is_the_body_not_the_subject_again(tmp_path):
 
 
 def test_cycles_stat_counts_file_import_cycles_not_symbol_call_cycles(tmp_path):
-    """Map's Layers view (the only place "cycles" is drawn) only ever cycles
-    over *files* that import each other. Two functions calling each other
+    """The Architecture overview's IMPORT CYCLES list only ever cycles over
+    *files* that import each other. Two functions calling each other
     within one file (no import at all) used to inflate this same top-bar
     stat, because it was counted from the symbol-level call graph instead."""
     _git = lambda *args: subprocess.run(  # noqa: E731

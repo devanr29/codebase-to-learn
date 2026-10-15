@@ -584,9 +584,9 @@ narration lines per step. Three lanes feed the same normalized step shape,
 increasing in fidelity:
 
 1. **Derived** (⚡) — computed entirely client-side in `explore.js` from the
-   call graph, the same architectural pattern as the Map tab's own
-   `layerCake`/`runTrace`/`massMap` (payload facts in, view derived in the
-   browser). The one new fact it needed: `site/model.py` now attaches a
+   call graph, the same architectural pattern as Timeline's Hot files
+   treemap and Architecture's import-cycle list (payload facts in, view
+   derived in the browser). The one new fact it needed: `site/model.py` now attaches a
    call-site `line` to every edge (re-deriving `impact.call_graph`'s own
    `(from_symbol_id, target_name)` match against `refs.line`, without
    touching that shared hot path) — without it, a frame's calls are an
@@ -705,8 +705,8 @@ convention in common use, not every mobile UI toolkit.
 
 ## 18. Architecture tab (M20)
 
-The Graph tab says what calls what; Map ▸ Layers says how deep a file sits in
-the import graph. Neither names a *role* or a *vendor* — nothing on the page
+The Graph tab says what calls what, file by file and function by function. It
+never names a *role* or a *vendor* — nothing on the page
 said "this is the API, it runs on Flask, it talks to Postgres." M20 adds a
 seventh tab, **Architecture** (`#/arch`): the diagram a person sketches for a
 new teammate. Whoever drives the app sits at the top, then **Routes & entry** →
